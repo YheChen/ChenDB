@@ -46,7 +46,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 5 \u2014 B+ tree indexes and tree visualizer. Disk-backed tree with point lookup, insert, split, range scan, linked leaves; CREATE INDEX; an index system table (the reserved table-id gap 3..99 is for it).",
+    "next": "Milestone 5 \u2014 B+ tree indexes and tree visualizer. NOT STARTED. See milestone_5_plan below.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -98,7 +98,8 @@
     "Operator.open() contains checkpoints, so it must sit INSIDE the try block in _execute_select \u2014 otherwise cancelling during open propagates instead of returning a partial result. Fixed once; test_cancelling_unwinds_the_operator_tree guards it.",
     "Column `position` is stored in chendb_columns and is load-bearing: a heap scan returns PHYSICAL order, not column order, and they diverge once a deleted slot is reused. _load_schema sorts by position and rejects non-contiguous positions as corruption.",
     "File format v2: version-1 files are rejected on open, deliberately. Delete old *.chendb files after pulling M4.",
-    "GET /databases/{db} now scans the catalog, so it CAUSES page reads. Do not use it to measure page reads across an operation without calibrating against two back-to-back probes."
+    "GET /databases/{db} now scans the catalog, so it CAUSES page reads. Do not use it to measure page reads across an operation without calibrating against two back-to-back probes.",
+    "Milestone 5 will need FORMAT VERSION 3 (meta page gains catalog_indexes_first/last). Bump FORMAT_VERSION in engine/storage/constants.py, extend META_HEADER_FORMAT in engine/storage/meta.py, and update _meta_header_fields in engine/storage/inspect.py \u2014 those three plus the MetaPage dataclass are the whole change surface."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog",
@@ -107,5 +108,20 @@
     "tests/concurrency/": "empty until Milestone 10",
     "counts_at_handover": "619 Python tests, 62 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256."
+  },
+  "milestone_5_plan": {
+    "goal": "Disk-backed B+ tree: point lookup, insert, node split, range scan, linked leaves. Plus CREATE INDEX, an index system table, and the real-tree visualizer.",
+    "engine_files_to_create": [
+      "engine/index/node.py \u2014 BTreeNode over a Page. PageType.BTREE_INTERNAL=4 / BTREE_LEAF=5 already exist in storage/constants.py. Reuse the slotted page: each slot is one (key, payload) entry, so splits reuse Page.compact/insert. Leaf payload = RecordId (page_id:u32, slot_id:u16). Internal payload = child page id (u32). Leaf header needs next_leaf_id \u2014 put it in the page header's existing next_page_id field (heaps and leaves never share a page).",
+      "engine/index/key.py \u2014 order-preserving key encoding. THIS IS THE DESIGN CRUX: storage/types.py encodes integers LITTLE-endian, which does NOT sort by memcmp. Either (a) encode index keys BIG-endian with a sign flip so memcmp ordering works (what RocksDB/FoundationDB do \u2014 see the note already in types.py), or (b) decode both keys and compare Python values. (a) is faster and is the better teaching point; (b) is less code. Pick one and document the tradeoff.",
+      "engine/index/bplustree.py \u2014 BPlusTree: search(key), insert(key, RecordId), range_scan(low, high), delete later. Root page id stored in the catalog. Split promotes the middle key; root split allocates a new root and grows the tree by one level.",
+      "engine/catalog/system.py \u2014 add INDEXES_TABLE (id 3, already inside the reserved 3..99 gap): index_id, table_id, name, column_position, root_page, unique. Add to SYSTEM_TABLE_NAMES; meta page needs catalog_indexes_first/last \u2192 FORMAT VERSION 3."
+    ],
+    "events_to_add": "IndexSearchEvent, IndexDescentEvent (VERBOSE), NodeSplitEvent, NodeMergeEvent, RangeScanEvent \u2014 signatures already specified in docs/event-schema.md under 'Planned events'. Category EventCategory.INDEX already exists.",
+    "executor": "Add IndexScan operator (engine/executor/operators.py). build_select_plan currently always picks SeqScan \u2014 M5 should pick IndexScan when the WHERE is an equality or range on an indexed column. Keep the choice RULE-based; the COST model is M6. Add StepKind.INDEX_OPERATION + ResumeMode.UNTIL_INDEX_OPERATION to controller.py (_STOPS_AT is the only place to touch \u2014 the spec's 'run until next index operation' becomes one line).",
+    "api": "GET /databases/{db}/indexes, GET /databases/{db}/indexes/{name} returning the tree as a FLAT node list + root_id (same pattern as the AST and the plan, for the same reasons). Flip features.indexes in engine/server/app.py; MILESTONE = 5; version 0.5.0 in engine/__init__.py AND pyproject.toml.",
+    "visualizer": "New 'Index' workspace tab gated on features.indexes. Must show multi-key nodes and leaf sibling links \u2014 the spec explicitly forbids a generic binary-tree component. D3 is allowed here for the tree layout (first justified use). Also an educational sandbox mode alongside the real-index mode.",
+    "tests": "tests/unit/test_bplustree.py \u2014 key ordering (esp. negative integers and TEXT), leaf splits, internal splits, ROOT split growing the tree, range scans crossing leaf links, duplicate keys, and a stress test inserting enough rows to reach depth 3. Use TINY_PAGE_SIZE=256 so splits happen after a handful of keys.",
+    "gotcha_to_expect": "The heap's on_pages_changed callback pattern is the model for keeping an index's root_page in the catalog when a root split changes it \u2014 see Catalog._page_updater."
   }
 }
