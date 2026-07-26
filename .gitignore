@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# databases produced by demos and tests
+*.chendb
+*.chendb-wal
+workspace/
+
+# visualizer
+node_modules/
+dist/
+.vite/
+*.local
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# TypeScript incremental build state
+*.tsbuildinfo

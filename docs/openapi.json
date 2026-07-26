@@ -1,0 +1,2101 @@
+{
+  "components": {
+    "schemas": {
+      "ColumnModel": {
+        "properties": {
+          "fixed_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Encoded width in bytes, or null for variable-width types",
+            "title": "Fixed Size"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "nullable": {
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "primary_key": {
+            "title": "Primary Key",
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "INTEGER",
+              "FLOAT",
+              "BOOLEAN",
+              "TEXT"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "nullable",
+          "primary_key",
+          "fixed_size"
+        ],
+        "title": "ColumnModel",
+        "type": "object"
+      },
+      "ColumnSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "nullable": {
+            "default": true,
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "primary_key": {
+            "default": false,
+            "title": "Primary Key",
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "INTEGER",
+              "FLOAT",
+              "BOOLEAN",
+              "TEXT"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "ColumnSpec",
+        "type": "object"
+      },
+      "CreateDatabaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "database_id": {
+            "description": "Workspace-relative identifier. Never a filesystem path.",
+            "examples": [
+              "demo"
+            ],
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "title": "Database Id",
+            "type": "string"
+          },
+          "page_size": {
+            "default": 4096,
+            "description": "Bytes per page; must be a power of two. Small values are useful for demos because they force page chaining after a few rows.",
+            "maximum": 65536.0,
+            "minimum": 256.0,
+            "title": "Page Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "database_id"
+        ],
+        "title": "CreateDatabaseRequest",
+        "type": "object"
+      },
+      "CreateTableRequest": {
+        "additionalProperties": false,
+        "description": "Milestone 1 has no SQL parser, so tables are defined structurally.\n\nMilestone 2 adds ``POST /query`` with ``CREATE TABLE``; this endpoint stays\nas the programmatic path.",
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ColumnSpec"
+            },
+            "minItems": 1,
+            "title": "Columns",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "columns"
+        ],
+        "title": "CreateTableRequest",
+        "type": "object"
+      },
+      "DatabaseDetail": {
+        "properties": {
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "file_size_bytes": {
+            "title": "File Size Bytes",
+            "type": "integer"
+          },
+          "format_version": {
+            "title": "Format Version",
+            "type": "integer"
+          },
+          "free_list_head": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free List Head"
+          },
+          "heap_page_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Heap Page Ids",
+            "type": "array"
+          },
+          "page_count": {
+            "title": "Page Count",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Live rows; null when no table is defined yet",
+            "title": "Row Count"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchemaModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_page_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Schema Page Ids",
+            "type": "array"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/PagerStatsModel"
+          },
+          "table_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Name"
+          },
+          "trace_level": {
+            "title": "Trace Level",
+            "type": "string"
+          }
+        },
+        "required": [
+          "database_id",
+          "page_size",
+          "page_count",
+          "file_size_bytes",
+          "format_version",
+          "table_name",
+          "row_count",
+          "heap_page_ids",
+          "schema_page_ids",
+          "free_list_head",
+          "stats",
+          "trace_level"
+        ],
+        "title": "DatabaseDetail",
+        "type": "object"
+      },
+      "DatabaseListResponse": {
+        "properties": {
+          "databases": {
+            "items": {
+              "$ref": "#/components/schemas/DatabaseSummary"
+            },
+            "title": "Databases",
+            "type": "array"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "databases",
+          "workspace"
+        ],
+        "title": "DatabaseListResponse",
+        "type": "object"
+      },
+      "DatabaseSummary": {
+        "properties": {
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "is_open": {
+            "title": "Is Open",
+            "type": "boolean"
+          },
+          "modified_ns": {
+            "title": "Modified Ns",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "database_id",
+          "size_bytes",
+          "modified_ns",
+          "is_open"
+        ],
+        "title": "DatabaseSummary",
+        "type": "object"
+      },
+      "DeleteRecordResponse": {
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "record_id": {
+            "$ref": "#/components/schemas/RecordIdModel"
+          }
+        },
+        "required": [
+          "deleted",
+          "record_id"
+        ],
+        "title": "DeleteRecordResponse",
+        "type": "object"
+      },
+      "EventCategory": {
+        "description": "Which subsystem produced an event.\n\nConsumers filter on this, so the full set is declared up front even though\nMilestone 1 only emits the first three.  A string enum keeps the value\nself-describing when it reaches JSON.",
+        "enum": [
+          "lifecycle",
+          "storage",
+          "record",
+          "parser",
+          "operator",
+          "catalog",
+          "index",
+          "planner",
+          "buffer_pool",
+          "transaction",
+          "wal",
+          "recovery",
+          "lock",
+          "mvcc"
+        ],
+        "title": "EventCategory",
+        "type": "string"
+      },
+      "EventsResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TraceRecordModel"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/TraceStatsModel"
+          }
+        },
+        "required": [
+          "events",
+          "stats",
+          "page"
+        ],
+        "title": "EventsResponse",
+        "type": "object"
+      },
+      "FieldLayoutModel": {
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "is_null": {
+            "title": "Is Null",
+            "type": "boolean"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offset": {
+            "description": "-1 for NULL, which occupies no bytes",
+            "title": "Offset",
+            "type": "integer"
+          },
+          "type_name": {
+            "title": "Type Name",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "index",
+          "name",
+          "type_name",
+          "is_null",
+          "offset",
+          "length",
+          "value"
+        ],
+        "title": "FieldLayoutModel",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeaderFieldModel": {
+        "description": "One decoded header field, with the bytes it was read from.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "raw_hex": {
+            "title": "Raw Hex",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name",
+          "offset",
+          "size",
+          "value",
+          "raw_hex",
+          "description"
+        ],
+        "title": "HeaderFieldModel",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "api_version": {
+            "title": "Api Version",
+            "type": "string"
+          },
+          "engine_version": {
+            "title": "Engine Version",
+            "type": "string"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "Which capabilities exist in this build. The UI hides panels whose feature is false rather than showing controls that cannot work.",
+            "title": "Features",
+            "type": "object"
+          },
+          "milestone": {
+            "description": "Highest completed milestone",
+            "title": "Milestone",
+            "type": "integer"
+          },
+          "open_databases": {
+            "title": "Open Databases",
+            "type": "integer"
+          },
+          "workspace": {
+            "description": "Workspace directory name, not a full path",
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine_version",
+          "api_version",
+          "milestone",
+          "workspace",
+          "open_databases",
+          "features"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "InsertRecordsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "rows": {
+            "description": "Positional values per row, in column order",
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "InsertRecordsRequest",
+        "type": "object"
+      },
+      "InsertRecordsResponse": {
+        "properties": {
+          "duration_ns": {
+            "title": "Duration Ns",
+            "type": "integer"
+          },
+          "inserted": {
+            "title": "Inserted",
+            "type": "integer"
+          },
+          "pages_allocated": {
+            "title": "Pages Allocated",
+            "type": "integer"
+          },
+          "record_ids": {
+            "items": {
+              "$ref": "#/components/schemas/RecordIdModel"
+            },
+            "title": "Record Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "inserted",
+          "record_ids",
+          "pages_allocated",
+          "duration_ns"
+        ],
+        "title": "InsertRecordsResponse",
+        "type": "object"
+      },
+      "PageDetailModel": {
+        "properties": {
+          "free_end": {
+            "title": "Free End",
+            "type": "integer"
+          },
+          "free_start": {
+            "title": "Free Start",
+            "type": "integer"
+          },
+          "header_fields": {
+            "items": {
+              "$ref": "#/components/schemas/HeaderFieldModel"
+            },
+            "title": "Header Fields",
+            "type": "array"
+          },
+          "header_size": {
+            "title": "Header Size",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "raw_hex": {
+            "description": "The entire page, hex-encoded",
+            "title": "Raw Hex",
+            "type": "string"
+          },
+          "slot_directory_end": {
+            "title": "Slot Directory End",
+            "type": "integer"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/SlotDetailModel"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PageSummaryModel"
+          }
+        },
+        "required": [
+          "summary",
+          "header_fields",
+          "slots",
+          "raw_hex",
+          "page_size",
+          "header_size",
+          "slot_directory_end",
+          "free_start",
+          "free_end"
+        ],
+        "title": "PageDetailModel",
+        "type": "object"
+      },
+      "PageInfo": {
+        "description": "Cursor pagination for the event stream.",
+        "properties": {
+          "after_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Seq"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as after_seq to continue; null when caught up",
+            "title": "Next Cursor"
+          },
+          "returned": {
+            "title": "Returned",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "after_seq",
+          "returned",
+          "next_cursor",
+          "has_more"
+        ],
+        "title": "PageInfo",
+        "type": "object"
+      },
+      "PageListResponse": {
+        "properties": {
+          "page_count": {
+            "title": "Page Count",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/PageSummaryModel"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pages",
+          "page_size",
+          "page_count",
+          "total_bytes"
+        ],
+        "title": "PageListResponse",
+        "type": "object"
+      },
+      "PageSummaryModel": {
+        "properties": {
+          "checksum": {
+            "title": "Checksum",
+            "type": "integer"
+          },
+          "checksum_valid": {
+            "title": "Checksum Valid",
+            "type": "boolean"
+          },
+          "dirty": {
+            "default": false,
+            "description": "Always false in Milestone 1: without a buffer pool every write goes straight through, so no page is ever cached-and-dirty.",
+            "title": "Dirty",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "file_offset": {
+            "description": "page_id * page_size",
+            "title": "File Offset",
+            "type": "integer"
+          },
+          "free_space": {
+            "description": "Contiguous bytes between the two regions",
+            "title": "Free Space",
+            "type": "integer"
+          },
+          "live_record_count": {
+            "title": "Live Record Count",
+            "type": "integer"
+          },
+          "lsn": {
+            "description": "Always 0 until Milestone 9 adds the WAL",
+            "title": "Lsn",
+            "type": "integer"
+          },
+          "next_page_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page Id"
+          },
+          "owner": {
+            "description": "Table name, or 'meta' / 'schema' / 'unallocated'",
+            "title": "Owner",
+            "type": "string"
+          },
+          "page_id": {
+            "title": "Page Id",
+            "type": "integer"
+          },
+          "page_type": {
+            "description": "META, HEAP, SCHEMA, FREE, ...",
+            "title": "Page Type",
+            "type": "string"
+          },
+          "reclaimable_space": {
+            "description": "Bytes compaction would recover",
+            "title": "Reclaimable Space",
+            "type": "integer"
+          },
+          "slot_count": {
+            "description": "Directory entries, tombstones included",
+            "title": "Slot Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page_id",
+          "page_type",
+          "file_offset",
+          "lsn",
+          "checksum",
+          "checksum_valid",
+          "slot_count",
+          "live_record_count",
+          "free_space",
+          "reclaimable_space",
+          "next_page_id",
+          "owner"
+        ],
+        "title": "PageSummaryModel",
+        "type": "object"
+      },
+      "PagerStatsModel": {
+        "description": "Cumulative I/O counters since the database handle was opened.",
+        "properties": {
+          "allocations": {
+            "title": "Allocations",
+            "type": "integer"
+          },
+          "bytes_read": {
+            "title": "Bytes Read",
+            "type": "integer"
+          },
+          "bytes_written": {
+            "title": "Bytes Written",
+            "type": "integer"
+          },
+          "frees": {
+            "title": "Frees",
+            "type": "integer"
+          },
+          "page_reads": {
+            "title": "Page Reads",
+            "type": "integer"
+          },
+          "page_writes": {
+            "title": "Page Writes",
+            "type": "integer"
+          },
+          "read_time_ns": {
+            "title": "Read Time Ns",
+            "type": "integer"
+          },
+          "recycled_allocations": {
+            "title": "Recycled Allocations",
+            "type": "integer"
+          },
+          "syncs": {
+            "title": "Syncs",
+            "type": "integer"
+          },
+          "write_time_ns": {
+            "title": "Write Time Ns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page_reads",
+          "page_writes",
+          "allocations",
+          "recycled_allocations",
+          "frees",
+          "syncs",
+          "bytes_read",
+          "bytes_written",
+          "read_time_ns",
+          "write_time_ns"
+        ],
+        "title": "PagerStatsModel",
+        "type": "object"
+      },
+      "RecordIdModel": {
+        "description": "PostgreSQL calls this a ctid: the physical address of a row.",
+        "properties": {
+          "page_id": {
+            "title": "Page Id",
+            "type": "integer"
+          },
+          "slot_id": {
+            "title": "Slot Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page_id",
+          "slot_id"
+        ],
+        "title": "RecordIdModel",
+        "type": "object"
+      },
+      "RecordLayoutModel": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/FieldLayoutModel"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "null_bitmap_bits": {
+            "description": "One entry per column; true means NULL",
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Null Bitmap Bits",
+            "type": "array"
+          },
+          "null_bitmap_hex": {
+            "title": "Null Bitmap Hex",
+            "type": "string"
+          },
+          "null_bitmap_size": {
+            "title": "Null Bitmap Size",
+            "type": "integer"
+          },
+          "total_size": {
+            "title": "Total Size",
+            "type": "integer"
+          },
+          "values": {
+            "items": {},
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "values",
+          "fields",
+          "null_bitmap_hex",
+          "null_bitmap_bits",
+          "null_bitmap_size",
+          "total_size"
+        ],
+        "title": "RecordLayoutModel",
+        "type": "object"
+      },
+      "RecordsResponse": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ColumnModel"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "duration_ns": {
+            "title": "Duration Ns",
+            "type": "integer"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "pages_read": {
+            "description": "Page reads this request caused",
+            "title": "Pages Read",
+            "type": "integer"
+          },
+          "returned": {
+            "title": "Returned",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RowModel"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_scanned": {
+            "description": "Rows the heap scan touched, including those skipped by offset",
+            "title": "Rows Scanned",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "offset",
+          "limit",
+          "returned",
+          "has_more",
+          "rows_scanned",
+          "pages_read",
+          "duration_ns"
+        ],
+        "title": "RecordsResponse",
+        "type": "object"
+      },
+      "RowModel": {
+        "properties": {
+          "record_id": {
+            "$ref": "#/components/schemas/RecordIdModel"
+          },
+          "values": {
+            "description": "Positional values matching the table's column order; null is NULL",
+            "items": {},
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "record_id",
+          "values"
+        ],
+        "title": "RowModel",
+        "type": "object"
+      },
+      "SchemaModel": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ColumnModel"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "fixed_row_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Constant encoded row size, or null if any column varies",
+            "title": "Fixed Row Size"
+          },
+          "null_bitmap_size": {
+            "description": "Bytes of null bitmap per record",
+            "title": "Null Bitmap Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "columns",
+          "null_bitmap_size",
+          "fixed_row_size"
+        ],
+        "title": "SchemaModel",
+        "type": "object"
+      },
+      "SetTraceLevelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "OFF",
+              "SUMMARY",
+              "OPERATOR",
+              "STORAGE",
+              "VERBOSE"
+            ],
+            "title": "Level",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "title": "SetTraceLevelRequest",
+        "type": "object"
+      },
+      "SlotDetailModel": {
+        "properties": {
+          "decode_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decode Error"
+          },
+          "is_live": {
+            "title": "Is Live",
+            "type": "boolean"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "raw_hex": {
+            "title": "Raw Hex",
+            "type": "string"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordLayoutModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slot_id": {
+            "title": "Slot Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot_id",
+          "offset",
+          "length",
+          "is_live",
+          "raw_hex"
+        ],
+        "title": "SlotDetailModel",
+        "type": "object"
+      },
+      "TableResponse": {
+        "properties": {
+          "first_page_id": {
+            "title": "First Page Id",
+            "type": "integer"
+          },
+          "heap_page_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Heap Page Ids",
+            "type": "array"
+          },
+          "last_page_id": {
+            "title": "Last Page Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "row_count": {
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SchemaModel"
+          }
+        },
+        "required": [
+          "name",
+          "schema",
+          "row_count",
+          "heap_page_ids",
+          "first_page_id",
+          "last_page_id"
+        ],
+        "title": "TableResponse",
+        "type": "object"
+      },
+      "TraceLevelResponse": {
+        "properties": {
+          "level": {
+            "enum": [
+              "OFF",
+              "SUMMARY",
+              "OPERATOR",
+              "STORAGE",
+              "VERBOSE"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/TraceStatsModel"
+          }
+        },
+        "required": [
+          "level",
+          "stats"
+        ],
+        "title": "TraceLevelResponse",
+        "type": "object"
+      },
+      "TraceRecordModel": {
+        "description": "One diagnostic event with the envelope the tracer stamped on it.",
+        "properties": {
+          "category": {
+            "enum": [
+              "lifecycle",
+              "storage",
+              "record",
+              "parser",
+              "operator",
+              "catalog",
+              "index",
+              "planner",
+              "buffer_pool",
+              "transaction",
+              "wal",
+              "recovery",
+              "lock",
+              "mvcc"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "event": {
+            "additionalProperties": true,
+            "description": "Flat payload; fields depend on event_type",
+            "title": "Event",
+            "type": "object"
+          },
+          "event_type": {
+            "description": "Event class name, e.g. 'PageReadEvent'",
+            "title": "Event Type",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "OFF",
+              "SUMMARY",
+              "OPERATOR",
+              "STORAGE",
+              "VERBOSE"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "seq": {
+            "description": "Monotonic per database; also the pagination cursor",
+            "title": "Seq",
+            "type": "integer"
+          },
+          "timestamp_ns": {
+            "title": "Timestamp Ns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "timestamp_ns",
+          "category",
+          "level",
+          "event_type",
+          "event"
+        ],
+        "title": "TraceRecordModel",
+        "type": "object"
+      },
+      "TraceStatsModel": {
+        "description": "Retention state, so a client can tell when it has missed events.",
+        "properties": {
+          "capacity": {
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "dropped": {
+            "description": "Events evicted from the ring buffer before being read",
+            "title": "Dropped",
+            "type": "integer"
+          },
+          "level": {
+            "enum": [
+              "OFF",
+              "SUMMARY",
+              "OPERATOR",
+              "STORAGE",
+              "VERBOSE"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "total_recorded": {
+            "title": "Total Recorded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "capacity",
+          "size",
+          "total_recorded",
+          "dropped",
+          "level"
+        ],
+        "title": "TraceStatsModel",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "HTTP and WebSocket access to a running ChenDB engine, for the Visual Database\nExplorer.\n\nEverything served here is real engine state read from a real database file.\nEndpoints for features that do not exist yet are absent rather than stubbed:\ncheck `features` on `/health` to see what this build supports.",
+    "title": "ChenDB Engine API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/databases": {
+      "get": {
+        "operationId": "list_databases_api_v1_databases_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List databases",
+        "tags": [
+          "databases"
+        ]
+      },
+      "post": {
+        "operationId": "create_database_api_v1_databases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDatabaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a database",
+        "tags": [
+          "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}": {
+      "delete": {
+        "operationId": "delete_database_api_v1_databases__database_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete a database file",
+        "tags": [
+          "databases"
+        ]
+      },
+      "get": {
+        "operationId": "get_database_detail_api_v1_databases__database_id__get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Database detail",
+        "tags": [
+          "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/events": {
+      "delete": {
+        "operationId": "clear_events_api_v1_databases__database_id__events_delete",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceLevelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear retained events",
+        "tags": [
+          "diagnostics"
+        ]
+      },
+      "get": {
+        "description": "Page through retained events by sequence number.\n\n``after_seq`` is a stable cursor: sequence numbers are assigned\nmonotonically by the tracer, so paging cannot skip or repeat an event even\nwhile new ones arrive.",
+        "operationId": "list_events_api_v1_databases__database_id__events_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/EventCategory"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recent events",
+        "tags": [
+          "diagnostics"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/pages": {
+      "get": {
+        "description": "Summarize all pages in the file.\n\nReads every page, so it is O(pages) syscalls \u2014 fine for the sizes a\nvisualizer works with, and it will get cheap once Milestone 7's buffer pool\nkeeps hot pages in memory.",
+        "operationId": "list_pages_api_v1_databases__database_id__pages_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List every page",
+        "tags": [
+          "pages"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/pages/{page_id}": {
+      "get": {
+        "operationId": "get_page_api_v1_databases__database_id__pages__page_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "title": "Page Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageDetailModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect one page: header, slot directory, raw bytes, decoded records",
+        "tags": [
+          "pages"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/records": {
+      "get": {
+        "description": "Return a window of the heap scan.\n\nThere is no index and no ``LIMIT`` pushdown until later milestones, so\n``offset`` is honoured by discarding rows the scan already produced. The\nresponse reports ``rows_scanned`` and ``pages_read`` precisely so that cost\nis visible rather than hidden.",
+        "operationId": "list_records_api_v1_databases__database_id__records_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scan rows",
+        "tags": [
+          "databases"
+        ]
+      },
+      "post": {
+        "operationId": "insert_records_api_v1_databases__database_id__records_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InsertRecordsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsertRecordsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Insert rows",
+        "tags": [
+          "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/records/{page_id}/{slot_id}": {
+      "delete": {
+        "operationId": "delete_record_api_v1_databases__database_id__records__page_id___slot_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "page_id",
+            "required": true,
+            "schema": {
+              "title": "Page Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slot_id",
+            "required": true,
+            "schema": {
+              "title": "Slot Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteRecordResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete the row at a record id",
+        "tags": [
+          "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/table": {
+      "get": {
+        "operationId": "get_table_api_v1_databases__database_id__table_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Table and schema",
+        "tags": [
+          "databases"
+        ]
+      },
+      "post": {
+        "operationId": "create_table_api_v1_databases__database_id__table_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTableRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Define the table (Milestone 1 allows one per database)",
+        "tags": [
+          "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/trace": {
+      "get": {
+        "operationId": "get_trace_level_api_v1_databases__database_id__trace_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceLevelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get the trace level",
+        "tags": [
+          "diagnostics"
+        ]
+      },
+      "put": {
+        "operationId": "set_trace_level_api_v1_databases__database_id__trace_put",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTraceLevelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceLevelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set the trace level",
+        "tags": [
+          "diagnostics"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Engine version, milestone and feature flags",
+        "tags": [
+          "meta"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chendb"
+version = "0.1.0"
+description = "A relational database engine built from scratch in Python, with a visual explorer for its internals."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [{ name = "Yanzhen Chen" }]
+keywords = ["database", "storage-engine", "b-tree", "wal", "mvcc", "education"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database :: Database Engines/Servers",
+]
+
+# The engine itself has no runtime dependencies. That is a design constraint,
+# not an accident: tests/unit/test_architecture_boundaries.py enforces it.
+dependencies = []
+
+[project.optional-dependencies]
+# Only the visualization server needs these.
+server = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "websockets>=13",
+    "ruff>=0.7",
+]
+
+[project.scripts]
+chendb = "engine.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/YheChen/ChenDB"
+
+[tool.setuptools.packages.find]
+include = ["engine*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "slow: takes more than a second; deselect with -m 'not slow'",
+]
+
+[tool.coverage.run]
+source = ["engine"]
+branch = true
+omit = ["engine/__main__.py", "engine/server/__main__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 92
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",   # long lines in prose docstrings are fine
+    "B008",   # FastAPI's Depends() in defaults is idiomatic
+    # N818 wants every exception to end in "Error". These class names are part
+    # of the public API: they are returned verbatim in the error envelope
+    # ({"error": "DatabaseNotFound"}) and asserted on by clients and tests.
+    # Renaming them to satisfy a naming convention would be a breaking change.
+    "N818",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["SLF001"]           # tests may reach into private helpers
+"benchmarks/*" = ["RUF001"]      # "×" in reported ratios is intentional
+"engine/diagnostics/__init__.py" = ["RUF022"]  # __all__ is grouped by concern
