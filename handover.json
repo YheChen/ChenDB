@@ -36,7 +36,8 @@
     "make": "make help lists everything",
     "browser_verify": "Use mcp__Claude_Browser__preview_start with {name: 'visualizer'} (.claude/launch.json defines it), then read_page/computer. Start the Python server separately with Bash first.",
     "bench_index": ".venv/bin/python benchmarks/index_vs_scan.py",
-    "example_m5": ".venv/bin/python examples/milestone5_indexes.py"
+    "example_m5": ".venv/bin/python examples/milestone5_indexes.py",
+    "example_m6": ".venv/bin/python examples/milestone6_planner.py"
   },
   "status": {
     "milestone_1": {
@@ -48,7 +49,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 6 \u2014 binder, logical + physical plans, cost model, EXPLAIN. NOT STARTED. See milestone_6_plan below.",
+    "next": "Milestone 7 \u2014 buffer pool, pinning, LRU eviction. NOT STARTED. See milestone_7_plan below.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -60,6 +61,10 @@
     "milestone_5": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/index/{key,node,bplustree}.py; FILE FORMAT v3 (chendb_indexes system table, id 3; meta page gains catalog_indexes_*; next_table_id renamed next_object_id and now serves both tables and indexes); Page.insert_at / delete_at / clear_records for ordered slot directories; CREATE [UNIQUE] INDEX in the parser and executor; IndexScan operator + rule-based access-path choice in choose_access_path(); index maintenance on Database.insert_many and delete; 6 index events; StepKind.INDEX_OPERATION + ResumeMode.UNTIL_INDEX_OPERATION; /indexes endpoints incl. a traced search; visualizer Indexes workspace (hand-drawn SVG B+ tree, traced descent, node -> page inspector); benchmarks/index_vs_scan.py; examples/milestone5_indexes.py; docs/milestone-05-btree-index.md. ALSO fixed the CLI (python -m engine), broken since M4 when the Database row API became table-scoped, and added tests/integration/test_cli.py."
+    },
+    "milestone_6": {
+      "state": "COMPLETE and MERGED to master",
+      "shipped": "engine/planner/{logical,statistics,physical}.py and engine/optimizer/{cost,rules}.py; NO format bump (statistics are in memory, deliberately); EXPLAIN, EXPLAIN ANALYZE and ANALYZE in the parser and executor; 5 planner events; PlannerOptions for forcing an access path; StepController.arm() so stepping starts at execution not planning; PlanModel carries estimated-vs-actual per operator, every alternative with its cost, and statistics staleness; visualizer shows 'est N' per operator and a 'what the planner considered' section; .analyze / .stats-of in the CLI; benchmarks/index_vs_scan.py now grades the planner's choice; examples/milestone6_planner.py; docs/milestone-06-planner.md."
     }
   },
   "architecture_invariants": {
@@ -93,7 +98,14 @@
     "split_point": "plan_split() balances by BYTES then clamps to the range where both halves fit. By count breaks on variable-width TEXT keys. The clamp range is provably non-empty: a node overflows once, so total <= capacity + one entry, and one entry always fits on a page alone.",
     "rule_based_access_path": "Access-path choice is RULE-based in M5 and knowingly wrong above ~5% selectivity \u2014 benchmarks/index_vs_scan.py shows the index 3.8x SLOWER at 70% selectivity, because it does one random heap read per matching row. That is the evidence M6's cost model is built to act on; do NOT 'fix' it with a hand-tuned threshold.",
     "null_and_range_bounds": "A range bounded only from above must anchor its low end at SMALLEST_VALUE_KEY (b'\\x02'), or it sweeps up the NULL keys \u2014 and no comparison is ever true for NULL. See _bounds_for() in engine/executor/engine.py.",
-    "btree_view_is_hand_drawn": "The B+ tree view is hand-drawn SVG, not d3-hierarchy and not React Flow. d3's tidy-tree assumes uniform node widths and only draws tree edges; a B+ tree node is a variable-width row of cells and the leaf chain is not a tree edge. Placing boxes directly is less code than bending d3 to it, and adds no dependency."
+    "btree_view_is_hand_drawn": "The B+ tree view is hand-drawn SVG, not d3-hierarchy and not React Flow. d3's tidy-tree assumes uniform node widths and only draws tree edges; a B+ tree node is a variable-width row of cells and the leaf chain is not a tree edge. Placing boxes directly is less code than bending d3 to it, and adds no dependency.",
+    "cost_constants_are_measured": "engine/optimizer/cost.py's constants are FITTED to benchmarks/index_vs_scan.py, not copied from PostgreSQL. PostgreSQL makes CPU 100x cheaper than a page read; here CPU_TUPLE_COST is 0.15 against PAGE_COST 1.0, because a page read hits the OS cache while a row costs interpreted Python. Copying PostgreSQL's ratio made the model refuse the index at 0.3% selectivity where it still wins by 80x. The fit is ~18.9 us per cost unit across a 650x range AND across both access paths \u2014 that second part is what stops the planner mis-weighting one path against the other. Re-measure when Milestone 7 lands.",
+    "statistics_not_persisted": "No chendb_stats table and no format version 4. A statistic has no correctness consequence (a wrong one is a slow query, never a wrong answer), the interesting failure is STALENESS, and PostgreSQL persists only because rescanning a terabyte at startup is impossible \u2014 a reason that does not apply here. Gathered lazily on first plan, refreshed by ANALYZE, staleness detected by comparing the page-write counter.",
+    "stale_statistics_are_used": "Deliberately. A slightly old estimate beats none, and recomputing per insert would cost a full scan per row. Staleness is REPORTED instead \u2014 in EXPLAIN, in PlanModel.statistics.stale, and as a warning in the UI.",
+    "physical_nodes_are_data": "PhysicalIndexScan holds an index NAME and key bounds, not a BPlusTree. materialise() turns a plan into operators as a separate step, which is what lets EXPLAIN cost a query it never runs and lets the API serialise a plan outside the engine lock.",
+    "every_alternative_is_reported": "PlanAlternativeEvent fires once per candidate, chosen or not, and PlanModel.alternatives carries all of them with rejected_because. A planner that reports only its answer cannot be checked.",
+    "disabled_paths_are_penalised": "PlannerOptions turns a path off by adding DISABLE_COST = 1e10, not by removing it \u2014 PostgreSQL's disable_cost trick \u2014 because a query with every path disabled must still produce a plan.",
+    "stepping_starts_at_execution": "StepController.arm() gates checkpoints until the operator tree opens. Planning reads pages (gathering statistics scans the table), so without it the first dozen steps of every stepped query were the planner counting rows. Cancellation is NOT gated. EXPLAIN is how you inspect the part that is skipped."
   },
   "gotchas": [
     "The visualizer needs BOTH resolve.alias in vite.config.ts AND paths in tsconfig.json for '@/*'. tsc passing does not mean Rollup will resolve it.",
@@ -119,30 +131,37 @@
     "Database.delete has to READ the row before deleting it, because an index entry is keyed on the value. That is why a delete costs a read even when the caller knows the address, and why PostgreSQL defers index cleanup to VACUUM instead.",
     "create_index populates the tree BEFORE inserting the chendb_indexes row, so root splits during the build are already reflected in the root_page written. The on_root_changed callback is attached only afterwards, for later splits.",
     "The CLI (python -m engine) had NO tests and was broken from M4 through M5 \u2014 db.table and db.schema became a method and a removed attribute. tests/integration/test_cli.py now covers every command. Keep it that way: it is one of the three promised usage modes.",
-    "examples/milestone1_storage.py was also broken by M4's table-scoped API and is fixed. Nothing runs the examples in CI; check them by hand after an API change: for f in examples/milestone*.py; do .venv/bin/python \"$f\" >/dev/null || echo FAIL $f; done"
+    "examples/milestone1_storage.py was also broken by M4's table-scoped API and is fixed. Nothing runs the examples in CI; check them by hand after an API change: for f in examples/milestone*.py; do .venv/bin/python \"$f\" >/dev/null || echo FAIL $f; done",
+    "A rewrite rule must return the SAME OBJECT when it changes nothing, or apply_rules reports it as having fired on every query. fold_constants originally rebuilt every BinaryOp unconditionally and the 'rewrites applied' list became noise. See fold_constants_in in engine/optimizer/rules.py.",
+    "`-100` parses as UnaryOp(NEGATE, Literal(100)), not a negative literal, so `col < -100` matches neither the selectivity estimator's nor the index planner's `column <op> literal` shape until constant folding collapses it. Fold before estimating \u2014 see selectivity_of() in tests/unit/test_cost_model.py.",
+    "Charging CPU_TUPLE_COST for predicate evaluation double-counts the decode and over-costs a filtered sequential scan by 45%, which biases every crossover toward the index. CPU_PREDICATE_COST exists for this. If you add an operator, check the us-per-cost-unit column in benchmarks/index_vs_scan.py stays flat.",
+    "ANALYZE (gather statistics) and EXPLAIN ANALYZE (run the query, report actual rows) do opposite things and share a word. Both exist; do not conflate them.",
+    "The API caps a response at DEFAULT_MAX_ROWS = 10,000. A benchmark or test measuring a predicate matching more must pass max_rows, or the measurement stops early while the estimate covers the whole predicate \u2014 which makes a correct cost model look like it over-estimates by 40%.",
+    "Operator ids are numbered PER TYPE (filter_1, project_1), not globally. A shared counter produced project_2 for the first project and broke several step-mode tests. See _Namer in engine/planner/physical.py.",
+    "PlanTree and PlanPanel are different components. Adding something to PlanPanel does NOT make it appear in the Execution workspace, which renders PlanTree directly \u2014 the alternatives section had to be wired into both."
   ],
   "test_layout": {
-    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree",
-    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli",
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model",
+    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli, test_planner_api",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "790 Python tests, 76 frontend tests",
+    "counts_at_handover": "874 Python tests, 89 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
-    "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly."
+    "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
+    "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py."
   },
-  "milestone_6_plan": {
-    "goal": "A real planner: bind to a logical plan, enumerate physical alternatives, cost them with statistics, pick one, and show the rejected ones. Plus EXPLAIN.",
+  "milestone_7_plan": {
+    "goal": "A buffer pool: pages cached in memory with pinning and LRU eviction, so a page read stops being a syscall. This is the milestone that makes RANDOM_PAGE_COST mean something and moves the index/scan crossover.",
     "engine_files_to_create": [
-      "engine/planner/logical.py \u2014 logical operators (Scan, Filter, Project) built by the binder, independent of how they will run. engine/executor/binder.py already produces BoundSelect; M6 should make it produce a logical plan and leave binder.py doing only name resolution.",
-      "engine/optimizer/cost.py \u2014 the cost model. It needs statistics that do not exist yet: row counts (heap.count() is O(pages), so cache it), distinct values per column, ideally a histogram. Decide where they live \u2014 a chendb_stats system table would be FORMAT VERSION 4; an in-memory per-open-database cache would not.",
-      "engine/optimizer/rules.py \u2014 rewrite rules. Two exist informally and should move here: dropping an identity projection (build_select_plan) and folding comparisons into an index range (choose_access_path).",
-      "engine/planner/physical.py \u2014 enumerate alternatives and pick the cheapest. choose_access_path() in engine/executor/engine.py is the seed: it already returns an AccessPath with the index condition split from the residual filter, which is exactly what EXPLAIN prints as 'Index Cond' vs 'Filter'."
+      "engine/storage/buffer.py \u2014 BufferPool: frames, a page table, pin counts, dirty flags, an eviction policy. Pager.read_page becomes a pool lookup; keep Pager as the thing that actually touches the file.",
+      "Pinning is the hard part. A page in use must not be evicted, so every caller that holds a Page needs to pin and release it. Today HeapFile, BTreeNode and inspect.py all hold pages informally \u2014 audit them. Getting this wrong evicts a page someone is writing to, which corrupts silently.",
+      "Eviction policy: start with LRU, then note why real systems do not use it. PostgreSQL uses a clock sweep with usage counts because true LRU needs a lock on every access; a sequential scan also evicts everything useful, which is why PostgreSQL rings-buffers large scans."
     ],
-    "the_number_to_beat": "benchmarks/index_vs_scan.py, 20k rows, 4 KiB pages: the index wins at <=5% selectivity (0.7 ms vs 57.9 ms at 0.1%) and loses above ~20% (225 ms vs 60 ms at 70%). M6 succeeds when the last two rows of that table come out as SeqScan. Add an assertion for that once the cost model exists.",
-    "events_to_add": "LogicalPlanEvent, PhysicalPlanEvent, PlanAlternativeEvent, CostEstimateEvent \u2014 signatures already in docs/event-schema.md under 'Planned events'. EventCategory.PLANNER exists. Remember the `level` field-name trap.",
-    "sql": "EXPLAIN is currently in parser._NOT_YET pointing at Milestone 6. Add ExplainStatement to ast.py and a branch in parse_statement; the executor should return the plan as a QueryResult with rows rather than a special response shape.",
-    "api": "Flip features.planner in engine/server/app.py; MILESTONE = 6; version 0.6.0 in engine/__init__.py AND pyproject.toml. PlanModel already carries per-operator actual stats; M6 adds estimated_rows / estimated_cost alongside them so the UI can show estimated-vs-actual, the single most useful planner view.",
-    "visualizer": "A Plan workspace gated on features.planner: the chosen plan beside the rejected alternatives with their costs, and estimated-vs-actual per operator. React Flow is justified if the plan becomes a DAG (it is a tree today, and features/execution/PlanTree.tsx already renders trees well).",
-    "gotcha_to_expect": "Statistics go stale. Whatever M6 caches, decide explicitly when it is invalidated \u2014 PostgreSQL's answer is that reltuples is an ESTIMATE refreshed by ANALYZE, and being honest that it is an estimate beats pretending to keep it exact on every insert."
+    "recalibrate_the_cost_model": "MANDATORY, not optional. RANDOM_PAGE_COST is 1.0 today only because every read is a pread into the OS cache. With a pool a hit is nearly free and a miss is a real read, so both PAGE_COST and RANDOM_PAGE_COST have to be re-measured. The us-per-cost-unit column in benchmarks/index_vs_scan.py is the regression test: if it stops being flat, the model is wrong and the planner cannot be trusted. Expect the crossover to move a long way \u2014 the index scan's dominant term is re-reading heap pages a pool would keep.",
+    "cost_model_extension": "Estimating what fraction of a scan will hit the pool is the next real modelling problem, and is what PostgreSQL's effective_cache_size approximates. Milestone 7 can ship without it; say so if it does.",
+    "events_to_add": "BufferPoolEvent \u2014 action: hit|miss|pin|unpin|evict|flush, frame_id, page_id, dirty, pin_count. Signature already in docs/event-schema.md. EventCategory.BUFFER_POOL exists. Emit at STORAGE; a hit per page read is a lot of events, so consider VERBOSE for hits and STORAGE for misses.",
+    "api": "GET /databases/{db}/buffer-pool returning the frame grid: per frame the page id, pin count, dirty flag and last-used order, plus hit/miss counters. Flip features.buffer_pool; MILESTONE = 7; version 0.7.0 in engine/__init__.py AND pyproject.toml.",
+    "visualizer": "A Buffer pool workspace gated on features.buffer_pool: the frame grid with hit/miss animation, and a workload runner so a user can watch a sequential scan evict everything. PageReadEvent already carries source: 'disk' | 'buffer_pool' \u2014 that field has been in the schema since Milestone 1 and finally becomes non-constant.",
+    "gotcha_to_expect": "PagerStats.page_reads currently counts syscalls. Once there is a pool it has to distinguish logical reads from physical ones, and several tests assert on page_reads as a proxy for I/O \u2014 they will all need revisiting, and some of them are measuring the wrong thing already."
   }
 }

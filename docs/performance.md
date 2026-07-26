@@ -102,6 +102,58 @@ exploits yet: there is no `ORDER BY`.
 
 ---
 
+## The cost model — Milestone 6
+
+The constants in `engine/optimizer/cost.py` are **measured for this engine**,
+not copied from PostgreSQL, and the difference is the point. PostgreSQL's
+defaults make CPU a hundred times cheaper than a page read; here it is about a
+seventh, because a page read hits the OS cache while a row costs interpreted
+Python.
+
+```python
+PAGE_COST          = 1.0    # pread + CRC32 over the page — the unit
+RANDOM_PAGE_COST   = 1.0    # no buffer pool yet, so locality is nearly free
+CPU_TUPLE_COST     = 0.15   # decode one record
+CPU_PREDICATE_COST = 0.05   # evaluate a predicate on an already-decoded row
+CPU_INDEX_COST     = 0.005  # compare one key inside a node — a memcmp
+```
+
+The fit, from `benchmarks/index_vs_scan.py`:
+
+| Plan | Estimated | Measured | µs per unit |
+|---|---:|---:|---:|
+| index scan, 20 rows | 25 | 0.7 ms | 26.7 |
+| index scan, 1 000 rows | 1 168 | 22.2 ms | 19.0 |
+| index scan, 4 000 rows | 4 667 | 87.2 ms | 18.7 |
+| index scan, 14 000 rows | 16 328 | 307.5 ms | 18.8 |
+| sequential scan + filter | 4 303 | 81.3 ms | 18.9 |
+
+Near-constant over a 650× range **and the same for both access paths**. The
+second part is what matters — a model that is internally consistent but
+mis-weights one path against the other picks the wrong plan while looking
+calibrated. That was a real bug here: charging a full `CPU_TUPLE_COST` for
+predicate evaluation double-counted the decode and over-costed a filtered
+sequential scan by 45%.
+
+The payoff, against the Milestone 5 numbers above:
+
+```
+ predicate            rows    seq scan  index scan   M5 chose    M6 chooses
+ bucket < 200         4000     61.4 ms     90.8 ms   index ✗     seq   ✓
+ bucket < 700        14000     80.8 ms    310.0 ms   index ✗     seq   ✓
+```
+
+`ANALYZE` costs one full scan: 3.2 s over 20,000 rows at 4 KiB pages, building
+an exact distinct-value set per column. A real system samples — PostgreSQL reads
+about 30,000 rows however large the table is — because a full scan to refresh an
+*estimate* is absurd past a certain size.
+
+Milestone 7's buffer pool makes `RANDOM_PAGE_COST` mean something and will move
+the crossover. The µs-per-unit column above is the regression test: if it stops
+being flat, the model needs recalibrating before the planner can be trusted.
+
+---
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |

@@ -281,16 +281,31 @@ export interface InsertRecordsResponse {
   duration_ns: number;
 }
 
-/** One node of the physical plan, with what it actually did. */
+/**
+ * One node of the physical plan: what it will cost, and what it did.
+ * 
+ * Estimated and actual sit side by side because the gap between them is the
+ * single most useful thing a plan view can show. A plan that is slow is almost
+ * always a plan whose row estimate was wrong, and no amount of staring at the
+ * chosen operators reveals that — only the comparison does.
+ */
 export interface OperatorNodeModel {
   operator_id: string;
-  /** SeqScan, Filter or Project */
+  /** SeqScan, IndexScan, Filter or Project */
   operator_type: string;
-  /** Predicate, table or projection list */
+  /** Predicate, table, index condition or projection */
   detail: string;
   /** operator_ids of inputs, left to right */
   children: string[];
   output_columns: ResultColumnModel[];
+  /** Rows the planner expected out; null if the plan was not costed */
+  estimated_rows: null | number;
+  /** Cumulative estimated cost of this node and everything below it */
+  estimated_cost: null | number;
+  /** The I/O half of this node's own cost */
+  estimated_io_cost: null | number;
+  /** The CPU half of this node's own cost */
+  estimated_cpu_cost: null | number;
   /** Times this operator was asked for a row */
   next_calls: number;
   /** Rows it consumed from its children */
@@ -396,9 +411,39 @@ export interface ParseResponse {
   duration_ns: number;
 }
 
+/** One access path the planner considered, chosen or not. */
+export interface PlanAlternativeModel {
+  description: string;
+  /** PhysicalSeqScan or PhysicalIndexScan */
+  access_path: string;
+  estimated_cost: number;
+  estimated_rows: number;
+  chosen: boolean;
+  /** Why this lost, e.g. '3.6x the cost of the chosen plan'. Empty for the winner. */
+  rejected_because: string;
+  index_name: null | string;
+}
+
 export interface PlanModel {
   nodes: OperatorNodeModel[];
   root_id: string;
+  /** Every access path considered, with the cost of each */
+  alternatives: PlanAlternativeModel[];
+  /** Rewrite rules that changed the plan, in the order they ran */
+  rewrites: string[];
+  /** Total cost of the chosen plan */
+  estimated_cost: null | number;
+  statistics: PlanStatisticsModel | null;
+}
+
+/** The statistics the estimates were computed from. */
+export interface PlanStatisticsModel {
+  table_name: string;
+  row_count: number;
+  page_count: number;
+  /** True when the table was written to after it was last analyzed, so every estimate above is based on old numbers */
+  stale: boolean;
+  gathered_at_ns: number;
 }
 
 export interface QueryRequest {

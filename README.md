@@ -11,7 +11,7 @@ file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M5     database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M6     database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  [ Storage ]  [ SQL ]  [ Execution ]  [ Indexes ]                        │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -37,7 +37,7 @@ file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Milestones 1–5 of 10 are complete.** Nothing is stubbed ahead of time: a
+**Milestones 1–6 of 10 are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -56,7 +56,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 0.5.0 — Milestone 5 (storage + parser + execution + catalog + indexes)
+ChenDB 0.6.0 — Milestone 6 (storage + SQL + execution + catalog + indexes + planner)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -266,6 +266,7 @@ change the system observed.
 | `python examples/milestone3_execution.py` | narrated walkthrough of the executor |
 | `python examples/milestone4_catalog.py` | narrated walkthrough of the catalog |
 | `python examples/milestone5_indexes.py` | narrated walkthrough of the B+ tree |
+| `python examples/milestone6_planner.py` | narrated walkthrough of the planner |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
@@ -285,6 +286,7 @@ change the system observed.
 | [Milestone 3](docs/milestone-03-execution-engine.md) | the volcano model, three-valued logic, and step mode |
 | [Milestone 4](docs/milestone-04-catalog.md) | the catalog bootstrap problem, and format version 2 |
 | [Milestone 5](docs/milestone-05-btree-index.md) | order-preserving keys, the B+ tree, and when an index loses |
+| [Milestone 6](docs/milestone-06-planner.md) | statistics, a cost model calibrated by measurement, and EXPLAIN |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

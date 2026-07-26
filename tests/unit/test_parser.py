@@ -473,7 +473,6 @@ def test_star_inside_an_expression_is_explained():
         ("UPDATE t SET a = 1", "UPDATE"),
         ("DROP TABLE t", "DROP"),
         ("BEGIN", "Milestone 8"),
-        ("EXPLAIN SELECT * FROM t", "Milestone 6"),
         ("SELECT * FROM t WHERE a IN (1)", "IN"),
         ("SELECT * FROM t WHERE a LIKE 'x'", "LIKE"),
         ("CREATE TABLE t (a INTEGER UNIQUE)", "CREATE UNIQUE INDEX"),

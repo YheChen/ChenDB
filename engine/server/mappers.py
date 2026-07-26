@@ -30,6 +30,12 @@ from engine.index.bplustree import IndexStats, TreeSnapshot
 from engine.parser.analyze import ParseOutcome
 from engine.parser.ast import Node, walk
 from engine.parser.tokens import Token
+from engine.planner.physical import (
+    Alternative,
+    PhysicalNode,
+    PlannedQuery,
+    walk_physical,
+)
 from engine.serialization.record import FieldLayout, RecordLayout
 from engine.serialization.schema import Column, Schema
 from engine.server.executions import Execution
@@ -67,7 +73,9 @@ from engine.server.schemas.query import (
     ExecutionDetail,
     ExecutionSummary,
     OperatorNodeModel,
+    PlanAlternativeModel,
     PlanModel,
+    PlanStatisticsModel,
     QueryResultModel,
     ResultColumnModel,
 )
@@ -414,12 +422,20 @@ def result_column_to_api(column: ResultColumn) -> ResultColumnModel:
     )
 
 
-def _operator_nodes(root: Operator) -> list[OperatorNodeModel]:
-    """Flatten an operator tree, parents before children."""
+def _operator_nodes(
+    root: Operator, estimates: dict[str, PhysicalNode]
+) -> list[OperatorNodeModel]:
+    """Flatten an operator tree, parents before children, pairing estimates.
+
+    Matched by ``operator_id``, which the planner assigns and the executor
+    carries through unchanged. That shared id is the only thing linking the two
+    trees, and it is what lets the UI put estimated and actual on one line.
+    """
     nodes: list[OperatorNodeModel] = []
     stack = [root]
     while stack:
         operator = stack.pop()
+        planned = estimates.get(operator.operator_id)
         nodes.append(
             OperatorNodeModel(
                 operator_id=operator.operator_id,
@@ -429,6 +445,10 @@ def _operator_nodes(root: Operator) -> list[OperatorNodeModel]:
                 output_columns=[
                     result_column_to_api(column) for column in operator.output_columns
                 ],
+                estimated_rows=round(planned.estimated.rows, 1) if planned else None,
+                estimated_cost=round(planned.total_cost, 2) if planned else None,
+                estimated_io_cost=round(planned.estimated.io, 2) if planned else None,
+                estimated_cpu_cost=round(planned.estimated.cpu, 2) if planned else None,
                 next_calls=operator.stats.next_calls,
                 input_rows=operator.stats.input_rows,
                 output_rows=operator.stats.output_rows,
@@ -440,8 +460,45 @@ def _operator_nodes(root: Operator) -> list[OperatorNodeModel]:
     return nodes
 
 
-def plan_to_api(root: Operator) -> PlanModel:
-    return PlanModel(nodes=_operator_nodes(root), root_id=root.operator_id)
+def plan_alternative_to_api(alternative: Alternative) -> PlanAlternativeModel:
+    return PlanAlternativeModel(
+        description=alternative.description,
+        access_path=alternative.access_path,
+        estimated_cost=round(alternative.cost.total, 2),
+        estimated_rows=round(alternative.cost.rows, 1),
+        chosen=alternative.chosen,
+        rejected_because=alternative.rejected_because,
+        index_name=alternative.index_name,
+    )
+
+
+def plan_statistics_to_api(planned: PlannedQuery) -> PlanStatisticsModel:
+    stats = planned.statistics
+    return PlanStatisticsModel(
+        table_name=stats.table_name,
+        row_count=stats.row_count,
+        page_count=stats.page_count,
+        stale=planned.statistics_are_stale,
+        gathered_at_ns=stats.gathered_at_ns,
+    )
+
+
+def plan_to_api(root: Operator, planned: PlannedQuery | None = None) -> PlanModel:
+    """The running plan, annotated with what the planner expected of it."""
+    estimates = (
+        {node.node_id: node for node in walk_physical(planned.root)} if planned else {}
+    )
+    return PlanModel(
+        nodes=_operator_nodes(root, estimates),
+        root_id=root.operator_id,
+        alternatives=[
+            plan_alternative_to_api(alternative)
+            for alternative in (planned.alternatives if planned else ())
+        ],
+        rewrites=list(planned.rewrites) if planned else [],
+        estimated_cost=round(planned.estimated_cost, 2) if planned else None,
+        statistics=plan_statistics_to_api(planned) if planned else None,
+    )
 
 
 def _json_row(row: Sequence[Any]) -> list[Any]:
@@ -458,7 +515,9 @@ def query_result_to_api(result: QueryResult) -> QueryResultModel:
         columns=[result_column_to_api(column) for column in result.columns],
         rows=[_json_row(row) for row in result.rows],
         record_ids=[record_id_to_api(rid) for rid in result.record_ids],
-        plan=plan_to_api(result.plan) if result.plan is not None else None,
+        plan=plan_to_api(result.plan, result.planned)
+        if result.plan is not None
+        else None,
         rows_returned=stats.rows_returned,
         rows_affected=stats.rows_affected,
         rows_scanned=stats.rows_scanned,
@@ -503,7 +562,9 @@ def execution_detail_to_api(execution: Execution) -> ExecutionDetail:
         pause_kind=reason.kind.value if reason else None,
         pause_operator_id=reason.operator_id if reason else None,
         pause_detail=reason.detail if reason else "",
-        plan=plan_to_api(plan) if plan is not None else None,
+        plan=plan_to_api(plan, result.planned if result else None)
+        if plan is not None
+        else None,
         current_row=None,
         rows_so_far=len(result.rows) if result is not None else 0,
         result=query_result_to_api(result) if result is not None else None,

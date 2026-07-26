@@ -5,6 +5,10 @@ whole appeal: the grammar below can be read straight off the method names.
 
     script         := statement { ';' statement } [ ';' ]
     statement      := create_table | create_index | insert | select
+                    | explain | analyze
+
+    explain        := EXPLAIN [ ANALYZE ] statement
+    analyze        := ANALYZE [ ident ]
 
     create_table   := CREATE TABLE [ IF NOT EXISTS ] ident
                       '(' column_def { ',' column_def } ')'
@@ -65,6 +69,7 @@ from engine.diagnostics.events import AstNodeCreatedEvent, ParsedEvent, ParseErr
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import ParseError, UnsupportedSqlError
 from engine.parser.ast import (
+    AnalyzeStatement,
     BinaryOp,
     BinaryOperator,
     ColumnConstraint,
@@ -72,6 +77,7 @@ from engine.parser.ast import (
     ColumnRef,
     CreateIndexStatement,
     CreateTableStatement,
+    ExplainStatement,
     Expression,
     InsertStatement,
     IsNullTest,
@@ -145,7 +151,6 @@ _NOT_YET: Final[dict[Keyword, str]] = {
     Keyword.UPDATE: "UPDATE is not implemented yet",
     Keyword.DELETE: "DELETE is not implemented yet",
     Keyword.DROP: "DROP is not implemented yet",
-    Keyword.EXPLAIN: "EXPLAIN arrives with the query planner in Milestone 6",
     Keyword.BEGIN: "transactions arrive in Milestone 8",
     Keyword.COMMIT: "transactions arrive in Milestone 8",
     Keyword.ROLLBACK: "transactions arrive in Milestone 8",
@@ -324,14 +329,51 @@ class Parser:
             return self._insert_statement()
         if self._check_keyword(Keyword.CREATE):
             return self._create_statement()
+        if self._check_keyword(Keyword.EXPLAIN):
+            return self._explain_statement()
+        if self._check_keyword(Keyword.ANALYZE):
+            return self._analyze_statement()
 
         keyword = self._current.keyword
         if keyword is not None and keyword in _NOT_YET:
             self._unsupported(_NOT_YET[keyword])
         self._fail(
             "expected a statement",
-            expected=("SELECT", "INSERT", "CREATE TABLE", "CREATE INDEX"),
+            expected=(
+                "SELECT",
+                "INSERT",
+                "CREATE TABLE",
+                "CREATE INDEX",
+                "EXPLAIN",
+                "ANALYZE",
+            ),
         )
+
+    # -- EXPLAIN / ANALYZE -------------------------------------------------
+
+    def _explain_statement(self) -> ExplainStatement:
+        start = self._expect_keyword(Keyword.EXPLAIN).span
+        analyze = self._match_keyword(Keyword.ANALYZE) is not None
+        inner = self.parse_statement()
+        if isinstance(inner, ExplainStatement):
+            self._unsupported("EXPLAIN cannot explain another EXPLAIN")
+        return self._node(
+            ExplainStatement,
+            start.union(inner.span),
+            statement=inner,
+            analyze=analyze,
+        )
+
+    def _analyze_statement(self) -> AnalyzeStatement:
+        start = self._expect_keyword(Keyword.ANALYZE).span
+        table = None
+        span = start
+        if self._check(TokenType.IDENTIFIER) or (
+            self._check(TokenType.KEYWORD) and not self._check(TokenType.SEMICOLON)
+        ):
+            table = self._table_ref()
+            span = start.union(table.span)
+        return self._node(AnalyzeStatement, span, table=table)
 
     # -- CREATE ------------------------------------------------------------
 

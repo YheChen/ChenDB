@@ -38,7 +38,7 @@ API_PREFIX = f"/api/{API_VERSION}"
 
 #: Highest completed milestone. The frontend reads this from /health and hides
 #: panels for anything not built yet, rather than showing dead controls.
-MILESTONE = 5
+MILESTONE = 6
 
 #: Advertised capabilities. Each flips to true in the milestone that ships it.
 FEATURES: dict[str, bool] = {
@@ -50,7 +50,7 @@ FEATURES: dict[str, bool] = {
     "execution": True,     # Milestone 3 — volcano operators + step mode
     "catalog": True,       # Milestone 4 — real system tables
     "indexes": True,       # Milestone 5 — B+ trees, CREATE INDEX, tree view
-    "planner": False,      # Milestone 6
+    "planner": True,       # Milestone 6 — cost model, EXPLAIN, alternatives
     "buffer_pool": False,  # Milestone 7
     "transactions": False, # Milestone 8
     "wal": False,          # Milestone 9

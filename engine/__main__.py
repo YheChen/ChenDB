@@ -37,12 +37,13 @@ _DEFAULT_SCAN_LIMIT = 50
 _DEFAULT_EVENT_LIMIT = 20
 _DEFAULT_HEX_BYTES = 256
 
-_BANNER = f"""ChenDB {__version__} — Milestone 5 \
-(storage + parser + execution + catalog + indexes)
+_BANNER = f"""ChenDB {__version__} — Milestone 6 \
+(storage + SQL + execution + catalog + indexes + planner)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL."""
 
 _HELP = """\
-  <sql>;                         run SQL — SELECT, INSERT, CREATE TABLE/INDEX
+  <sql>;                         run SQL — SELECT, INSERT, CREATE TABLE/INDEX,
+                                 EXPLAIN [ANALYZE], ANALYZE
   .help                          show this message
   .info                          database file and meta-page summary
   .tables                        every table, with row and page counts
@@ -54,6 +55,8 @@ _HELP = """\
   .scan [limit]                  print rows
   .count                         live row count
   .delete PAGE SLOT              tombstone the record at (page, slot)
+  .analyze [TABLE]               recompute planner statistics
+  .stats-of [TABLE]              what the planner knows about a table
   .indexes                       every index, with height and size
   .tree NAME                     one B+ tree, level by level
   .find NAME VALUE               trace a point lookup through an index
@@ -107,7 +110,9 @@ class Shell:
             return True
 
         command, _, rest = line.partition(" ")
-        handler = getattr(self, f"_cmd_{command[1:]}", None)
+        # A hyphen reads better in a command than an underscore, and cannot be
+        # part of a Python identifier, so it is translated here.
+        handler = getattr(self, f"_cmd_{command[1:].replace('-', '_')}", None)
         if handler is None:
             print(f"unknown command {command!r}; try .help")
             return True
@@ -275,6 +280,32 @@ class Shell:
         page_id, slot_id = (int(part) for part in rest.split())
         deleted = self.db.delete(self.table, RecordId(page_id, slot_id))
         print("deleted" if deleted else "no live record there")
+
+    # -- planner -----------------------------------------------------------
+
+    def _cmd_analyze(self, rest: str) -> None:
+        gathered = self.db.analyze(rest.strip() or None)
+        for stats in gathered:
+            print(f"analyzed {stats.table_name}: {stats.row_count} rows, "
+                  f"{stats.page_count} pages")
+
+    def _cmd_stats_of(self, rest: str) -> None:
+        """What the planner reasons about, and how old it is."""
+        name = rest.strip() or self.table
+        stats = self.db.statistics.for_table(name)
+        stale = " (STALE — run .analyze)" if self.db.statistics.is_stale(name) else ""
+        print(f"{stats.table_name}: {stats.row_count} rows, {stats.page_count} pages{stale}")
+        print(f"  {'column':<18}{'distinct':>10}{'nulls':>8}  min / max")
+        for column in stats.columns:
+            span = (
+                "-"
+                if column.minimum is None
+                else f"{str(column.minimum)[:18]} / {str(column.maximum)[:18]}"
+            )
+            print(
+                f"  {column.name:<18}{column.distinct_count:>10}"
+                f"{column.null_count:>8}  {span}"
+            )
 
     # -- indexes -----------------------------------------------------------
 

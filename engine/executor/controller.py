@@ -26,6 +26,14 @@ releasing pages and file handles exactly as a successful query would. A thread
 killed from outside would leak whatever it was holding — and Python cannot kill a
 thread anyway.
 
+**Stepping starts at execution, not at planning.** Binding, gathering statistics
+and costing a plan all read pages, and from Milestone 6 they do so *before* the
+first operator opens. Stepping through them would mean the first dozen steps of
+every query were the planner scanning a table to count its rows — accurate, but
+not what anyone pressing "step" is asking to see. :meth:`arm` is what opens the
+gate, and it is called immediately before the operator tree opens. ``EXPLAIN``
+is how you inspect the part that is skipped.
+
 **"Run until the next page read" is driven by the diagnostics bus**, not by a
 hook in the pager. The controller registers itself as a sink; when a
 :class:`PageReadEvent` arrives it pauses. The storage engine therefore knows
@@ -160,6 +168,7 @@ class StepController:
     """
 
     __slots__ = (
+        "_armed",
         "_cancel_requested",
         "_condition",
         "_mode",
@@ -172,6 +181,7 @@ class StepController:
 
     def __init__(self, *, stepping: bool = True) -> None:
         self._condition = threading.Condition()
+        self._armed = False
         self._state = ExecutionState.PENDING
         # The first resume decides how far to run; until then, step mode pauses
         # at the first checkpoint and run mode never pauses at all.
@@ -216,6 +226,17 @@ class StepController:
                 self._state = ExecutionState.RUNNING
             self._condition.notify_all()
 
+    def arm(self) -> None:
+        """Start honouring checkpoints. Called when the operator tree opens.
+
+        Until this runs, :meth:`checkpoint` is a no-op — so the page reads that
+        planning performs (gathering statistics, most of all) do not become
+        steps. Cancellation is *not* gated: a query cancelled while it is being
+        planned still has to stop, and the next checkpoint after arming raises.
+        """
+        with self._condition:
+            self._armed = True
+
     def mark_finished(self, state: ExecutionState) -> None:
         """Called once, from the engine thread, when execution ends."""
         with self._condition:
@@ -234,7 +255,7 @@ class StepController:
         with self._condition:
             if self._cancel_requested:
                 raise QueryCancelledError("execution cancelled")
-            if not self._should_pause(kind, operator_id):
+            if not self._armed or not self._should_pause(kind, operator_id):
                 return
 
             self._state = ExecutionState.PAUSED
@@ -270,7 +291,7 @@ class StepController:
         pager and the B+ tree means neither of them has to know that stepping
         exists — and a future "run until X" mode costs one line here.
         """
-        if not self._stepping:
+        if not self._stepping or not self._armed:
             return
         event = item.event
         if isinstance(event, PageReadEvent):
@@ -340,6 +361,9 @@ class _NullController(StepController):
         return None
 
     def record(self, item: TraceRecord) -> None:
+        return None
+
+    def arm(self) -> None:
         return None
 
 

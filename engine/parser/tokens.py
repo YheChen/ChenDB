@@ -138,6 +138,7 @@ class Keyword(StrEnum):
     CREATE = "CREATE"
     DROP = "DROP"
     EXPLAIN = "EXPLAIN"
+    ANALYZE = "ANALYZE"
 
     # Clauses
     FROM = "FROM"
