@@ -34,8 +34,8 @@ export interface AstTreeModel {
 export interface CatalogResponse {
   tables: TableSummary[];
   system_tables: TableSummary[];
-  /** Id the next created table will receive */
-  next_table_id: number;
+  /** Id the next created table or index will receive; one sequence serves both, as PostgreSQL's OID counter does */
+  next_object_id: number;
   stats: CatalogStatsModel;
 }
 
@@ -46,6 +46,7 @@ export interface CatalogStatsModel {
   hit_rate: number;
   scans: number;
   tables_created: number;
+  indexes_created: number;
 }
 
 export interface ColumnModel {
@@ -69,6 +70,19 @@ export interface CreateDatabaseRequest {
   database_id: string;
   /** Bytes per page; must be a power of two. Small values are useful for demos because they force page chaining after a few rows. */
   page_size?: number;
+}
+
+/**
+ * Programmatic index creation.
+ * 
+ * ``CREATE INDEX`` through ``POST /query`` is the primary path; this stays for
+ * clients that would rather not build SQL strings, matching the table endpoint.
+ */
+export interface CreateIndexRequest {
+  name: string;
+  table: string;
+  column: string;
+  unique?: boolean;
 }
 
 /**
@@ -194,6 +208,65 @@ export interface HealthResponse {
   open_databases: number;
   /** Which capabilities exist in this build. The UI hides panels whose feature is false rather than showing controls that cannot work. */
   features: Record<string, boolean>;
+}
+
+export interface IndexDetail {
+  index: IndexSummary;
+  tree: TreeSnapshotModel;
+  stats: IndexStatsModel;
+}
+
+export interface IndexListResponse {
+  indexes: IndexSummary[];
+}
+
+/**
+ * One traced point lookup.
+ * 
+ * ``path`` is what the tree view highlights: the page ids from root to leaf.
+ * ``pages_visited`` can exceed its length when duplicates spill across leaves
+ * and the search has to step right — which is exactly the case worth seeing.
+ */
+export interface IndexSearchResponse {
+  index_name: string;
+  value: string;
+  found: boolean;
+  /** '(page,slot)' per matching row */
+  matches: string[];
+  /** Page ids from the root to the leaf reached */
+  path: number[];
+  pages_visited: number;
+  height: number;
+}
+
+/** What the index has done since the database was opened. */
+export interface IndexStatsModel {
+  searches: number;
+  inserts: number;
+  deletes: number;
+  splits: number;
+  root_splits: number;
+  range_scans: number;
+  nodes_visited: number;
+  leaves_visited: number;
+  pages_allocated: number;
+}
+
+export interface IndexSummary {
+  index_id: number;
+  name: string;
+  table_name: string;
+  column_name: string;
+  /** Which column of the record the key comes from */
+  column_position: number;
+  data_type: string;
+  unique: boolean;
+  /** Page the tree is rooted at. Changes when the root splits. */
+  root_page: number;
+  /** Levels from root to leaf; 1 for a single leaf */
+  height: number;
+  entry_count: number;
+  page_count: number;
 }
 
 export interface InsertRecordsRequest {
@@ -337,7 +410,7 @@ export interface QueryRequest {
 
 /** The outcome of one statement. */
 export interface QueryResultModel {
-  /** SelectStatement, InsertStatement or CreateTableStatement */
+  /** SelectStatement, InsertStatement, CreateTableStatement or CreateIndexStatement */
   statement_kind: string;
   returns_rows: boolean;
   /** Summary for statements that return no rows */
@@ -543,4 +616,30 @@ export interface TraceStatsModel {
   /** Events evicted from the ring buffer before being read */
   dropped: number;
   level: "OFF" | "SUMMARY" | "OPERATOR" | "STORAGE" | "VERBOSE";
+}
+
+/** One B+ tree node, decoded for display. */
+export interface TreeNodeModel {
+  page_id: number;
+  /** 0 at the leaves, increasing toward the root */
+  level: number;
+  is_leaf: boolean;
+  /** Rendered keys or separators, in slot order. '-∞' is the sentinel every internal node starts with. */
+  keys: string[];
+  /** Child page ids; empty for a leaf */
+  children: number[];
+  /** '(page,slot)' per entry; empty for an internal node */
+  record_ids: string[];
+  /** The next leaf in key order, or null at the end of the chain */
+  next_leaf_id: null | number;
+  free_bytes: number;
+  entry_count: number;
+}
+
+export interface TreeSnapshotModel {
+  root_page_id: number;
+  height: number;
+  nodes: TreeNodeModel[];
+  /** True when the node budget was hit and the tree is only partly sent */
+  truncated: boolean;
 }

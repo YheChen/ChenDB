@@ -9,7 +9,8 @@ from engine.catalog.system import (
     COLUMNS_TABLE_ID,
     COLUMNS_TABLE_NAME,
     COLUMNS_TABLE_SCHEMA,
-    FIRST_USER_TABLE_ID,
+    FIRST_USER_OBJECT_ID,
+    INDEXES_TABLE_NAME,
     TABLES_TABLE_ID,
     TABLES_TABLE_NAME,
     TABLES_TABLE_SCHEMA,
@@ -54,7 +55,7 @@ def test_bootstrap_creates_two_heaps_and_records_them(pager: Pager):
     assert meta.catalog_tables_first != INVALID_PAGE_ID
     assert meta.catalog_columns_first != INVALID_PAGE_ID
     assert meta.catalog_tables_first != meta.catalog_columns_first
-    assert meta.next_table_id == FIRST_USER_TABLE_ID
+    assert meta.next_object_id == FIRST_USER_OBJECT_ID
 
 
 def test_bootstrapping_twice_is_refused(catalog: Catalog):
@@ -121,8 +122,8 @@ def test_creating_a_table_writes_rows_to_both_system_tables(catalog: Catalog):
 def test_ids_are_assigned_in_order_from_the_reserved_boundary(catalog: Catalog):
     first = catalog.create_table("a", SCHEMA)
     second = catalog.create_table("b", SCHEMA)
-    assert first.table_id == FIRST_USER_TABLE_ID
-    assert second.table_id == FIRST_USER_TABLE_ID + 1
+    assert first.table_id == FIRST_USER_OBJECT_ID
+    assert second.table_id == FIRST_USER_OBJECT_ID + 1
     # Reserved ids must stay out of reach.
     assert first.table_id > COLUMNS_TABLE_ID
 
@@ -219,7 +220,11 @@ def test_listing_sorts_user_tables_and_hides_system_ones_by_default(catalog: Cat
 
     everything = [info.name for info in catalog.list_tables(include_system=True)]
     assert everything[:3] == ["apple", "mango", "zebra"]
-    assert set(everything[3:]) == {TABLES_TABLE_NAME, COLUMNS_TABLE_NAME}
+    assert set(everything[3:]) == {
+        TABLES_TABLE_NAME,
+        COLUMNS_TABLE_NAME,
+        INDEXES_TABLE_NAME,
+    }
 
 
 def test_a_column_row_with_no_table_row_is_corruption(catalog: Catalog):

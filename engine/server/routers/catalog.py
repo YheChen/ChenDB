@@ -105,13 +105,13 @@ def get_catalog(managed: DatabaseDep) -> CatalogResponse:
             for info in db.tables(include_system=True)
             if info.is_system
         ]
-        next_table_id = db.pager.meta.next_table_id
+        next_object_id = db.pager.meta.next_object_id
         stats = mappers.catalog_stats_to_api(db.catalog.stats)
 
     return CatalogResponse(
         tables=user,
         system_tables=system,
-        next_table_id=next_table_id,
+        next_object_id=next_object_id,
         stats=stats,
     )
 

@@ -63,6 +63,45 @@ flags are plain cached booleans rather than an enum comparison.
 Retention is capped at `CHENDB_TRACE_CAPACITY` (default 20 000) per database.
 Beyond that the oldest events are dropped and counted — never silently.
 
+## Indexes — Milestone 5
+
+`benchmarks/index_vs_scan.py`, 20,000 rows, 4 KiB pages.
+
+```
+ predicate            rows    no index      index    pages (scan → index)
+ ─────────────────  ──────  ──────────  ─────────    ────────────────────
+ id = k (point)          1    60.0 ms    0.183 ms    233 →     4
+ bucket < 1             20    57.9 ms      0.7 ms    233 →    22
+ bucket < 10           200    58.6 ms      4.8 ms
+ bucket < 50          1000    60.0 ms     22.7 ms    233 →  1009
+ bucket < 200         4000    63.3 ms     92.9 ms    ← index now slower
+ bucket < 700        10000    59.8 ms    225.2 ms    166 → 10076
+```
+
+A point lookup is **328× faster**; a predicate matching 70% of the table is
+**3.8× slower**. Both come from the same fact: a sequential scan reads every page
+exactly once whatever the predicate, and an index scan reads one heap page per
+matching row — the *same* page repeatedly when matches share it, because there is
+no buffer pool until Milestone 7.
+
+The crossover is between 5% and 20% selectivity. Milestone 5's planner chooses by
+rule and does not look, so it takes the index in every row of that table.
+Milestone 6's cost model is what makes the last two rows come out as `SeqScan`.
+
+Two more numbers worth having:
+
+| | |
+|---|---|
+| `CREATE INDEX` over 20,000 rows | 3186 ms, 185 splits, height 3, 188 pages |
+| Full ordered scan of the index | 35.8 ms for 20,000 entries, no sort |
+
+The build cost is row-by-row insertion, O(n log n). Sorting first and packing
+leaves in one pass — what a real system does — would be O(n) after the sort and
+would leave no wasted space. The ordered scan is free ordering that nothing
+exploits yet: there is no `ORDER BY`.
+
+---
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |

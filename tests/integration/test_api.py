@@ -47,7 +47,7 @@ def seeded(client: TestClient) -> TestClient:
 
 def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 4
+    assert body["milestone"] == 5
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
@@ -55,6 +55,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     assert body["features"]["sql"] is True
     assert body["features"]["execution"] is True
     assert body["features"]["catalog"] is True
+    assert body["features"]["indexes"] is True
     assert body["features"]["mvcc"] is False
 
 
@@ -87,7 +88,7 @@ def test_create_and_list_databases(client: TestClient):
     body = created.json()
     assert body["database_id"] == "demo"
     assert body["page_size"] == PAGE_SIZE
-    assert body["page_count"] == 3, "meta page plus the two catalog heaps"
+    assert body["page_count"] == 4, "meta page plus the three catalog heaps"
     assert body["table_names"] == []
     assert body["table_count"] == 0
 

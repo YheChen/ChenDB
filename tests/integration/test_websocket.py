@@ -47,14 +47,27 @@ def insert(client: TestClient, count: int, start: int = 0) -> None:
     )
 
 
-def drain_events(websocket, *, until: int, max_frames: int = 200) -> list[dict]:
-    """Collect event payloads until ``until`` have arrived or frames run out."""
+def drain_events(
+    websocket, *, until: int, max_frames: int = 200, of_type: str | None = None
+) -> list[dict]:
+    """Collect event payloads until enough have arrived or frames run out.
+
+    ``of_type`` counts only events of that type toward ``until``. Needed because
+    the events an operation produces are not all the ones a test cares about —
+    an insert also emits catalog lookups and a heap scan of ``chendb_indexes``,
+    so counting raw frames would stop before the interesting ones arrive.
+    """
     collected: list[dict] = []
     for _ in range(max_frames):
         message = websocket.receive_json()
         if message["type"] == "events":
             collected.extend(message["events"])
-        if len(collected) >= until:
+        matching = (
+            collected
+            if of_type is None
+            else [event for event in collected if event["event_type"] == of_type]
+        )
+        if len(matching) >= until:
             break
     return collected
 
@@ -84,7 +97,7 @@ def test_events_stream_live_as_the_engine_works(client: TestClient):
         assert websocket.receive_json()["type"] == "hello"
 
         insert(client, 3)
-        events = drain_events(websocket, until=3)
+        events = drain_events(websocket, until=3, of_type="RecordInsertedEvent")
 
     assert events
     types = {event["event_type"] for event in events}

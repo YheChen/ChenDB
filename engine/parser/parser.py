@@ -4,12 +4,15 @@ One method per grammar rule.  The call stack *is* the parse tree, which is the
 whole appeal: the grammar below can be read straight off the method names.
 
     script         := statement { ';' statement } [ ';' ]
-    statement      := create_table | insert | select
+    statement      := create_table | create_index | insert | select
 
     create_table   := CREATE TABLE [ IF NOT EXISTS ] ident
                       '(' column_def { ',' column_def } ')'
     column_def     := ident type_name { constraint }
     constraint     := NOT NULL | NULL | PRIMARY KEY | UNIQUE
+
+    create_index   := CREATE [ UNIQUE ] INDEX [ IF NOT EXISTS ] ident
+                      ON ident '(' ident ')'
 
     insert         := INSERT INTO ident [ '(' ident { ',' ident } ')' ]
                       VALUES row { ',' row }
@@ -67,6 +70,7 @@ from engine.parser.ast import (
     ColumnConstraint,
     ColumnDefinition,
     ColumnRef,
+    CreateIndexStatement,
     CreateTableStatement,
     Expression,
     InsertStatement,
@@ -319,22 +323,64 @@ class Parser:
         if self._check_keyword(Keyword.INSERT):
             return self._insert_statement()
         if self._check_keyword(Keyword.CREATE):
-            return self._create_table_statement()
+            return self._create_statement()
 
         keyword = self._current.keyword
         if keyword is not None and keyword in _NOT_YET:
             self._unsupported(_NOT_YET[keyword])
         self._fail(
             "expected a statement",
-            expected=("SELECT", "INSERT", "CREATE TABLE"),
+            expected=("SELECT", "INSERT", "CREATE TABLE", "CREATE INDEX"),
+        )
+
+    # -- CREATE ------------------------------------------------------------
+
+    def _create_statement(self) -> Statement:
+        """Dispatch on what follows ``CREATE``.
+
+        Two tokens of lookahead would be tidier, but the parser keeps to one, so
+        ``CREATE`` is consumed here and both branches continue from there.
+        """
+        start = self._expect_keyword(Keyword.CREATE).span
+        if self._check_keyword(Keyword.UNIQUE, Keyword.INDEX):
+            return self._create_index_statement(start)
+        return self._create_table_statement(start)
+
+    def _create_index_statement(self, start: SourceSpan) -> CreateIndexStatement:
+        unique = self._match_keyword(Keyword.UNIQUE) is not None
+        self._expect_keyword(Keyword.INDEX)
+
+        if_not_exists = False
+        if self._match_keyword(Keyword.IF):
+            self._expect_keyword(Keyword.NOT)
+            self._expect_keyword(Keyword.EXISTS)
+            if_not_exists = True
+
+        index_name = self._identifier_name(self._identifier("an index name"))
+        self._expect_keyword(Keyword.ON)
+        table = self._table_ref()
+        self._expect(TokenType.LPAREN, "'(' before the indexed column")
+        column = self._identifier_name(self._identifier("a column name"))
+        if self._check(TokenType.COMMA):
+            self._unsupported(
+                "a multi-column index needs a composite key encoding, which "
+                "ChenDB does not implement"
+            )
+        end = self._expect(TokenType.RPAREN, "')' after the indexed column").span
+
+        return self._node(
+            CreateIndexStatement,
+            start.union(end),
+            index_name=index_name,
+            table=table,
+            column=column,
+            unique=unique,
+            if_not_exists=if_not_exists,
         )
 
     # -- CREATE TABLE ------------------------------------------------------
 
-    def _create_table_statement(self) -> CreateTableStatement:
-        start = self._expect_keyword(Keyword.CREATE).span
-        if self._check_keyword(Keyword.INDEX):
-            self._unsupported("CREATE INDEX arrives with B+ trees in Milestone 5")
+    def _create_table_statement(self, start: SourceSpan) -> CreateTableStatement:
         self._expect_keyword(Keyword.TABLE)
 
         if_not_exists = False
@@ -414,8 +460,11 @@ class Parser:
         if self._match_keyword(Keyword.PRIMARY):
             end = self._expect_keyword(Keyword.KEY).span
             return ColumnConstraint.PRIMARY_KEY, token.span.union(end)
-        if self._match_keyword(Keyword.UNIQUE):
-            self._unsupported("UNIQUE needs an index, which arrives in Milestone 5")
+        if self._check_keyword(Keyword.UNIQUE):
+            self._unsupported(
+                "an inline UNIQUE constraint is not implemented; "
+                "use CREATE UNIQUE INDEX instead"
+            )
         if self._check_keyword(Keyword.DEFAULT):
             self._unsupported("DEFAULT values are not implemented yet")
         return None, token.span

@@ -96,9 +96,9 @@
       },
       "CatalogResponse": {
         "properties": {
-          "next_table_id": {
-            "description": "Id the next created table will receive",
-            "title": "Next Table Id",
+          "next_object_id": {
+            "description": "Id the next created table or index will receive; one sequence serves both, as PostgreSQL's OID counter does",
+            "title": "Next Object Id",
             "type": "integer"
           },
           "stats": {
@@ -122,7 +122,7 @@
         "required": [
           "tables",
           "system_tables",
-          "next_table_id",
+          "next_object_id",
           "stats"
         ],
         "title": "CatalogResponse",
@@ -138,6 +138,10 @@
           "hit_rate": {
             "title": "Hit Rate",
             "type": "number"
+          },
+          "indexes_created": {
+            "title": "Indexes Created",
+            "type": "integer"
           },
           "lookups": {
             "title": "Lookups",
@@ -157,7 +161,8 @@
           "cache_hits",
           "hit_rate",
           "scans",
-          "tables_created"
+          "tables_created",
+          "indexes_created"
         ],
         "title": "CatalogStatsModel",
         "type": "object"
@@ -271,6 +276,42 @@
           "database_id"
         ],
         "title": "CreateDatabaseRequest",
+        "type": "object"
+      },
+      "CreateIndexRequest": {
+        "additionalProperties": false,
+        "description": "Programmatic index creation.\n\n``CREATE INDEX`` through ``POST /query`` is the primary path; this stays for\nclients that would rather not build SQL strings, matching the table endpoint.",
+        "properties": {
+          "column": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Column",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "table": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Table",
+            "type": "string"
+          },
+          "unique": {
+            "default": false,
+            "title": "Unique",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "table",
+          "column"
+        ],
+        "title": "CreateIndexRequest",
         "type": "object"
       },
       "CreateTableRequest": {
@@ -832,6 +873,214 @@
           "features"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "IndexDetail": {
+        "properties": {
+          "index": {
+            "$ref": "#/components/schemas/IndexSummary"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/IndexStatsModel"
+          },
+          "tree": {
+            "$ref": "#/components/schemas/TreeSnapshotModel"
+          }
+        },
+        "required": [
+          "index",
+          "tree",
+          "stats"
+        ],
+        "title": "IndexDetail",
+        "type": "object"
+      },
+      "IndexListResponse": {
+        "properties": {
+          "indexes": {
+            "items": {
+              "$ref": "#/components/schemas/IndexSummary"
+            },
+            "title": "Indexes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "indexes"
+        ],
+        "title": "IndexListResponse",
+        "type": "object"
+      },
+      "IndexSearchResponse": {
+        "description": "One traced point lookup.\n\n``path`` is what the tree view highlights: the page ids from root to leaf.\n``pages_visited`` can exceed its length when duplicates spill across leaves\nand the search has to step right \u2014 which is exactly the case worth seeing.",
+        "properties": {
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "height": {
+            "title": "Height",
+            "type": "integer"
+          },
+          "index_name": {
+            "title": "Index Name",
+            "type": "string"
+          },
+          "matches": {
+            "description": "'(page,slot)' per matching row",
+            "items": {
+              "type": "string"
+            },
+            "title": "Matches",
+            "type": "array"
+          },
+          "pages_visited": {
+            "title": "Pages Visited",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Page ids from the root to the leaf reached",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Path",
+            "type": "array"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index_name",
+          "value",
+          "found",
+          "matches",
+          "path",
+          "pages_visited",
+          "height"
+        ],
+        "title": "IndexSearchResponse",
+        "type": "object"
+      },
+      "IndexStatsModel": {
+        "description": "What the index has done since the database was opened.",
+        "properties": {
+          "deletes": {
+            "title": "Deletes",
+            "type": "integer"
+          },
+          "inserts": {
+            "title": "Inserts",
+            "type": "integer"
+          },
+          "leaves_visited": {
+            "title": "Leaves Visited",
+            "type": "integer"
+          },
+          "nodes_visited": {
+            "title": "Nodes Visited",
+            "type": "integer"
+          },
+          "pages_allocated": {
+            "title": "Pages Allocated",
+            "type": "integer"
+          },
+          "range_scans": {
+            "title": "Range Scans",
+            "type": "integer"
+          },
+          "root_splits": {
+            "title": "Root Splits",
+            "type": "integer"
+          },
+          "searches": {
+            "title": "Searches",
+            "type": "integer"
+          },
+          "splits": {
+            "title": "Splits",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "searches",
+          "inserts",
+          "deletes",
+          "splits",
+          "root_splits",
+          "range_scans",
+          "nodes_visited",
+          "leaves_visited",
+          "pages_allocated"
+        ],
+        "title": "IndexStatsModel",
+        "type": "object"
+      },
+      "IndexSummary": {
+        "properties": {
+          "column_name": {
+            "title": "Column Name",
+            "type": "string"
+          },
+          "column_position": {
+            "description": "Which column of the record the key comes from",
+            "title": "Column Position",
+            "type": "integer"
+          },
+          "data_type": {
+            "title": "Data Type",
+            "type": "string"
+          },
+          "entry_count": {
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "height": {
+            "description": "Levels from root to leaf; 1 for a single leaf",
+            "title": "Height",
+            "type": "integer"
+          },
+          "index_id": {
+            "title": "Index Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "page_count": {
+            "title": "Page Count",
+            "type": "integer"
+          },
+          "root_page": {
+            "description": "Page the tree is rooted at. Changes when the root splits.",
+            "title": "Root Page",
+            "type": "integer"
+          },
+          "table_name": {
+            "title": "Table Name",
+            "type": "string"
+          },
+          "unique": {
+            "title": "Unique",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index_id",
+          "name",
+          "table_name",
+          "column_name",
+          "column_position",
+          "data_type",
+          "unique",
+          "root_page",
+          "height",
+          "entry_count",
+          "page_count"
+        ],
+        "title": "IndexSummary",
         "type": "object"
       },
       "InsertRecordsRequest": {
@@ -1470,7 +1719,7 @@
             "type": "integer"
           },
           "statement_kind": {
-            "description": "SelectStatement, InsertStatement or CreateTableStatement",
+            "description": "SelectStatement, InsertStatement, CreateTableStatement or CreateIndexStatement",
             "title": "Statement Kind",
             "type": "string"
           },
@@ -2248,6 +2497,113 @@
         "title": "TraceStatsModel",
         "type": "object"
       },
+      "TreeNodeModel": {
+        "description": "One B+ tree node, decoded for display.",
+        "properties": {
+          "children": {
+            "description": "Child page ids; empty for a leaf",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "entry_count": {
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "free_bytes": {
+            "title": "Free Bytes",
+            "type": "integer"
+          },
+          "is_leaf": {
+            "title": "Is Leaf",
+            "type": "boolean"
+          },
+          "keys": {
+            "description": "Rendered keys or separators, in slot order. '-\u221e' is the sentinel every internal node starts with.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "level": {
+            "description": "0 at the leaves, increasing toward the root",
+            "title": "Level",
+            "type": "integer"
+          },
+          "next_leaf_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The next leaf in key order, or null at the end of the chain",
+            "title": "Next Leaf Id"
+          },
+          "page_id": {
+            "title": "Page Id",
+            "type": "integer"
+          },
+          "record_ids": {
+            "description": "'(page,slot)' per entry; empty for an internal node",
+            "items": {
+              "type": "string"
+            },
+            "title": "Record Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "page_id",
+          "level",
+          "is_leaf",
+          "keys",
+          "children",
+          "record_ids",
+          "next_leaf_id",
+          "free_bytes",
+          "entry_count"
+        ],
+        "title": "TreeNodeModel",
+        "type": "object"
+      },
+      "TreeSnapshotModel": {
+        "properties": {
+          "height": {
+            "title": "Height",
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/TreeNodeModel"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "root_page_id": {
+            "title": "Root Page Id",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "True when the node budget was hit and the tree is only partly sent",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "root_page_id",
+          "height",
+          "nodes",
+          "truncated"
+        ],
+        "title": "TreeSnapshotModel",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2293,7 +2649,7 @@
   "info": {
     "description": "HTTP and WebSocket access to a running ChenDB engine, for the Visual Database\nExplorer.\n\nEverything served here is real engine state read from a real database file.\nEndpoints for features that do not exist yet are absent rather than stubbed:\ncheck `features` on `/health` to see what this build supports.",
     "title": "ChenDB Engine API",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2614,6 +2970,254 @@
         "summary": "Recent events",
         "tags": [
           "diagnostics"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/indexes": {
+      "get": {
+        "operationId": "list_indexes_api_v1_databases__database_id__indexes_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Narrow to one table",
+            "in": "query",
+            "name": "table",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow to one table",
+              "title": "Table"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every index, with its height and size",
+        "tags": [
+          "indexes"
+        ]
+      },
+      "post": {
+        "operationId": "create_index_api_v1_databases__database_id__indexes_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIndexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create an index over one column",
+        "tags": [
+          "indexes"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/indexes/{index_name}": {
+      "get": {
+        "operationId": "get_index_api_v1_databases__database_id__indexes__index_name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "index_name",
+            "required": true,
+            "schema": {
+              "title": "Index Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_nodes",
+            "required": false,
+            "schema": {
+              "default": 512,
+              "maximum": 4096,
+              "minimum": 1,
+              "title": "Max Nodes",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One index, as a flat node list plus a root id",
+        "tags": [
+          "indexes"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/indexes/{index_name}/search": {
+      "get": {
+        "description": "Run one lookup and report the path, so the UI can highlight the descent.\n\n``value`` arrives as text and is coerced to the index's declared type here.\nA query string has no types, and guessing from the JSON shape would make\n``?value=1`` ambiguous between the integer and the string.",
+        "operationId": "search_index_api_v1_databases__database_id__indexes__index_name__search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "index_name",
+            "required": true,
+            "schema": {
+              "title": "Index Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The key to look up, as text",
+            "in": "query",
+            "name": "value",
+            "required": true,
+            "schema": {
+              "description": "The key to look up, as text",
+              "title": "Value",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trace a point lookup: the path taken and what it found",
+        "tags": [
+          "indexes"
         ]
       }
     },

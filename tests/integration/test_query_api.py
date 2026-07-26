@@ -55,12 +55,13 @@ def query(client: TestClient, sql: str, **extra) -> list[dict]:
 
 def test_health_reports_execution(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 4
+    assert body["milestone"] == 5
     assert body["features"]["sql"] is True
     assert body["features"]["execution"] is True
     assert body["features"]["catalog"] is True
+    assert body["features"]["indexes"] is True
     # Still nothing after this milestone.
-    assert body["features"]["indexes"] is False
+    assert body["features"]["planner"] is False
 
 
 # -- normal mode -----------------------------------------------------------

@@ -13,6 +13,10 @@ import type {
   CatalogResponse,
   ExecutionDetail,
   ExecutionListResponse,
+  CreateIndexRequest,
+  IndexDetail,
+  IndexListResponse,
+  IndexSearchResponse,
   ParseResponse,
   QueryResultModel,
   TableDetail,
@@ -49,6 +53,7 @@ export const RESUME_MODES = [
   "until_row",
   "until_page_read",
   "until_operator",
+  "until_index_operation",
 ] as const;
 export type ResumeModeName = (typeof RESUME_MODES)[number];
 
@@ -201,6 +206,25 @@ export const api = {
 
   cancelExecution: (executionId: string) =>
     request<ExecutionDetail>(`/executions/${executionId}/cancel`, { method: "POST" }),
+
+  listIndexes: (id: string, table?: string) =>
+    request<IndexListResponse>(
+      `/databases/${id}/indexes${table ? `?table=${encodeURIComponent(table)}` : ""}`,
+    ),
+
+  getIndex: (id: string, name: string, maxNodes = 512) =>
+    request<IndexDetail>(
+      `/databases/${id}/indexes/${encodeURIComponent(name)}?max_nodes=${maxNodes}`,
+    ),
+
+  createIndex: (id: string, payload: CreateIndexRequest) =>
+    request<IndexDetail>(`/databases/${id}/indexes`, json(payload)),
+
+  searchIndex: (id: string, name: string, value: string) =>
+    request<IndexSearchResponse>(
+      `/databases/${id}/indexes/${encodeURIComponent(name)}/search` +
+        `?value=${encodeURIComponent(value)}`,
+    ),
 
   listPages: (id: string) => request<PageListResponse>(`/databases/${id}/pages`),
 

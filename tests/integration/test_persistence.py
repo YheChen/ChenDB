@@ -14,7 +14,7 @@ import pytest
 
 from engine.catalog.system import (
     COLUMNS_TABLE_NAME,
-    FIRST_USER_TABLE_ID,
+    FIRST_USER_OBJECT_ID,
     TABLES_TABLE_NAME,
 )
 from engine.database import Database
@@ -164,15 +164,15 @@ def test_table_ids_are_stable_and_start_above_the_reserved_range(
     with Database.open(db_path, page_size=PAGE_SIZE) as db:
         first = db.create_table("users", users_schema)
         second = db.create_table("orders", ORDERS)
-        assert first.table_id == FIRST_USER_TABLE_ID
-        assert second.table_id == FIRST_USER_TABLE_ID + 1
+        assert first.table_id == FIRST_USER_OBJECT_ID
+        assert second.table_id == FIRST_USER_OBJECT_ID + 1
 
     with Database.open(db_path) as db:
         assert db.require_table("users").table_id == first.table_id
         assert db.require_table("orders").table_id == second.table_id
         # A third table must not reuse an id after a restart.
         third = db.create_table("items", ORDERS)
-        assert third.table_id == FIRST_USER_TABLE_ID + 2
+        assert third.table_id == FIRST_USER_OBJECT_ID + 2
 
 
 def test_the_system_tables_are_readable_like_any_other(
@@ -319,7 +319,9 @@ def test_a_new_database_has_a_catalog_but_no_user_tables(db_path: Path):
         assert db.table_names() == []
         assert db.catalog.initialised
         # Two heaps for the two system tables, plus the meta page.
-        assert db.page_count == 3
+        # The meta page plus one heap page each for chendb_tables,
+        # chendb_columns and chendb_indexes.
+        assert db.page_count == 4
 
 
 def test_operations_on_a_missing_table_fail_clearly(db_path: Path):

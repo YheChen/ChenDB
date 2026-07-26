@@ -42,8 +42,74 @@ explicit. Versioning, the error envelope and the WebSocket path are unchanged.
 | `GET` `PUT` | `/databases/{db}/trace` | read / set the trace level |
 | `WS` | `/databases/{db}/events/stream` | live events |
 
-Arriving later: `/query` and `/executions/*` (Milestones 2–3),
-`/indexes/{name}` (5), `/buffer-pool` (7), `/transactions` (8), `/wal` (9),
+## Added since
+
+Milestones 2–4 replaced the singular `/table` and `/records` with
+`/tables/{table}` collections, and added `/catalog`, `/parse`, `/query`,
+`/query/step` and `/executions/*`.
+
+### Milestone 5 — indexes
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/databases/{db}/indexes` | every index; `?table=` narrows to one |
+| `POST` | `/databases/{db}/indexes` | create one over a column |
+| `GET` | `/databases/{db}/indexes/{name}` | the tree, `?max_nodes=` (default 512) |
+| `GET` | `/databases/{db}/indexes/{name}/search` | trace a point lookup, `?value=` |
+
+The tree comes back as a **flat node list plus a root page id**, not nested
+JSON — the same shape as the AST and the plan, for the same three reasons: a
+client wanting one node need not walk a recursive structure; a cycle in a corrupt
+tree becomes a visibly duplicated entry rather than a response that never ends;
+and the renderer computes its own layout anyway.
+
+```json
+{
+  "index": { "name": "users_age", "column_name": "age", "height": 3,
+             "entry_count": 600, "page_count": 33, "unique": false, "...": "" },
+  "tree": {
+    "root_page_id": 82,
+    "height": 3,
+    "truncated": false,
+    "nodes": [
+      { "page_id": 82, "level": 2, "is_leaf": false,
+        "keys": ["-∞", "37"], "children": [60, 81],
+        "record_ids": [], "next_leaf_id": null,
+        "free_bytes": 470, "entry_count": 2 },
+      { "page_id": 67, "level": 0, "is_leaf": true,
+        "keys": ["40", "40", "42"], "children": [],
+        "record_ids": ["(6,0)", "(9,9)", "(13,6)"], "next_leaf_id": 74,
+        "free_bytes": 13, "entry_count": 25 }
+    ]
+  },
+  "stats": { "searches": 1, "splits": 30, "root_splits": 2, "...": 0 }
+}
+```
+
+Keys arrive **already rendered as strings**. An encoded key is an
+order-preserving byte string only `engine.index.key` can interpret; sending the
+raw bytes would force the browser to reimplement the codec, and a visualizer
+showing something different from the engine is the exact failure this project
+exists to avoid. `"-∞"` is the sentinel separator every internal node starts
+with.
+
+`truncated` is `true` when `max_nodes` cut the response short. A client must
+tolerate a `children` or `next_leaf_id` entry that names a page not in `nodes`.
+
+`GET /indexes/{name}/search?value=42` runs one real lookup:
+
+```json
+{ "index_name": "users_age", "value": "42", "found": true, "matches": ["(6,0)"],
+  "path": [82, 81, 67], "pages_visited": 4, "height": 3 }
+```
+
+`value` is text and is coerced to the index's declared type server-side — a query
+string has no types, and guessing from JSON shape would make `?value=1`
+ambiguous between the integer and the string. A value the index cannot encode is
+`422 InvalidKey`, not a crash. `pages_visited` can exceed `path.length` when
+duplicates span leaves and the search steps right.
+
+Arriving later: `/buffer-pool` (7), `/transactions` (8), `/wal` (9),
 `/locks` (10).
 
 ## Errors

@@ -474,10 +474,10 @@ def test_star_inside_an_expression_is_explained():
         ("DROP TABLE t", "DROP"),
         ("BEGIN", "Milestone 8"),
         ("EXPLAIN SELECT * FROM t", "Milestone 6"),
-        ("CREATE INDEX i ON t (a)", "Milestone 5"),
         ("SELECT * FROM t WHERE a IN (1)", "IN"),
         ("SELECT * FROM t WHERE a LIKE 'x'", "LIKE"),
-        ("CREATE TABLE t (a INTEGER UNIQUE)", "Milestone 5"),
+        ("CREATE TABLE t (a INTEGER UNIQUE)", "CREATE UNIQUE INDEX"),
+        ("CREATE INDEX i ON t (a, b)", "composite key"),
         ("INSERT INTO t SELECT * FROM u", "Milestone 3"),
     ],
 )

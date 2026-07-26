@@ -51,6 +51,7 @@ __all__ = [
     "ColumnConstraint",
     "ColumnDefinition",
     "ColumnRef",
+    "CreateIndexStatement",
     "CreateTableStatement",
     "Expression",
     "InsertStatement",
@@ -297,6 +298,22 @@ class ColumnDefinition(Node):
 class CreateTableStatement(Statement):
     table: TableRef
     columns: tuple[ColumnDefinition, ...]
+    if_not_exists: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CreateIndexStatement(Statement):
+    """``CREATE [UNIQUE] INDEX name ON table (column)``.
+
+    One column only. Multi-column indexes need a composite key encoding, which
+    :mod:`engine.index.key` explains is a whole escaping layer on its own; the
+    grammar rejects a second column rather than silently indexing the first.
+    """
+
+    index_name: str
+    table: TableRef
+    column: str
+    unique: bool = False
     if_not_exists: bool = False
 
 
