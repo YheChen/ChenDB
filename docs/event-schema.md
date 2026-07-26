@@ -209,20 +209,38 @@ clean descent, larger when duplicates span leaves and the search steps right.
 
 ---
 
+## `planner` — Milestone 6
+
+```
+StatisticsGatheredEvent SUMMARY  table_name, row_count, page_count,
+                                 column_count, duration_ns   (category: catalog)
+LogicalPlanEvent        OPERATOR table_name, node_count, rules_applied
+PlanAlternativeEvent    OPERATOR description, access_path, estimated_cost,
+                                 estimated_rows, chosen, rejected_because
+PhysicalPlanEvent       OPERATOR access_path, estimated_cost, estimated_rows,
+                                 candidates_considered, statistics_stale
+CostEstimateEvent       VERBOSE  node_id, node_type, io_cost, cpu_cost,
+                                 estimated_rows
+```
+
+`PlanAlternativeEvent` is emitted **once per candidate, chosen or not**. That is
+the point: a planner that reports only its answer cannot be checked, and the
+event stream alone should be enough to audit a decision.
+
+`rules_applied` on `LogicalPlanEvent` names only the rules that actually changed
+the tree. An early version rebuilt every expression node unconditionally, so
+`fold_constants` claimed to fire on every query and the field became noise.
+
+`StatisticsGatheredEvent` is categorised as `catalog`, not `planner`: gathering
+is a read of the table and happens whether or not anything is being planned.
+
+---
+
 ## Planned events
 
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 6 — `planner`
-
-```
-LogicalPlanEvent      plan_id, root_node_type, node_count
-PhysicalPlanEvent     plan_id, chosen, estimated_cost, estimated_rows
-PlanAlternativeEvent  plan_id, description, estimated_cost, rejected_because
-CostEstimateEvent     node_id, cardinality, io_cost, cpu_cost
-```
 
 ### Milestone 7 — `buffer_pool`
 

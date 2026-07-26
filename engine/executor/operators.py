@@ -104,6 +104,10 @@ class ExecutionContext:
     controller: StepController = NULL_CONTROLLER
     max_rows: int | None = None
     """A hard ceiling on rows returned, so an API request cannot be unbounded."""
+    planner_options: Any = None
+    """A :class:`~engine.planner.physical.PlannerOptions`, or ``None`` for the
+    defaults. Typed loosely to keep the operator layer from importing the
+    planner, which would make the dependency run the wrong way."""
 
 
 @dataclass(slots=True)

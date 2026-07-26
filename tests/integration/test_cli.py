@@ -61,12 +61,34 @@ def test_sql_runs_and_prints_rows_and_a_plan(db_path: Path):
     output = run(db_path, "SELECT email FROM users WHERE age = 45")
     assert "grace@example.com" in output
     assert "row(s)" in output
-    assert "IndexScan" in output, "the plan is printed so the access path is visible"
+    # Which access path is chosen depends on the cost model, and on three rows a
+    # scan wins — that is the point of Milestone 6. What matters here is that a
+    # plan is printed at all.
+    assert "Project" in output
+    assert "Scan" in output
 
 
 def test_a_query_with_no_index_falls_back_to_a_scan(db_path: Path):
     output = run(db_path, "SELECT id FROM users WHERE email = 'ada@example.com'")
     assert "SeqScan" in output
+
+
+def test_explain_shows_the_alternatives_and_why_they_lost(db_path: Path):
+    output = run(db_path, "EXPLAIN SELECT email FROM users WHERE age = 45")
+    assert "Alternatives considered" in output
+    assert "Sequential scan of users" in output
+    assert "Index scan on users_age" in output
+    assert "cost of the chosen plan" in output
+
+
+def test_explain_analyze_reports_actual_rows_beside_the_estimate(db_path: Path):
+    output = run(db_path, "EXPLAIN ANALYZE SELECT email FROM users WHERE age = 45")
+    assert "actual rows=1" in output
+
+
+def test_analyze_gathers_statistics(db_path: Path):
+    output = run(db_path, "ANALYZE users")
+    assert "analyzed users (3 rows)" in output
 
 
 def test_tables_lists_what_exists(db_path: Path):
@@ -166,6 +188,25 @@ def test_a_fresh_shell_over_two_tables_asks_which(db_path: Path):
     output = run(db_path, ".count")
     assert "pick one with .use" in output
     assert "orders" in output and "users" in output
+
+
+def test_analyze_and_stats_report_what_the_planner_knows(db_path: Path):
+    output = run(db_path, ".analyze", ".stats-of users")
+    assert "analyzed users: 3 rows" in output
+    assert "distinct" in output
+    assert "age" in output
+
+
+def test_a_hyphenated_command_dispatches(db_path: Path):
+    # A hyphen reads better than an underscore and cannot be part of a Python
+    # identifier, so the dispatcher translates it.
+    assert "unknown command" not in run(db_path, ".stats-of users")
+
+
+def test_explain_through_the_cli_shows_the_cost(db_path: Path):
+    output = run(db_path, ".analyze", "EXPLAIN SELECT id FROM users WHERE age = 45")
+    assert "cost=" in output
+    assert "Alternatives considered" in output
 
 
 def test_trace_and_events_work_together(db_path: Path):

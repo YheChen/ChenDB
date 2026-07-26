@@ -14,9 +14,11 @@ page. A query matching a third of the table reads three index pages and then
 333,000 scattered heap reads — through pages a sequential scan would have read
 once each. Somewhere between those, the index stops being worth using.
 
-Milestone 5's planner chooses by *rule* — use an index whenever one covers a
-comparison — so it gets the second case wrong on purpose, visibly. The numbers
-below are the evidence Milestone 6's cost model will be built to act on.
+Milestone 5's planner chose by *rule* — use an index whenever one covers a
+comparison — and so got the second case wrong, visibly. Milestone 6 costs both
+and picks the cheaper. This benchmark forces each path in turn so the two can be
+compared, then reports what the planner actually chose, which is the only way to
+tell a good decision from a lucky one.
 
 Absolute times depend on the machine and the filesystem; the ratios are the
 interesting part.
@@ -35,6 +37,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine import Column, Database, DataType, Schema
 from engine.executor.engine import execute_script
 from engine.executor.operators import IndexScan, SeqScan
+from engine.planner.physical import PlannerOptions
+
+#: The API caps a response at 10,000 rows so a request cannot be unbounded.
+#: A benchmark measuring a predicate that matches 14,000 must lift it, or the
+#: measurement stops early while the estimate covers the whole predicate — which
+#: makes a correct cost model look like it over-estimates by 40%.
+NO_ROW_CEILING = 10_000_000
+
+FORCE_SEQ = PlannerOptions(enable_index_scan=False)
+FORCE_INDEX = PlannerOptions(enable_seq_scan=False)
+LET_THE_PLANNER_CHOOSE = PlannerOptions()
 
 ROW_COUNT = 20_000
 PAGE_SIZE = 4096
@@ -73,9 +86,13 @@ def timed(fn, repeats: int = REPEATS) -> tuple[float, int]:
     return statistics.median(samples), pages
 
 
-def run_query(db: Database, sql: str) -> tuple[int, int, str]:
+def run_query(
+    db: Database, sql: str, options: PlannerOptions = LET_THE_PLANNER_CHOOSE
+) -> tuple[int, int, str]:
     """Run one SELECT; return rows, pages read, and the access path used."""
-    result = execute_script(sql, db)[0]
+    result = execute_script(
+        sql, db, planner_options=options, max_rows=NO_ROW_CEILING
+    )[0]
     path = "?"
     stack = [result.plan] if result.plan else []
     while stack:
@@ -127,6 +144,32 @@ def main() -> int:
         )
         build_only.close()
 
+        header("How well the cost model tracks reality")
+        print(f"  {'predicate':<26}{'estimated':>11}{'measured':>12}{'us/unit':>10}")
+        for sql, options in (
+            ("SELECT id FROM users WHERE bucket < 1", FORCE_INDEX),
+            ("SELECT id FROM users WHERE bucket < 50", FORCE_INDEX),
+            ("SELECT id FROM users WHERE bucket < 200", FORCE_INDEX),
+            ("SELECT id FROM users WHERE bucket < 700", FORCE_INDEX),
+            ("SELECT id FROM users WHERE bucket < 700", FORCE_SEQ),
+        ):
+            result = execute_script(
+                sql, indexed, planner_options=options, max_rows=NO_ROW_CEILING
+            )[0]
+            estimated = result.planned.estimated_cost
+            millis, _ = timed(lambda sql=sql, o=options: run_query(indexed, sql, o)[1])
+            label = sql.split("WHERE ")[1]
+            path = "seq" if options is FORCE_SEQ else "index"
+            print(
+                f"  {label + ' (' + path + ')':<26}{estimated:>11.0f}"
+                f"{millis:>10.1f} ms{millis * 1000 / max(estimated, 1):>9.1f}"
+            )
+        print(
+            "\n  A near-constant us-per-cost-unit across three orders of magnitude is\n"
+            "  what 'the model reflects reality' looks like. The constants in\n"
+            "  engine/optimizer/cost.py were fitted to exactly this."
+        )
+
         header("Point lookup — one row out of 20,000")
         for label, db in (("no index", plain), ("index", indexed)):
             def lookup(db: Database = db) -> int:
@@ -145,36 +188,40 @@ def main() -> int:
                 f"{pages:5d} pages/lookup   {path}"
             )
 
-        header("Selectivity — where the index stops paying")
+        header("Selectivity — and whether the planner gets it right")
         # bucket has 1000 distinct values over 20,000 rows, so `bucket < k`
-        # matches roughly k/1000 of the table.
-        print(f"  {'predicate':<28}{'rows':>8}{'no index':>12}{'index':>12}  path")
-        for cutoff, note in (
-            (1, "0.1% of rows"),
-            (10, "1%"),
-            (50, "5%"),
-            (200, "20%"),
-            (700, "70%"),
-        ):
+        # matches roughly k/1000 of the table. Each path is forced in turn, then
+        # the planner is left to choose: the last column is the one being graded.
+        print(
+            f"  {'predicate':<22}{'rows':>7}{'seq scan':>12}{'index scan':>12}"
+            f"   planner chose"
+        )
+        for cutoff in (1, 10, 50, 200, 700):
             sql = f"SELECT id FROM users WHERE bucket < {cutoff}"
-            plain_ms, _ = timed(lambda sql=sql: run_query(plain, sql)[1])
-            index_ms, index_pages = timed(lambda sql=sql: run_query(indexed, sql)[1])
+            seq_ms, _ = timed(lambda sql=sql: run_query(indexed, sql, FORCE_SEQ)[1])
+            index_ms, _ = timed(lambda sql=sql: run_query(indexed, sql, FORCE_INDEX)[1])
             rows, _, path = run_query(indexed, sql)
-            marker = "  <-- index is slower" if index_ms > plain_ms else ""
+            best = "seq scan" if seq_ms < index_ms else "index scan"
+            picked = "seq scan" if path == "SeqScan" else "index scan"
+            verdict = "correct" if picked == best else "WRONG"
             print(
-                f"  bucket < {cutoff:<19}{rows:>8}{plain_ms:>10.1f} ms"
-                f"{index_ms:>10.1f} ms  {path}{marker}"
+                f"  bucket < {cutoff:<13}{rows:>7}{seq_ms:>10.1f} ms{index_ms:>10.1f} ms"
+                f"   {picked:<11} {verdict}"
             )
-            del note
+        print(
+            "\n  Milestone 5 chose the index on every one of these rows. The last\n"
+            "  two are where that cost 1.5x and 3.9x; the cost model is what\n"
+            "  turns them into sequential scans."
+        )
 
         header("Pages read, which is what actually differs")
         for cutoff in (1, 50, 700):
             sql = f"SELECT id FROM users WHERE bucket < {cutoff}"
-            _, plain_pages, _ = run_query(plain, sql)
-            rows, index_pages, _ = run_query(indexed, sql)
+            _, seq_pages, _ = run_query(indexed, sql, FORCE_SEQ)
+            rows, index_pages, _ = run_query(indexed, sql, FORCE_INDEX)
             print(
                 f"  bucket < {cutoff:<5} {rows:>6} rows    "
-                f"scan {plain_pages:>6} pages    index {index_pages:>6} pages"
+                f"scan {seq_pages:>6} pages    index {index_pages:>6} pages"
             )
         print(
             "\n  The scan reads every page once, whatever the predicate. The index\n"
@@ -191,8 +238,8 @@ def main() -> int:
         elapsed = (time.perf_counter_ns() - started) / 1e6
         print(
             f"  full index scan  {elapsed:8.1f} ms   {count:,} entries in key order,\n"
-            f"                   no sort — the reason ORDER BY on an indexed column\n"
-            f"                   is free, once Milestone 6 knows to use it."
+            f"                   no sort. Nothing exploits that yet: there is no\n"
+            f"                   ORDER BY to make free."
         )
 
         plain.close()

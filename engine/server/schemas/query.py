@@ -20,7 +20,9 @@ __all__ = [
     "ExecutionListResponse",
     "ExecutionSummary",
     "OperatorNodeModel",
+    "PlanAlternativeModel",
     "PlanModel",
+    "PlanStatisticsModel",
     "QueryRequest",
     "QueryResultModel",
     "ResultColumnModel",
@@ -45,13 +47,28 @@ class ResultColumnModel(ApiModel):
 
 
 class OperatorNodeModel(ApiModel):
-    """One node of the physical plan, with what it actually did."""
+    """One node of the physical plan: what it will cost, and what it did.
+
+    Estimated and actual sit side by side because the gap between them is the
+    single most useful thing a plan view can show. A plan that is slow is almost
+    always a plan whose row estimate was wrong, and no amount of staring at the
+    chosen operators reveals that — only the comparison does.
+    """
 
     operator_id: str
-    operator_type: str = Field(description="SeqScan, Filter or Project")
-    detail: str = Field(description="Predicate, table or projection list")
+    operator_type: str = Field(description="SeqScan, IndexScan, Filter or Project")
+    detail: str = Field(description="Predicate, table, index condition or projection")
     children: list[str] = Field(description="operator_ids of inputs, left to right")
     output_columns: list[ResultColumnModel]
+
+    estimated_rows: float | None = Field(
+        description="Rows the planner expected out; null if the plan was not costed"
+    )
+    estimated_cost: float | None = Field(
+        description="Cumulative estimated cost of this node and everything below it"
+    )
+    estimated_io_cost: float | None = Field(description="The I/O half of this node's own cost")
+    estimated_cpu_cost: float | None = Field(description="The CPU half of this node's own cost")
 
     next_calls: int = Field(description="Times this operator was asked for a row")
     input_rows: int = Field(description="Rows it consumed from its children")
@@ -61,10 +78,53 @@ class OperatorNodeModel(ApiModel):
     )
     duration_ns: int = Field(description="Time spent inside this operator's own work")
 
+    @property
+    def estimate_ratio(self) -> float | None:
+        """Actual over estimated. 1.0 is perfect; 100 is a planner disaster."""
+        if not self.estimated_rows:
+            return None
+        return self.output_rows / self.estimated_rows
+
+
+class PlanAlternativeModel(ApiModel):
+    """One access path the planner considered, chosen or not."""
+
+    description: str
+    access_path: str = Field(description="PhysicalSeqScan or PhysicalIndexScan")
+    estimated_cost: float
+    estimated_rows: float
+    chosen: bool
+    rejected_because: str = Field(
+        description="Why this lost, e.g. '3.6x the cost of the chosen plan'. "
+        "Empty for the winner."
+    )
+    index_name: str | None
+
+
+class PlanStatisticsModel(ApiModel):
+    """The statistics the estimates were computed from."""
+
+    table_name: str
+    row_count: int
+    page_count: int
+    stale: bool = Field(
+        description="True when the table was written to after it was last "
+        "analyzed, so every estimate above is based on old numbers"
+    )
+    gathered_at_ns: int
+
 
 class PlanModel(ApiModel):
     nodes: list[OperatorNodeModel]
     root_id: str
+    alternatives: list[PlanAlternativeModel] = Field(
+        description="Every access path considered, with the cost of each"
+    )
+    rewrites: list[str] = Field(
+        description="Rewrite rules that changed the plan, in the order they ran"
+    )
+    estimated_cost: float | None = Field(description="Total cost of the chosen plan")
+    statistics: PlanStatisticsModel | None
 
 
 class QueryResultModel(ApiModel):

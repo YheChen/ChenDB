@@ -24,6 +24,7 @@ from typing import ClassVar, Literal
 from engine.diagnostics.levels import EventCategory, TraceLevel
 
 __all__ = [
+    "CostEstimateEvent",
     "DatabaseClosedEvent",
     "DatabaseOpenedEvent",
     "DiagnosticEvent",
@@ -32,6 +33,7 @@ __all__ = [
     "IndexCreatedEvent",
     "IndexDescentEvent",
     "IndexSearchEvent",
+    "LogicalPlanEvent",
     "NodeMergeEvent",
     "NodeSplitEvent",
     "PageAllocatedEvent",
@@ -39,10 +41,13 @@ __all__ = [
     "PageFreedEvent",
     "PageReadEvent",
     "PageWriteEvent",
+    "PhysicalPlanEvent",
+    "PlanAlternativeEvent",
     "RangeScanEvent",
     "RecordDeletedEvent",
     "RecordInsertedEvent",
     "RecordReadEvent",
+    "StatisticsGatheredEvent",
 ]
 
 #: Where a page came from.  Milestone 1 always reads from ``"disk"``; the
@@ -558,3 +563,97 @@ class RangeScanEvent(DiagnosticEvent):
     leaves_visited: int
     rows_emitted: int
     duration_ns: int
+
+
+# --------------------------------------------------------------------------
+# Planner (Milestone 6)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StatisticsGatheredEvent(DiagnosticEvent):
+    """``ANALYZE`` finished on one table.
+
+    Categorised as ``catalog`` rather than ``planner``: gathering is a read of
+    the table, and it happens whether or not anything is being planned.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.CATALOG
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    table_name: str
+    row_count: int
+    page_count: int
+    column_count: int
+    duration_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalPlanEvent(DiagnosticEvent):
+    """A logical plan was built and rewritten.
+
+    ``rules_applied`` names only the rules that actually changed the tree, so a
+    plan that is unexpectedly fast can be traced to the rewrite responsible.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.PLANNER
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    table_name: str
+    node_count: int
+    rules_applied: str
+    """Comma-separated rule names; empty when nothing fired."""
+
+
+@dataclass(frozen=True, slots=True)
+class PlanAlternativeEvent(DiagnosticEvent):
+    """One access path the planner considered.
+
+    Emitted for losers as well as the winner. A planner that reports only its
+    choice cannot be checked; this is what makes the decision auditable.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.PLANNER
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    description: str
+    access_path: str
+    estimated_cost: float
+    estimated_rows: float
+    chosen: bool
+    rejected_because: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalPlanEvent(DiagnosticEvent):
+    """A physical plan was chosen and is about to run."""
+
+    category: ClassVar[EventCategory] = EventCategory.PLANNER
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    access_path: str
+    estimated_cost: float
+    estimated_rows: float
+    candidates_considered: int
+    statistics_stale: bool
+    """True when the table was written to after it was last analyzed, so the
+    estimates above are known to be based on old numbers."""
+
+
+@dataclass(frozen=True, slots=True)
+class CostEstimateEvent(DiagnosticEvent):
+    """One node's cost, broken into I/O and CPU.
+
+    ``VERBOSE`` because a plan emits one per node and the total is already on
+    :class:`PhysicalPlanEvent`. Turning it on is how you find which node an
+    estimate went wrong at.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.PLANNER
+    level: ClassVar[TraceLevel] = TraceLevel.VERBOSE
+
+    node_id: str
+    node_type: str
+    io_cost: float
+    cpu_cost: float
+    estimated_rows: float

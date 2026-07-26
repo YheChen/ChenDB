@@ -55,6 +55,7 @@ from engine.diagnostics.events import DatabaseClosedEvent, DatabaseOpenedEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import CatalogError, ChenDBError, RecordNotFoundError
 from engine.index.bplustree import BPlusTree
+from engine.planner.statistics import StatisticsCatalog
 from engine.serialization.record import (
     RecordLayout,
     Row,
@@ -83,7 +84,14 @@ DATABASE_SUFFIX = ".chendb"
 class Database:
     """A single ChenDB database file, holding any number of tables."""
 
-    __slots__ = ("_catalog", "_closed", "_database_id", "_pager", "_tracer")
+    __slots__ = (
+        "_catalog",
+        "_closed",
+        "_database_id",
+        "_pager",
+        "_statistics",
+        "_tracer",
+    )
 
     def __init__(
         self,
@@ -98,6 +106,7 @@ class Database:
         self._database_id = database_id or pager.path.stem
         self._closed = False
         self._catalog = Catalog(pager, tracer=self._tracer)
+        self._statistics = StatisticsCatalog(self, tracer=self._tracer)
         if create and not self._catalog.initialised:
             self._catalog.bootstrap()
 
@@ -142,6 +151,23 @@ class Database:
     def catalog(self) -> Catalog:
         """The system catalog. Read it directly for statistics or listings."""
         return self._catalog
+
+    @property
+    def statistics(self) -> StatisticsCatalog:
+        """Table and column statistics, gathered on demand.
+
+        In memory only, so they vanish on close — see
+        :mod:`engine.planner.statistics` for why that is a choice rather than
+        an omission.
+        """
+        return self._statistics
+
+    def analyze(self, table: str | None = None) -> list:
+        """Recompute statistics. What the ``ANALYZE`` statement runs."""
+        self._ensure_open()
+        if table is None:
+            return self._statistics.gather_all()
+        return [self._statistics.gather(table)]
 
     def create_table(self, name: str, schema: Schema) -> TableInfo:
         """Define a new table. Raises if the name is taken or reserved."""

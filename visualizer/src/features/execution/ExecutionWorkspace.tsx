@@ -22,7 +22,7 @@ import { useRunQuery } from "@/hooks/useEngine";
 import { api, type ResumeModeName } from "@/lib/api";
 import { SqlEditor } from "@/features/sql/SqlEditor";
 import type { ExecutionDetail, QueryResultModel } from "@/types/api";
-import { PlanTree } from "./PlanTree";
+import { AlternativesPanel, PlanTree } from "./PlanTree";
 import { ResultsPanel } from "./ResultsPanel";
 import { StepControls } from "./StepControls";
 
@@ -152,7 +152,9 @@ export function ExecutionWorkspace({
                   subtitle={
                     execution
                       ? `${execution.statement_kind.replace("Statement", "")} · ${execution.state}`
-                      : "volcano operator tree"
+                      : activePlan?.estimated_cost != null
+                        ? `volcano operator tree · est. cost ${activePlan.estimated_cost.toFixed(1)}`
+                        : "volcano operator tree"
                   }
                   className="h-full"
                   bodyClassName="flex flex-col"
@@ -175,6 +177,14 @@ export function ExecutionWorkspace({
                       plan={activePlan}
                       activeOperatorId={execution?.pause_operator_id ?? null}
                     />
+                    {activePlan && activePlan.alternatives.length > 0 ? (
+                      <div className="mt-2 border-t border-[var(--border-subtle)]">
+                        <p className="text-muted px-3 pt-2 text-[10px] tracking-wide uppercase">
+                          what the planner considered
+                        </p>
+                        <AlternativesPanel plan={activePlan} />
+                      </div>
+                    ) : null}
                   </div>
                 </Panel>
               </div>

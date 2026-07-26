@@ -1,0 +1,463 @@
+"""Statistics, selectivity, and the cost model.
+
+The point of the whole milestone is one behaviour: **the planner picks the
+cheaper access path**, where "cheaper" is measured, not assumed.  So the tests
+that matter most are the crossover tests at the bottom — they pin down where the
+index stops paying, and they fail if a change to the constants moves it.
+
+Everything above them is the machinery that crossover depends on: statistics
+that describe the data, and selectivity estimates that turn a predicate into a
+row count. When the planner picks a bad plan, it is almost always a bad
+selectivity estimate rather than bad arithmetic, which is why those get the most
+cases.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from engine import Column, Database, DataType, Schema
+from engine.executor.binder import bind_select
+from engine.executor.engine import build_logical_plan, execute_script, plan_query
+from engine.optimizer.cost import (
+    CPU_TUPLE_COST,
+    DEFAULT_INEQ_SELECTIVITY,
+    PAGE_COST,
+    Cost,
+    estimate_selectivity,
+    index_scan_cost,
+    seq_scan_cost,
+)
+from engine.optimizer.rules import fold_constants_in
+from engine.parser.parser import parse_statement
+from engine.planner.physical import (
+    DISABLE_COST,
+    PhysicalIndexScan,
+    PhysicalSeqScan,
+    PlannerOptions,
+)
+
+SCHEMA = Schema.of(
+    Column("id", DataType.INTEGER, nullable=False, primary_key=True),
+    Column("bucket", DataType.INTEGER),
+    Column("label", DataType.TEXT, nullable=False),
+)
+
+ROWS = 2_000
+BUCKETS = 100
+PAGE_SIZE = 512
+
+
+@pytest.fixture
+def db(tmp_path):
+    """2,000 rows, `bucket` uniform over 0..99, every 7th row's bucket NULL."""
+    with Database.open(tmp_path / "cost.chendb", page_size=PAGE_SIZE) as handle:
+        handle.create_table("t", SCHEMA)
+        handle.insert_many(
+            "t",
+            [
+                (n, None if n % 7 == 0 else n % BUCKETS, f"row{n:05d}")
+                for n in range(ROWS)
+            ],
+        )
+        handle.create_index("t_bucket", "t", "bucket")
+        yield handle
+
+
+def selectivity_of(db: Database, where: str) -> float:
+    """Estimate as the planner would — *after* the rewrite rules have run.
+
+    Folding first is not incidental. ``-100`` parses as a unary negation of
+    ``100``, not as a negative literal, so ``column < -100`` does not match the
+    ``column <op> literal`` shape that both the estimator and the index planner
+    look for until constant folding collapses it.
+    """
+    statement = parse_statement(f"SELECT id FROM t WHERE {where}")
+    bound = bind_select(statement, db.catalog)
+    assert bound.where is not None
+    return estimate_selectivity(
+        fold_constants_in(bound.where), db.statistics.for_table("t")
+    )
+
+
+def chosen_path(db: Database, sql: str, **kwargs) -> str:
+    result = execute_script(sql, db, **kwargs)[0]
+    assert result.planned is not None
+    return next(a.access_path for a in result.planned.alternatives if a.chosen)
+
+
+# -- statistics -------------------------------------------------------------
+
+
+def test_statistics_describe_the_table(db: Database):
+    stats = db.statistics.for_table("t")
+    assert stats.row_count == ROWS
+    assert stats.page_count > 1
+    assert [column.name for column in stats.columns] == ["id", "bucket", "label"]
+
+
+def test_distinct_counts_are_exact(db: Database):
+    stats = db.statistics.for_table("t")
+    assert stats.column(0).distinct_count == ROWS, "id is unique"
+    # Every 7th row is NULL, so some bucket values may be entirely missing.
+    assert stats.column(1).distinct_count <= BUCKETS
+
+
+def test_nulls_are_counted_separately_from_values(db: Database):
+    stats = db.statistics.for_table("t")
+    bucket = stats.column(1)
+    assert bucket.null_count == len([n for n in range(ROWS) if n % 7 == 0])
+    assert bucket.null_fraction(stats.row_count) == pytest.approx(1 / 7, abs=0.01)
+
+
+def test_min_and_max_ignore_nulls(db: Database):
+    bucket = db.statistics.for_table("t").column(1)
+    assert bucket.minimum == 0
+    assert bucket.maximum == BUCKETS - 1
+
+
+def test_statistics_are_gathered_lazily_rather_than_never(db: Database):
+    # A plan made with no statistics at all is a guess, and the first query
+    # after opening would be the one guaranteed to get it wrong.
+    db.statistics.invalidate()
+    assert db.statistics.cached("t") is None
+    assert db.statistics.for_table("t").row_count == ROWS
+    assert db.statistics.cached("t") is not None
+
+
+def test_writing_marks_the_statistics_stale(db: Database):
+    db.statistics.gather("t")
+    assert not db.statistics.is_stale("t")
+    db.insert("t", (99999, 5, "new"))
+    assert db.statistics.is_stale("t"), "a write after ANALYZE must be visible"
+
+
+def test_stale_statistics_are_still_used(db: Database):
+    # Deliberate: a slightly stale estimate is far more useful than none, and
+    # recomputing on every insert would cost a full scan per row. The staleness
+    # is reported instead — see the EXPLAIN output and the API.
+    db.statistics.gather("t")
+    before = db.statistics.for_table("t").row_count
+    db.insert_many("t", [(100_000 + n, 5, "x") for n in range(50)])
+    assert db.statistics.for_table("t").row_count == before
+    assert db.statistics.is_stale("t")
+
+
+def test_analyze_refreshes_them(db: Database):
+    db.statistics.gather("t")
+    db.insert_many("t", [(100_000 + n, 5, "x") for n in range(50)])
+    execute_script("ANALYZE t", db)
+    assert db.statistics.for_table("t").row_count == ROWS + 50
+    assert not db.statistics.is_stale("t")
+
+
+def test_analyze_with_no_table_does_every_table(db: Database):
+    db.create_table("other", Schema.of(Column("a", DataType.INTEGER)))
+    db.statistics.invalidate()
+    execute_script("ANALYZE", db)
+    assert set(db.statistics.analyzed_tables()) == {"t", "other"}
+
+
+# -- selectivity ------------------------------------------------------------
+
+
+def test_equality_uses_the_distinct_count(db: Database):
+    stats = db.statistics.for_table("t")
+    expected = (1 - stats.column(1).null_fraction(ROWS)) / stats.column(1).distinct_count
+    assert selectivity_of(db, "bucket = 5") == pytest.approx(expected)
+
+
+def test_a_unique_column_is_estimated_as_one_row(db: Database):
+    assert selectivity_of(db, "id = 500") == pytest.approx(1 / ROWS, rel=0.01)
+
+
+def test_a_range_interpolates_between_min_and_max(db: Database):
+    # bucket spans 0..99, so `< 25` should come out near a quarter of the
+    # non-null rows. Uniformity is the assumption a histogram would remove.
+    non_null = 1 - 1 / 7
+    assert selectivity_of(db, "bucket < 25") == pytest.approx(0.25 * non_null, abs=0.03)
+    assert selectivity_of(db, "bucket < 75") == pytest.approx(0.75 * non_null, abs=0.03)
+
+
+def test_a_bound_outside_the_observed_range_saturates(db: Database):
+    # The case a fixed guess handles worst, and the reason min/max is worth
+    # collecting even without a histogram.
+    assert selectivity_of(db, "bucket < -100") < 0.01
+    assert selectivity_of(db, "bucket > -100") > 0.8
+
+
+def test_a_negative_literal_is_only_usable_after_folding(db: Database):
+    # `-100` is UnaryOp(NEGATE, Literal(100)), which matches neither the
+    # estimator's `column <op> literal` shape nor the index planner's. Constant
+    # folding is what makes it one — so the rule is load-bearing for estimates,
+    # not just a micro-optimisation.
+    statement = parse_statement("SELECT id FROM t WHERE bucket < -100")
+    bound = bind_select(statement, db.catalog)
+    stats = db.statistics.for_table("t")
+    assert estimate_selectivity(bound.where, stats) == pytest.approx(
+        DEFAULT_INEQ_SELECTIVITY
+    )
+    assert estimate_selectivity(fold_constants_in(bound.where), stats) < 0.01
+
+
+def test_greater_than_is_the_complement_of_less_than(db: Database):
+    below = selectivity_of(db, "bucket < 30")
+    above = selectivity_of(db, "bucket > 30")
+    non_null = 1 - 1 / 7
+    assert below + above == pytest.approx(non_null, abs=0.02)
+
+
+def test_not_equal_is_almost_everything(db: Database):
+    assert selectivity_of(db, "bucket <> 5") > 0.8
+
+
+def test_and_multiplies_assuming_independence(db: Database):
+    # The most consequential wrong assumption in any planner. Named in the
+    # module docstring; asserted here so the behaviour is not accidental.
+    first = selectivity_of(db, "bucket < 50")
+    second = selectivity_of(db, "id < 1000")
+    assert selectivity_of(db, "bucket < 50 AND id < 1000") == pytest.approx(
+        first * second, rel=0.01
+    )
+
+
+def test_or_uses_inclusion_exclusion(db: Database):
+    first = selectivity_of(db, "bucket = 5")
+    second = selectivity_of(db, "bucket = 6")
+    assert selectivity_of(db, "bucket = 5 OR bucket = 6") == pytest.approx(
+        first + second - first * second, rel=0.01
+    )
+
+
+def test_is_null_uses_the_null_fraction(db: Database):
+    assert selectivity_of(db, "bucket IS NULL") == pytest.approx(1 / 7, abs=0.01)
+    assert selectivity_of(db, "bucket IS NOT NULL") == pytest.approx(6 / 7, abs=0.01)
+
+
+def test_equality_against_null_admits_nothing(db: Database):
+    # `x = NULL` is UNKNOWN for every row in three-valued logic. Not the same as
+    # `x IS NULL`, which is exactly why the AST keeps them as different nodes.
+    assert selectivity_of(db, "bucket = NULL") < 0.001
+
+
+def test_a_comparison_between_two_columns_falls_back(db: Database):
+    assert selectivity_of(db, "bucket < id") == pytest.approx(DEFAULT_INEQ_SELECTIVITY)
+
+
+def test_no_predicate_admits_everything(db: Database):
+    assert estimate_selectivity(None, db.statistics.for_table("t")) == 1.0
+
+
+def test_selectivity_never_leaves_zero_to_one(db: Database):
+    for where in ("bucket < 5000", "bucket > -5000", "bucket = 5 AND bucket = 6"):
+        value = selectivity_of(db, where)
+        assert 0.0 < value <= 1.0, where
+
+
+# -- costing ----------------------------------------------------------------
+
+
+def test_a_sequential_scan_costs_its_pages_and_its_rows(db: Database):
+    stats = db.statistics.for_table("t")
+    cost = seq_scan_cost(stats)
+    assert cost.io == pytest.approx(stats.page_count * PAGE_COST)
+    assert cost.cpu == pytest.approx(stats.row_count * CPU_TUPLE_COST)
+    assert cost.rows == stats.row_count
+
+
+def test_an_index_scan_is_dominated_by_its_heap_fetches(db: Database):
+    # One page read per matching row, and the same page again when matches
+    # share it. This term is what decides every crossover, so it is asserted as
+    # a *marginal* cost: each extra match must cost about one page read.
+    stats = db.statistics.for_table("t")
+    small = index_scan_cost(stats, matching_rows=10, height=3, entries_per_leaf=200)
+    large = index_scan_cost(stats, matching_rows=1000, height=3, entries_per_leaf=200)
+    per_extra_match = (large.io - small.io) / 990
+    assert per_extra_match == pytest.approx(PAGE_COST, rel=0.02)
+    # The descent is a fixed three reads whatever the query; the fetches are not.
+    assert large.io > 70 * small.io
+
+
+def test_a_point_lookup_costs_far_less_than_a_scan(db: Database):
+    stats = db.statistics.for_table("t")
+    point = index_scan_cost(stats, matching_rows=1, height=3, entries_per_leaf=200)
+    assert point.total * 20 < seq_scan_cost(stats).total
+
+
+def test_cost_splits_io_from_cpu(db: Database):
+    cost = Cost(io=3.0, cpu=4.0, rows=10)
+    assert cost.total == 7.0
+    assert "io 3.0" in str(cost) and "cpu 4.0" in str(cost)
+
+
+# -- the crossover: what the whole milestone is for -------------------------
+
+
+def test_a_selective_predicate_chooses_the_index(db: Database):
+    assert chosen_path(db, "SELECT id FROM t WHERE bucket = 5") == "PhysicalIndexScan"
+
+
+def test_an_unselective_predicate_chooses_the_scan(db: Database):
+    # Milestone 5 chose the index here and was 3.9x slower for it.
+    assert chosen_path(db, "SELECT id FROM t WHERE bucket < 90") == "PhysicalSeqScan"
+
+
+@pytest.mark.parametrize(
+    ("cutoff", "expected"),
+    [
+        (1, "PhysicalIndexScan"),
+        (5, "PhysicalIndexScan"),
+        (90, "PhysicalSeqScan"),
+        (99, "PhysicalSeqScan"),
+    ],
+)
+def test_the_crossover_sits_where_the_measurements_say(
+    db: Database, cutoff: int, expected: str
+):
+    """Pinned so a change to the constants cannot move it silently.
+
+    ``benchmarks/index_vs_scan.py`` is where these boundaries came from: the
+    index wins below roughly 14% selectivity on this engine and loses above it.
+    """
+    assert chosen_path(db, f"SELECT id FROM t WHERE bucket < {cutoff}") == expected
+
+
+def test_a_predicate_on_an_unindexed_column_scans(db: Database):
+    assert chosen_path(db, "SELECT id FROM t WHERE label = 'row00005'") == "PhysicalSeqScan"
+
+
+def test_not_equal_never_uses_an_index(db: Database):
+    # An index cannot bound `<>`: it would read the whole tree and then do a
+    # random heap read per row — strictly worse than a scan, every time.
+    assert chosen_path(db, "SELECT id FROM t WHERE bucket <> 5") == "PhysicalSeqScan"
+
+
+def test_every_candidate_is_reported_with_a_reason(db: Database):
+    result = execute_script("SELECT id FROM t WHERE bucket = 5", db)[0]
+    alternatives = result.planned.alternatives
+    assert len(alternatives) == 2
+    chosen = [a for a in alternatives if a.chosen]
+    rejected = [a for a in alternatives if not a.chosen]
+    assert len(chosen) == 1
+    assert rejected[0].rejected_because, "a loser must say why it lost"
+    assert "cost of the chosen plan" in rejected[0].rejected_because
+
+
+def test_the_chosen_plan_is_the_cheapest_one_offered(db: Database):
+    for where in ("bucket = 5", "bucket < 50", "bucket < 95", "id = 7"):
+        result = execute_script(f"SELECT id FROM t WHERE {where}", db)[0]
+        alternatives = result.planned.alternatives
+        winner = next(a for a in alternatives if a.chosen)
+        assert winner.cost.total == min(a.cost.total for a in alternatives), where
+
+
+# -- forcing a path ---------------------------------------------------------
+
+
+def test_disabling_the_index_forces_a_scan(db: Database):
+    path = chosen_path(
+        db,
+        "SELECT id FROM t WHERE bucket = 5",
+        planner_options=PlannerOptions(enable_index_scan=False),
+    )
+    assert path == "PhysicalSeqScan"
+
+
+def test_disabling_the_scan_forces_the_index(db: Database):
+    path = chosen_path(
+        db,
+        "SELECT id FROM t WHERE bucket < 95",
+        planner_options=PlannerOptions(enable_seq_scan=False),
+    )
+    assert path == "PhysicalIndexScan"
+
+
+def test_a_disabled_path_is_penalised_not_removed(db: Database):
+    # PostgreSQL's disable_cost trick: a query with every path disabled must
+    # still produce a plan, so "off" is a strong preference, not a prohibition.
+    result = execute_script(
+        "SELECT id FROM t WHERE bucket = 5",
+        db,
+        planner_options=PlannerOptions(enable_seq_scan=False, enable_index_scan=False),
+    )[0]
+    assert result.planned is not None
+    assert len(result.planned.alternatives) == 2
+    assert all(a.cost.total >= DISABLE_COST for a in result.planned.alternatives)
+    assert result.rows, "a plan still ran and returned rows"
+
+
+def test_forcing_does_not_change_the_answer(db: Database):
+    sql = "SELECT id FROM t WHERE bucket < 20"
+    by_scan = execute_script(
+        sql, db, planner_options=PlannerOptions(enable_index_scan=False)
+    )[0]
+    by_index = execute_script(
+        sql, db, planner_options=PlannerOptions(enable_seq_scan=False)
+    )[0]
+    assert sorted(by_scan.rows) == sorted(by_index.rows)
+    assert by_scan.rows, "the predicate must actually match something"
+
+
+# -- the physical plan ------------------------------------------------------
+
+
+def test_an_absorbed_predicate_leaves_no_filter(db: Database):
+    # Milestone 5 always kept a Filter above the index scan. When the index
+    # condition covers the whole predicate there is nothing left to check.
+    statement = parse_statement("SELECT id FROM t WHERE bucket = 5")
+    bound = bind_select(statement, db.catalog)
+    planned = plan_query(bound, db)
+    types = [node.node_type for node in _walk(planned.root)]
+    assert "PhysicalIndexScan" in types
+    assert "PhysicalFilter" not in types
+
+
+def test_a_partly_absorbed_predicate_keeps_the_rest(db: Database):
+    statement = parse_statement(
+        "SELECT id FROM t WHERE bucket = 5 AND label = 'row00005'"
+    )
+    bound = bind_select(statement, db.catalog)
+    planned = plan_query(bound, db)
+    types = [node.node_type for node in _walk(planned.root)]
+    assert "PhysicalIndexScan" in types
+    assert "PhysicalFilter" in types
+
+
+def test_the_logical_plan_has_no_opinion_on_access_paths(db: Database):
+    statement = parse_statement("SELECT id FROM t WHERE bucket = 5")
+    bound = bind_select(statement, db.catalog)
+    logical = build_logical_plan(bound)
+    rendered = str(logical)
+    assert "Index" not in rendered and "SeqScan" not in rendered
+
+
+def _walk(node):
+    out = [node]
+    for child in node.children:
+        out.extend(_walk(child))
+    return out
+
+
+def test_physical_nodes_can_be_costed_without_touching_the_disk(db: Database):
+    # A plan is data, not operators, which is what lets EXPLAIN cost a query it
+    # never runs and lets the API serialise one outside the engine lock.
+    statement = parse_statement("SELECT id FROM t WHERE bucket = 5")
+    bound = bind_select(statement, db.catalog)
+    db.statistics.for_table("t")  # gather first; that part does read
+    before = db.stats.page_reads
+    planned = plan_query(bound, db)
+    assert planned.estimated_cost > 0
+    # Opening the tree to ask its height is the one read planning still does.
+    assert db.stats.page_reads - before <= 4
+
+
+def test_seq_scan_and_index_scan_are_interchangeable(db: Database):
+    statement = parse_statement("SELECT id, bucket FROM t WHERE bucket = 5")
+    bound = bind_select(statement, db.catalog)
+    by_scan = plan_query(bound, db, options=PlannerOptions(enable_index_scan=False))
+    by_index = plan_query(bound, db, options=PlannerOptions(enable_seq_scan=False))
+    scan_leaf = _walk(by_scan.root)[-1]
+    index_leaf = _walk(by_index.root)[-1]
+    assert isinstance(scan_leaf, PhysicalSeqScan)
+    assert isinstance(index_leaf, PhysicalIndexScan)
+    assert scan_leaf.schema == index_leaf.schema, "same rows, different algorithm"

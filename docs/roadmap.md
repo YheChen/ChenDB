@@ -11,8 +11,8 @@ hidden in the UI until the engine behind it exists.
 | 3 | Volcano operators: scan, filter, project | Operator tree, step-through, row inspector | **done** |
 | 4 | Persistent catalog, multiple tables | Schema browser, storage statistics | **done** |
 | 5 | Disk-backed B+ tree, `CREATE INDEX`, index scan | Real tree view, traced descent, node inspector | **done** |
-| 6 | Binder, logical + physical plans, cost model | Plan comparison, rejected alternatives | next |
-| 7 | Buffer pool, pinning, LRU eviction | Frame grid, hit/miss animation, workloads | |
+| 6 | Logical + physical plans, statistics, cost model, `EXPLAIN` | Estimated vs actual, rejected alternatives | **done** |
+| 7 | Buffer pool, pinning, LRU eviction | Frame grid, hit/miss animation, workloads | next |
 | 8 | Transactions, undo records, rollback | Transaction timeline, before/after records | |
 | 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, step-through recovery | |
 | 10 | MVCC, locks, wait-for graph, deadlocks | Multi-session consoles, version chains, lock table | |
@@ -26,6 +26,7 @@ Engine version tracks the milestone: `0.N.0` means Milestone N is complete.
 | 1 | `META`, `HEAP`, `SCHEMA`, `FREE` | magic, version, page count, free list, heap/schema roots |
 | 4 | — (catalog uses `HEAP`; `SCHEMA` retired) | **v2**: `catalog_tables_*`, `catalog_columns_*`, `next_table_id` replace the three M1 root pointers |
 | 5 | `BTREE_INTERNAL`, `BTREE_LEAF` | **v3**: `catalog_indexes_*`; `next_table_id` becomes `next_object_id`, one id sequence for tables and indexes |
+| 6 | — | — (statistics are in memory, not persisted — see `docs/milestone-06-planner.md`) |
 | 9 | — | `checkpoint_lsn`, `last_lsn`; page `lsn` starts being written |
 | 10 | — | tuple headers gain `xmin`/`xmax` |
 

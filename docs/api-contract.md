@@ -109,6 +109,54 @@ ambiguous between the integer and the string. A value the index cannot encode is
 `422 InvalidKey`, not a crash. `pages_visited` can exceed `path.length` when
 duplicates span leaves and the search steps right.
 
+### Milestone 6 — the planner
+
+No new endpoints. `PlanModel` grows instead, because a plan belongs with the
+query that produced it:
+
+```json
+{
+  "root_id": "project_1",
+  "nodes": [
+    { "operator_id": "scan_1", "operator_type": "IndexScan",
+      "detail": "index=users_age age = 30",
+      "estimated_rows": 20, "estimated_cost": 26.2,
+      "estimated_io_cost": 24.0, "estimated_cpu_cost": 2.2,
+      "output_rows": 20, "duration_ns": 204000, "...": "" }
+  ],
+  "alternatives": [
+    { "description": "Sequential scan of users", "access_path": "PhysicalSeqScan",
+      "estimated_cost": 387.0, "estimated_rows": 2000, "chosen": false,
+      "rejected_because": "14.8x the cost of the chosen plan", "index_name": null },
+    { "description": "Index scan on users_age (age = 30)",
+      "access_path": "PhysicalIndexScan", "estimated_cost": 26.2,
+      "estimated_rows": 20, "chosen": true, "rejected_because": "",
+      "index_name": "users_age" }
+  ],
+  "rewrites": ["fold_constants"],
+  "estimated_cost": 26.3,
+  "statistics": { "table_name": "users", "row_count": 2000, "page_count": 87,
+                  "stale": false, "gathered_at_ns": 1730000000000000000 }
+}
+```
+
+Every operator carries **estimated beside actual**. The gap is the single most
+useful thing a plan view can show: a slow plan is almost always one whose row
+estimate was wrong, and no amount of staring at the chosen operators reveals
+that. `estimated_cost` on a node is cumulative — this node plus everything below
+it — matching what `EXPLAIN` prints.
+
+Every candidate is reported, not just the winner, each with why it lost.
+
+`statistics.stale` is `true` when the table has been written to since it was last
+analyzed. The estimates are still computed from the old numbers, and are still
+used — a slightly stale estimate beats none. Saying so is the alternative to
+pretending otherwise.
+
+`EXPLAIN` and `ANALYZE` go through the ordinary `POST /query`. `EXPLAIN` returns
+a one-column `QUERY PLAN` result set, so any client that can display a `SELECT`
+can display it.
+
 Arriving later: `/buffer-pool` (7), `/transactions` (8), `/wal` (9),
 `/locks` (10).
 

@@ -36,8 +36,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from engine.catalog.catalog import IndexInfo
-from engine.diagnostics.events import QueryExecutedEvent
+from engine.diagnostics.events import (
+    CostEstimateEvent,
+    LogicalPlanEvent,
+    PhysicalPlanEvent,
+    PlanAlternativeEvent,
+    QueryExecutedEvent,
+)
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import (
     BindingError,
@@ -47,7 +52,6 @@ from engine.errors import (
     QueryCancelledError,
 )
 from engine.executor.binder import (
-    BoundColumnRef,
     BoundInsert,
     BoundSelect,
     ResultColumn,
@@ -66,19 +70,36 @@ from engine.executor.operators import (
     ScanOperator,
     SeqScan,
 )
-from engine.index.key import SMALLEST_VALUE_KEY
 from engine.parser.ast import (
-    BinaryOp,
-    BinaryOperator,
+    AnalyzeStatement,
     CreateIndexStatement,
     CreateTableStatement,
-    Expression,
+    ExplainStatement,
     InsertStatement,
-    Literal,
     SelectStatement,
     Statement,
 )
 from engine.parser.parser import parse
+from engine.planner.logical import (
+    LogicalFilter,
+    LogicalNode,
+    LogicalProject,
+    LogicalScan,
+    walk_logical,
+)
+from engine.planner.physical import (
+    DEFAULT_PLANNER_OPTIONS,
+    PhysicalFilter,
+    PhysicalIndexScan,
+    PhysicalNode,
+    PhysicalProject,
+    PhysicalSeqScan,
+    PlannedQuery,
+    PlannerOptions,
+    describe_physical,
+    plan_select,
+    walk_physical,
+)
 from engine.serialization.record import Row
 from engine.storage.heap import RecordId
 
@@ -86,13 +107,14 @@ if TYPE_CHECKING:
     from engine.database import Database
 
 __all__ = [
-    "AccessPath",
     "ExecutionStats",
     "QueryResult",
+    "build_logical_plan",
     "build_select_plan",
-    "choose_access_path",
     "execute_script",
     "execute_statement",
+    "materialise",
+    "plan_query",
 ]
 
 #: Ceiling on rows a single query returns, so an API caller cannot ask for an
@@ -139,13 +161,15 @@ class QueryResult:
     stats: ExecutionStats = field(default_factory=ExecutionStats)
     plan: Operator | None = None
     """The operator tree, kept after execution so its statistics can be read."""
+    planned: PlannedQuery | None = None
+    """What the planner decided, including the alternatives it rejected."""
     cancelled: bool = False
     message: str = ""
     """Human-readable summary for statements that return no rows."""
 
     @property
     def returns_rows(self) -> bool:
-        return self.statement_kind == "SelectStatement"
+        return self.statement_kind in ("SelectStatement", "ExplainStatement")
 
 
 # --------------------------------------------------------------------------
@@ -153,251 +177,149 @@ class QueryResult:
 # --------------------------------------------------------------------------
 
 
+def build_logical_plan(bound: BoundSelect) -> LogicalNode:
+    """Turn a bound ``SELECT`` into a logical plan.
+
+    Straight structural translation with no decisions in it — every decision
+    belongs to a rewrite rule or to the cost model, where it can be named and
+    inspected. Milestone 3 dropped an identity projection here; that is now
+    :mod:`engine.optimizer.rules`.
+    """
+    plan: LogicalNode = LogicalScan("scan", bound.table_name, bound.input_schema)
+    if bound.where is not None:
+        plan = LogicalFilter("filter", bound.where, plan)
+    return LogicalProject("project", bound.projections, bound.output_columns, plan)
+
+
+def plan_query(
+    bound: BoundSelect,
+    database: Database,
+    *,
+    tracer: Tracer | None = None,
+    options: PlannerOptions = DEFAULT_PLANNER_OPTIONS,
+) -> PlannedQuery:
+    """Bind → logical → rewrite → enumerate → cost → choose.
+
+    The whole planner, in one call, returning everything it decided *and* what
+    it rejected. Runs no I/O beyond gathering statistics, so ``EXPLAIN`` can
+    call it without executing anything.
+    """
+    tracer = tracer if tracer is not None else NULL_TRACER
+    logical = build_logical_plan(bound)
+    planned = plan_select(logical, database, options)
+    _emit_plan(planned, tracer)
+    return planned
+
+
+def _emit_plan(planned: PlannedQuery, tracer: Tracer) -> None:
+    if not tracer.operator:
+        return
+    tracer.emit(
+        LogicalPlanEvent(
+            table_name=planned.statistics.table_name,
+            node_count=len(walk_logical(planned.logical)),
+            rules_applied=", ".join(planned.rewrites),
+        )
+    )
+    for alternative in planned.alternatives:
+        tracer.emit(
+            PlanAlternativeEvent(
+                description=alternative.description,
+                access_path=alternative.access_path,
+                estimated_cost=round(alternative.cost.total, 2),
+                estimated_rows=round(alternative.cost.rows, 1),
+                chosen=alternative.chosen,
+                rejected_because=alternative.rejected_because,
+            )
+        )
+    tracer.emit(
+        PhysicalPlanEvent(
+            access_path=next(
+                (a.access_path for a in planned.alternatives if a.chosen), "?"
+            ),
+            estimated_cost=round(planned.estimated_cost, 2),
+            estimated_rows=round(planned.estimated_rows, 1),
+            candidates_considered=len(planned.alternatives),
+            statistics_stale=planned.statistics_are_stale,
+        )
+    )
+    if tracer.verbose:
+        for node in walk_physical(planned.root):
+            tracer.emit(
+                CostEstimateEvent(
+                    node_id=node.node_id,
+                    node_type=node.node_type,
+                    io_cost=round(node.estimated.io, 2),
+                    cpu_cost=round(node.estimated.cpu, 2),
+                    estimated_rows=round(node.estimated.rows, 1),
+                )
+            )
+
+
+def materialise(
+    node: PhysicalNode, database: Database, context: ExecutionContext
+) -> Operator:
+    """Turn a costed physical plan into a running operator tree.
+
+    Kept separate from planning so a plan can be built, compared and printed
+    without opening an index or a heap — which is what lets ``EXPLAIN`` cost a
+    query it never runs.
+    """
+    match node:
+        case PhysicalSeqScan():
+            return SeqScan(
+                node.node_id,
+                context,
+                heap=database.heap_for(node.table_name),
+                schema=node.schema,
+                table_name=node.table_name,
+            )
+
+        case PhysicalIndexScan():
+            return IndexScan(
+                node.node_id,
+                context,
+                heap=database.heap_for(node.table_name),
+                schema=node.schema,
+                table_name=node.table_name,
+                tree=database.tree_for(node.index_name),
+                low=node.low,
+                high=node.high,
+                include_low=node.include_low,
+                include_high=node.include_high,
+            )
+
+        case PhysicalFilter():
+            return Filter(
+                node.node_id,
+                context,
+                child=materialise(node.child, database, context),
+                predicate=node.predicate,
+            )
+
+        case PhysicalProject():
+            return Project(
+                node.node_id,
+                context,
+                child=materialise(node.child, database, context),
+                projections=node.projections,
+                output_columns=node.output_columns,
+            )
+
+    raise ExecutionError(f"cannot execute {node.node_type}")  # pragma: no cover
+
+
 def build_select_plan(
     bound: BoundSelect, database: Database, context: ExecutionContext
 ) -> Operator:
-    """Build the operator tree for a bound ``SELECT``.
-
-    Two access paths now exist, so this makes its first real choice. The rule is
-    deliberately crude: **use an index whenever one covers a comparison in the
-    ``WHERE`` clause**, otherwise scan. It never asks how many rows will match,
-    which is the question that actually decides whether an index helps — see
-    :class:`~engine.executor.operators.IndexScan` on why a badly chosen index
-    scan is slower than a sequential one. Milestone 6 adds the cost model.
-    """
-    heap = database.heap_for(bound.table_name)
-    access = choose_access_path(bound, database)
-
-    plan: Operator
-    if access is None:
-        plan = SeqScan(
-            "scan_1",
-            context,
-            heap=heap,
-            schema=bound.input_schema,
-            table_name=bound.table_name,
-        )
-        residual = bound.where
-    else:
-        plan = IndexScan(
-            "scan_1",
-            context,
-            heap=heap,
-            schema=bound.input_schema,
-            table_name=bound.table_name,
-            tree=database.tree_for(access.index_name),
-            low=access.low,
-            high=access.high,
-            include_low=access.include_low,
-            include_high=access.include_high,
-        )
-        residual = access.residual
-
-    if residual is not None:
-        plan = Filter("filter_1", context, child=plan, predicate=residual)
-
-    # Skip a projection that would copy every column unchanged. A real saving:
-    # it removes a method call and a tuple build per row.
-    if not bound.is_identity_projection:
-        plan = Project(
-            "project_1",
-            context,
-            child=plan,
-            projections=bound.projections,
-            output_columns=bound.output_columns,
-        )
-
-    return plan
-
-
-@dataclass(frozen=True, slots=True)
-class AccessPath:
-    """An index scan the planner decided it can use.
-
-    ``residual`` is what the index could *not* express and still has to be
-    filtered per row. Splitting the predicate this way is what ``EXPLAIN`` shows
-    as "Index Cond" against "Filter" in PostgreSQL, and the distinction matters:
-    an index condition bounds how much is read, a filter only throws away what
-    was already read.
-    """
-
-    index_name: str
-    low: bytes | None
-    high: bytes | None
-    include_low: bool
-    include_high: bool
-    residual: Expression | None
-
-
-def choose_access_path(bound: BoundSelect, database: Database) -> AccessPath | None:
-    """Pick an index for ``bound``'s ``WHERE`` clause, or ``None`` to scan.
-
-    Handles a conjunction of comparisons against one indexed column, so
-    ``age >= 20 AND age <= 30 AND name = 'x'`` becomes a bounded index scan on
-    ``age`` with ``name = 'x'`` left as a residual filter. Anything else — an
-    ``OR``, a comparison between two columns, a non-indexed column — falls
-    through to a sequential scan rather than being half-handled.
-    """
-    if bound.where is None:
-        return None
-
-    conjuncts = _split_conjunction(bound.where)
-    comparisons = [
-        (index, comparison)
-        for index, comparison in enumerate(conjuncts)
-        if _as_column_comparison(comparison) is not None
-    ]
-    if not comparisons:
-        return None
-
-    # Group the usable comparisons by which column they constrain, then take the
-    # first column that has an index. "First" is arbitrary and is precisely the
-    # decision a cost model would make properly.
-    for position in dict.fromkeys(
-        _as_column_comparison(comparison)[0].column_index  # type: ignore[index]
-        for _, comparison in comparisons
-    ):
-        for index_info in database.catalog.indexes_on(bound.table_name, position):
-            bounds = _bounds_for(
-                [entry for entry in comparisons if _column_of(entry[1]) == position],
-                index_info,
-            )
-            if bounds is None:
-                continue
-            low, high, include_low, include_high, consumed = bounds
-            residual = _rebuild_conjunction(
-                [
-                    conjunct
-                    for position_in_list, conjunct in enumerate(conjuncts)
-                    if position_in_list not in consumed
-                ]
-            )
-            return AccessPath(
-                index_name=index_info.name,
-                low=low,
-                high=high,
-                include_low=include_low,
-                include_high=include_high,
-                residual=residual,
-            )
-    return None
-
-
-def _split_conjunction(expression: Expression) -> list[Expression]:
-    """Flatten ``a AND b AND c`` into ``[a, b, c]``. Anything else is one term."""
-    if isinstance(expression, BinaryOp) and expression.operator is BinaryOperator.AND:
-        return _split_conjunction(expression.left) + _split_conjunction(expression.right)
-    return [expression]
-
-
-def _rebuild_conjunction(terms: list[Expression]) -> Expression | None:
-    """Re-join the terms an index could not absorb, left-associatively."""
-    if not terms:
-        return None
-    combined = terms[0]
-    for term in terms[1:]:
-        combined = BinaryOp(
-            node_id=term.node_id,
-            span=combined.span.union(term.span),
-            operator=BinaryOperator.AND,
-            left=combined,
-            right=term,
-        )
-    return combined
-
-
-def _as_column_comparison(
-    expression: Expression,
-) -> tuple[BoundColumnRef, BinaryOperator, Any] | None:
-    """Match ``column <op> literal`` (either way round), or return ``None``.
-
-    A reversed comparison has its operator mirrored — ``18 < age`` constrains
-    ``age`` from below, not above — which is the kind of detail that silently
-    returns wrong rows if it is got wrong.
-    """
-    if not isinstance(expression, BinaryOp) or not expression.operator.is_comparison:
-        return None
-    if expression.operator is BinaryOperator.NEQ:
-        # An index cannot bound `<>`: it excludes one key and admits every
-        # other, so the scan would read the whole tree and the heap fetches
-        # would make it strictly worse than a sequential scan.
-        return None
-
-    left, right = expression.left, expression.right
-    if isinstance(left, BoundColumnRef) and isinstance(right, Literal):
-        return left, expression.operator, right.value
-    if isinstance(right, BoundColumnRef) and isinstance(left, Literal):
-        return right, _MIRRORED[expression.operator], left.value
-    return None
-
-
-_MIRRORED: dict[BinaryOperator, BinaryOperator] = {
-    BinaryOperator.EQ: BinaryOperator.EQ,
-    BinaryOperator.LT: BinaryOperator.GT,
-    BinaryOperator.LTE: BinaryOperator.GTE,
-    BinaryOperator.GT: BinaryOperator.LT,
-    BinaryOperator.GTE: BinaryOperator.LTE,
-}
-
-
-def _column_of(expression: Expression) -> int | None:
-    matched = _as_column_comparison(expression)
-    return matched[0].column_index if matched else None
-
-
-def _bounds_for(
-    candidates: list[tuple[int, Expression]], index_info: IndexInfo
-) -> tuple[bytes | None, bytes | None, bool, bool, set[int]] | None:
-    """Fold comparisons on one column into a single ``[low, high]`` range.
-
-    Returns ``None`` when nothing usable survives — an incomparable literal type,
-    or a comparison against ``NULL``, which three-valued logic makes false for
-    every row and which therefore must not be turned into a range that would
-    match the NULL keys in the tree.
-    """
-    low: bytes | None = None
-    high: bytes | None = None
-    include_low = True
-    include_high = True
-    consumed: set[int] = set()
-
-    for position, comparison in candidates:
-        matched = _as_column_comparison(comparison)
-        assert matched is not None
-        _, operator, value = matched
-        if value is None:
-            continue  # `x = NULL` is never true; let the filter handle it
-        try:
-            key = index_info.encode(value)
-        except IndexingError:
-            continue  # literal of a type this index cannot encode
-
-        match operator:
-            case BinaryOperator.EQ:
-                low = high = key
-                include_low = include_high = True
-            case BinaryOperator.GT | BinaryOperator.GTE:
-                inclusive = operator is BinaryOperator.GTE
-                if low is None or key > low or (key == low and not inclusive):
-                    low, include_low = key, inclusive
-            case BinaryOperator.LT | BinaryOperator.LTE:
-                inclusive = operator is BinaryOperator.LTE
-                if high is None or key < high or (key == high and not inclusive):
-                    high, include_high = key, inclusive
-            case _:  # pragma: no cover - filtered out by _as_column_comparison
-                continue
-        consumed.add(position)
-
-    if not consumed:
-        return None
-
-    # A range with no lower bound would sweep up the NULL keys, which sort below
-    # every value — and no comparison is ever true for NULL. Anchoring at the
-    # smallest possible *value* key excludes them, which is why the key encoding
-    # gives NULL its own tag rather than treating it as a small value.
-    if low is None:
-        low, include_low = SMALLEST_VALUE_KEY, True
-    return low, high, include_low, include_high, consumed
+    """Plan and materialise in one step. The path a plain ``SELECT`` takes."""
+    planned = plan_query(
+        bound,
+        database,
+        tracer=context.tracer,
+        options=context.planner_options or DEFAULT_PLANNER_OPTIONS,
+    )
+    return materialise(planned.root, database, context)
 
 
 # --------------------------------------------------------------------------
@@ -412,6 +334,7 @@ def execute_statement(
     tracer: Tracer | None = None,
     controller: StepController | None = None,
     max_rows: int = DEFAULT_MAX_ROWS,
+    planner_options: PlannerOptions = DEFAULT_PLANNER_OPTIONS,
 ) -> QueryResult:
     """Bind and run one statement against ``database``."""
     tracer = tracer if tracer is not None else NULL_TRACER
@@ -419,6 +342,7 @@ def execute_statement(
         tracer=tracer,
         controller=controller if controller is not None else NULL_CONTROLLER,
         max_rows=max_rows,
+        planner_options=planner_options,
     )
 
     started = time.perf_counter_ns()
@@ -431,6 +355,10 @@ def execute_statement(
             result = _execute_create_table(statement, database)
         case CreateIndexStatement():
             result = _execute_create_index(statement, database)
+        case AnalyzeStatement():
+            result = _execute_analyze(statement, database)
+        case ExplainStatement():
+            result = _execute_explain(statement, database, context, max_rows)
         case InsertStatement():
             result = _execute_insert(statement, database, context)
         case SelectStatement():
@@ -541,6 +469,125 @@ def _execute_create_index(
     )
 
 
+def _execute_analyze(
+    statement: AnalyzeStatement, database: Database
+) -> QueryResult:
+    name = statement.table.name if statement.table else None
+    try:
+        gathered = database.analyze(name)
+    except CatalogError as exc:
+        raise BindingError(
+            str(exc),
+            start=statement.span.start,
+            end=statement.span.end,
+            line=statement.span.line,
+            column=statement.span.column,
+        ) from None
+
+    if not gathered:
+        return QueryResult(
+            statement_kind=statement.node_type,
+            message="no tables to analyze",
+        )
+    summary = ", ".join(
+        f"{stats.table_name} ({stats.row_count} rows)" for stats in gathered
+    )
+    return QueryResult(
+        statement_kind=statement.node_type,
+        message=f"analyzed {summary}",
+    )
+
+
+#: The columns EXPLAIN returns. Rows rather than a bespoke response shape, so
+#: every client that can already display a SELECT can display an EXPLAIN —
+#: which is exactly why PostgreSQL's EXPLAIN returns a one-column result set.
+_EXPLAIN_COLUMNS: tuple[ResultColumn, ...] = (
+    ResultColumn("QUERY PLAN", None),
+)
+
+
+def _execute_explain(
+    statement: ExplainStatement,
+    database: Database,
+    context: ExecutionContext,
+    max_rows: int,
+) -> QueryResult:
+    """Plan the inner statement, optionally run it, and return the plan as rows."""
+    inner = statement.statement
+    if not isinstance(inner, SelectStatement):
+        raise BindingError(
+            f"EXPLAIN can only explain a SELECT, not {inner.node_type}; "
+            f"nothing else has an operator tree",
+            start=inner.span.start,
+            end=inner.span.end,
+            line=inner.span.line,
+            column=inner.span.column,
+        )
+
+    bound = bind_select(inner, database.catalog)
+    planned = plan_query(
+        bound,
+        database,
+        tracer=context.tracer,
+        options=context.planner_options or DEFAULT_PLANNER_OPTIONS,
+    )
+
+    actual: QueryResult | None = None
+    if statement.analyze:
+        # EXPLAIN ANALYZE runs the query. The row counts it reports are the real
+        # ones, which is the only way to see where an estimate went wrong.
+        actual = _execute_select(inner, database, context, planned=planned)
+
+    lines = _explain_lines(planned, actual)
+    return QueryResult(
+        statement_kind=statement.node_type,
+        columns=_EXPLAIN_COLUMNS,
+        rows=tuple((line,) for line in lines[:max_rows]),
+        plan=actual.plan if actual else None,
+        planned=planned,
+        stats=actual.stats if actual else ExecutionStats(rows_returned=len(lines)),
+    )
+
+
+def _explain_lines(planned: PlannedQuery, actual: QueryResult | None) -> list[str]:
+    """The plan as text, in the order PostgreSQL prints it."""
+    lines = describe_physical(planned.root).split("\n")
+    if actual is not None and actual.plan is not None:
+        measured = {op.operator_id: op for op in _walk(actual.plan)}
+        lines = [
+            _annotate(line, node, measured.get(node.node_id))
+            for line, node in zip(lines, walk_physical(planned.root), strict=False)
+        ]
+
+    lines.append("")
+    lines.append(f"Statistics: {planned.statistics.row_count} rows, "
+                 f"{planned.statistics.page_count} pages"
+                 + (" (STALE — the table has been written to since ANALYZE)"
+                    if planned.statistics_are_stale else ""))
+    if planned.rewrites:
+        lines.append(f"Rewrites applied: {', '.join(planned.rewrites)}")
+    if len(planned.alternatives) > 1:
+        lines.append("Alternatives considered:")
+        for alternative in planned.alternatives:
+            marker = "->" if alternative.chosen else "  "
+            reason = f"  [{alternative.rejected_because}]" if alternative.rejected_because else ""
+            lines.append(
+                f"  {marker} {alternative.description}  "
+                f"cost={alternative.cost.total:.1f} rows={alternative.cost.rows:.0f}{reason}"
+            )
+    return lines
+
+
+def _annotate(line: str, node: PhysicalNode, measured: Operator | None) -> str:
+    """Append actual figures beside the estimate, PostgreSQL-style."""
+    if measured is None:
+        return line
+    return (
+        f"{line} (actual rows={measured.stats.output_rows} "
+        f"time={measured.stats.duration_ns / 1e6:.2f}ms)"
+    )
+
+
 def _execute_insert(
     statement: InsertStatement, database: Database, context: ExecutionContext
 ) -> QueryResult:
@@ -570,10 +617,23 @@ def _execute_insert(
 
 
 def _execute_select(
-    statement: SelectStatement, database: Database, context: ExecutionContext
+    statement: SelectStatement,
+    database: Database,
+    context: ExecutionContext,
+    *,
+    planned: PlannedQuery | None = None,
 ) -> QueryResult:
     bound = bind_select(statement, database.catalog)
-    plan = build_select_plan(bound, database, context)
+    # EXPLAIN ANALYZE has already planned; re-planning would emit a second set
+    # of planner events and re-gather statistics for no gain.
+    if planned is None:
+        planned = plan_query(
+            bound,
+            database,
+            tracer=context.tracer,
+            options=context.planner_options or DEFAULT_PLANNER_OPTIONS,
+        )
+    plan = materialise(planned.root, database, context)
 
     rows: list[Row] = []
     record_ids: list[RecordId] = []
@@ -583,6 +643,10 @@ def _execute_select(
     limit = context.max_rows if context.max_rows is not None else DEFAULT_MAX_ROWS
 
     try:
+        # Everything above this point — binding, statistics, costing — is not
+        # steppable. Arming here is what makes "step" mean "advance the query"
+        # rather than "advance the planner's scan of chendb_tables".
+        context.controller.arm()
         # open() is inside the try because it contains checkpoints too: a query
         # cancelled while its operators were still opening must unwind the same
         # way as one cancelled mid-scan, not propagate the exception.
@@ -618,6 +682,7 @@ def _execute_select(
         record_ids=tuple(record_ids),
         stats=stats,
         plan=plan,
+        planned=planned,
         cancelled=cancelled,
     )
 
@@ -629,6 +694,7 @@ def execute_script(
     tracer: Tracer | None = None,
     controller: StepController | None = None,
     max_rows: int = DEFAULT_MAX_ROWS,
+    planner_options: PlannerOptions = DEFAULT_PLANNER_OPTIONS,
 ) -> list[QueryResult]:
     """Parse and run every statement in ``sql``, in order.
 
@@ -644,6 +710,7 @@ def execute_script(
                 tracer=tracer,
                 controller=controller,
                 max_rows=max_rows,
+                planner_options=planner_options,
             )
         )
     return results

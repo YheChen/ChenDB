@@ -46,6 +46,7 @@ from engine.parser.tokens import SourceSpan
 from engine.serialization.types import DataType
 
 __all__ = [
+    "AnalyzeStatement",
     "BinaryOp",
     "BinaryOperator",
     "ColumnConstraint",
@@ -53,6 +54,7 @@ __all__ = [
     "ColumnRef",
     "CreateIndexStatement",
     "CreateTableStatement",
+    "ExplainStatement",
     "Expression",
     "InsertStatement",
     "IsNullTest",
@@ -299,6 +301,32 @@ class CreateTableStatement(Statement):
     table: TableRef
     columns: tuple[ColumnDefinition, ...]
     if_not_exists: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ExplainStatement(Statement):
+    """``EXPLAIN [ANALYZE] <statement>``.
+
+    Wraps another statement rather than being a flag on it, so nothing
+    downstream has to check "am I being explained?" — the executor branches
+    once, at the top.
+
+    ``analyze`` here means PostgreSQL's ``EXPLAIN ANALYZE``: *run* the query and
+    report actual rows beside the estimates. It is unrelated to the ``ANALYZE``
+    statement, which gathers statistics. Sharing the word is SQL's fault, and
+    the collision is worth knowing about because the two do opposite things —
+    one executes, the other only measures.
+    """
+
+    statement: Statement
+    analyze: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyzeStatement(Statement):
+    """``ANALYZE [table]`` — recompute statistics. Omit the name for every table."""
+
+    table: TableRef | None = None
 
 
 @dataclass(frozen=True, slots=True)
