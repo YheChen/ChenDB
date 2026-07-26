@@ -64,6 +64,7 @@ from engine.serialization.record import (
     encode_record,
 )
 from engine.serialization.schema import Schema
+from engine.storage.buffer import DEFAULT_POOL_FRAMES
 from engine.storage.constants import DEFAULT_PAGE_SIZE
 from engine.storage.heap import HeapFile, RecordId
 from engine.storage.inspect import (
@@ -122,8 +123,14 @@ class Database:
         tracer: Tracer | None = None,
         verify_checksums: bool = True,
         database_id: str | None = None,
+        buffer_pool_frames: int = DEFAULT_POOL_FRAMES,
     ) -> Database:
-        """Open ``path``, creating and initialising it if it does not exist."""
+        """Open ``path``, creating and initialising it if it does not exist.
+
+        ``buffer_pool_frames`` sizes the page cache. A deliberately small pool
+        is the way to demonstrate eviction: with the default the whole of a
+        teaching-sized database is resident and nothing is ever evicted.
+        """
         resolved = Path(path)
         existed = resolved.exists() and resolved.stat().st_size > 0
         pager = Pager(
@@ -132,6 +139,7 @@ class Database:
             create=create,
             verify_checksums=verify_checksums,
             tracer=tracer,
+            buffer_pool_frames=buffer_pool_frames,
         )
         db = cls(pager, tracer=tracer, database_id=database_id, create=True)
         if db._tracer.summary:

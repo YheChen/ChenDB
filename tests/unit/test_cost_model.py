@@ -22,8 +22,10 @@ from engine.executor.engine import build_logical_plan, execute_script, plan_quer
 from engine.optimizer.cost import (
     CPU_TUPLE_COST,
     DEFAULT_INEQ_SELECTIVITY,
-    PAGE_COST,
+    PAGE_HIT_COST,
+    PAGE_MISS_COST,
     Cost,
+    distinct_pages_touched,
     estimate_selectivity,
     index_scan_cost,
     seq_scan_cost,
@@ -260,22 +262,46 @@ def test_selectivity_never_leaves_zero_to_one(db: Database):
 def test_a_sequential_scan_costs_its_pages_and_its_rows(db: Database):
     stats = db.statistics.for_table("t")
     cost = seq_scan_cost(stats)
-    assert cost.io == pytest.approx(stats.page_count * PAGE_COST)
+    assert cost.io == pytest.approx(stats.page_count * PAGE_MISS_COST)
     assert cost.cpu == pytest.approx(stats.row_count * CPU_TUPLE_COST)
     assert cost.rows == stats.row_count
 
 
 def test_an_index_scan_is_dominated_by_its_heap_fetches(db: Database):
-    # One page read per matching row, and the same page again when matches
-    # share it. This term is what decides every crossover, so it is asserted as
-    # a *marginal* cost: each extra match must cost about one page read.
+    # One heap read per matching row. Since Milestone 7 most of those are pool
+    # hits rather than misses, so the marginal cost of a match sits between the
+    # two — much closer to a hit once the scan is wide enough to have touched
+    # every page already.
     stats = db.statistics.for_table("t")
     small = index_scan_cost(stats, matching_rows=10, height=3, entries_per_leaf=200)
     large = index_scan_cost(stats, matching_rows=1000, height=3, entries_per_leaf=200)
     per_extra_match = (large.io - small.io) / 990
-    assert per_extra_match == pytest.approx(PAGE_COST, rel=0.02)
-    # The descent is a fixed three reads whatever the query; the fetches are not.
-    assert large.io > 70 * small.io
+    assert PAGE_HIT_COST <= per_extra_match <= PAGE_MISS_COST
+    assert large.io > 20 * small.io, "cost must grow with matches, not stay flat"
+
+
+def test_the_pool_is_visible_in_the_estimate(db: Database):
+    # Without modelling hits, every fetch would be charged as a miss and a wide
+    # index scan would look three times more expensive than it is.
+    stats = db.statistics.for_table("t")
+    wide = index_scan_cost(
+        stats, matching_rows=stats.row_count, height=3, entries_per_leaf=200
+    )
+    all_misses = (
+        3 + stats.row_count / 200 + stats.row_count
+    ) * PAGE_MISS_COST
+    assert wide.io < all_misses * 0.6
+
+
+def test_distinct_pages_saturates_at_the_page_count(db: Database):
+    # Fetching far more rows than there are pages cannot touch more pages than
+    # exist — the estimate has to know that or a wide scan is nonsense.
+    stats = db.statistics.for_table("t")
+    assert distinct_pages_touched(10 * stats.row_count, stats.page_count) == (
+        pytest.approx(stats.page_count)
+    )
+    assert distinct_pages_touched(1, stats.page_count) == pytest.approx(1.0)
+    assert distinct_pages_touched(0, stats.page_count) == 0.0
 
 
 def test_a_point_lookup_costs_far_less_than_a_scan(db: Database):

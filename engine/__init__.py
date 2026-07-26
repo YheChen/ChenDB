@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 __all__ = [

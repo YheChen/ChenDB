@@ -154,6 +154,67 @@ being flat, the model needs recalibrating before the planner can be trusted.
 
 ---
 
+## The buffer pool — Milestone 7
+
+Measured on the read path, 4 KiB pages:
+
+```
+ pread, OS cached                303 ns
+ CRC32 over the page             103 ns
+ build a Page object             249 ns
+ pool.fetch (a 4 KiB memcpy)     228 ns
+ validate() — walks every slot 13 290 ns   ← 130x the checksum
+```
+
+`Page.validate()` was the entire cost of a page read, and it is bookkeeping:
+one `struct.unpack_from` per slot, about a hundred on a full page. Splitting it —
+O(1) header checks on the read path, the slot walk explicit — plus skipping
+verification for a page already resident is what made the pool worth having:
+
+```
+ read_page, resident (hit)     661 ns
+ read_page, not resident      1822 ns   2.75x
+ index scan, 14 000 rows      307 ms → 86 ms
+```
+
+Write-back:
+
+```
+ 2,500-row insert:  3,169 logical writes → 143 syscalls   (95% absorbed)
+```
+
+Sequential flooding, with a 16-frame pool over a 75-page table:
+
+```
+ working set of 14 pages (fits)      hit rate  75.0%
+ scanning all 75 pages (does not)    hit rate   0.0%
+```
+
+Zero. Every page a scan loads is evicted by the pages behind it, so the pool does
+no good *and* throws away what was in it. PostgreSQL confines large scans to a
+ring buffer for exactly this.
+
+### The cost model, recalibrated
+
+`RANDOM_PAGE_COST` is gone: with a pool the axis that decides cost is hit against
+miss, not sequential against random. `PAGE_HIT_COST = 0.36`,
+`PAGE_MISS_COST = 1.0`, both measured, plus `distinct_pages_touched` (the
+Cárdenas occupancy formula) so the planner can estimate how many fetches will
+hit. The fit:
+
+| Plan | Estimated | Measured | µs per unit |
+|---|---:|---:|---:|
+| index scan, 20 rows | 30 | 0.2 ms | 8.2 |
+| index scan, 1 000 rows | 955 | 5.9 ms | 6.1 |
+| index scan, 4 000 rows | 3 374 | 22.8 ms | 6.8 |
+| index scan, 14 000 rows | 11 432 | 81.3 ms | 7.1 |
+| sequential scan + filter | 11 703 | 77.3 ms | 6.6 |
+
+And the crossover moved, correctly: `bucket < 200` (20% selectivity) was a
+sequential scan in Milestone 6 and is an index scan now.
+
+---
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |

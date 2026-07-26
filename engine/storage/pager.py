@@ -9,38 +9,57 @@ Responsibilities
 3. Verify checksums on read and refresh them on write.
 4. Maintain the meta page.
 
-What it deliberately does **not** do
-------------------------------------
-Caching.  Every :meth:`Pager.read_page` in Milestone 1 is a real ``read``
-syscall, and every :meth:`Pager.write_page` is a real ``write``.  Milestone 7
-inserts a buffer pool between the heap and the pager; keeping the pager
-cache-free now means that change is an insertion, not a rewrite.
+Caching
+-------
+Milestones 1-6 had none: every read was a ``pread`` plus a CRC32, and every
+write was a ``write``.  Milestone 7 puts a
+:class:`~engine.storage.buffer.BufferPool` between this class and the file, and
+it was an *insertion* rather than a rewrite — the pager kept the same public
+methods, and no caller changed.
+
+The pager remains the only thing that touches the file. The pool reaches storage
+solely through the two callbacks this class hands it, which is what keeps that
+true and what makes the pool testable against a dictionary.
+
+Logical against physical
+------------------------
+``PagerStats`` counts both, and the distinction became meaningful in Milestone 7:
+
+* ``page_reads`` / ``page_writes`` — **logical**: how many times the engine
+  asked for a page. Unchanged in meaning, so a test asserting "this operation
+  reads pages" still measures what it always did.
+* ``physical_reads`` / ``physical_writes`` — **syscalls**. The gap between the
+  two is the pool working, and ``hit_rate`` is that gap as a fraction.
 
 Durability model
 ----------------
-``write_page`` hands bytes to the operating system.  It does **not** make them
-durable — the OS may hold them in its page cache for seconds.  Only
-:meth:`sync` (``fsync``) guarantees the data survives a power loss.
+``write_page`` no longer reaches the operating system at all: it marks a frame
+dirty, and the bytes go out on eviction or on :meth:`sync`.  ``sync`` flushes
+every dirty frame *before* it ``fsync``s, so the contract a caller sees is
+unchanged — after ``sync()`` returns, everything acknowledged is durable.
 
-Milestone 1 therefore has a real, honest crash window: a process killed between
-a write and a sync can lose recent inserts, and a page torn mid-write is
-detected by its checksum but cannot be repaired.  Fixing that is precisely
-what the write-ahead log in Milestone 9 is for.
+Between syncs, more data now lives only in memory than before, so **the crash
+window is wider**. A process killed after twenty inserts and no sync used to
+lose whatever the OS had not flushed; now it loses whatever the pool has not
+evicted, which is likely all of it. That is the honest cost of write-back, and
+closing it is exactly what Milestone 9's write-ahead log is for.
 
 Complexity
 ----------
-=====================  ===========================================
+=====================  ===============================================
 Operation              Cost
-=====================  ===========================================
-``read_page``          O(1) — one seek + one read of ``page_size``
-``write_page``         O(1) — one seek + one write
+=====================  ===============================================
+``read_page``          O(1) — a pool hit, or one seek + one read
+``write_page``         O(1) — into a frame; the disk write is deferred
 ``allocate_page``      O(1) — free-list pop or file extension
 ``free_page``          O(1) — free-list push
-=====================  ===========================================
+``sync``               O(dirty frames) writes, then one ``fsync``
+=====================  ===============================================
 
-Each allocation also rewrites the meta page, so it costs two writes.  A real
-system amortises that: PostgreSQL tracks free space in a separate Free Space
-Map that is itself buffered and only crash-*hinted*, not crash-safe.
+Each allocation also rewrites the meta page. That used to cost a second syscall
+every time; the meta page is now pooled like any other, so a burst of
+allocations dirties one frame and writes it once. PostgreSQL amortises the same
+cost with a Free Space Map that is buffered and only crash-*hinted*.
 """
 
 from __future__ import annotations
@@ -61,6 +80,7 @@ from engine.diagnostics.events import (
 )
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import CorruptDatabaseError, PageNotFoundError
+from engine.storage.buffer import DEFAULT_POOL_FRAMES, BufferPool
 from engine.storage.constants import (
     DEFAULT_PAGE_SIZE,
     INVALID_PAGE_ID,
@@ -78,12 +98,18 @@ class PagerStats:
     """Cumulative I/O counters for one pager instance.
 
     Cheap to maintain (integer increments) and always on, because they are the
-    headline numbers a query plan is judged by.  Milestone 7 will report buffer
-    pool hits against ``page_reads`` to show the cache working.
+    headline numbers a query plan is judged by.
+
+    ``page_reads`` and ``page_writes`` are **logical** — how many times the
+    engine asked. ``physical_reads`` and ``physical_writes`` are syscalls. Before
+    Milestone 7 they were the same number; the gap between them now is the
+    buffer pool earning its memory.
     """
 
     page_reads: int = 0
     page_writes: int = 0
+    physical_reads: int = 0
+    physical_writes: int = 0
     allocations: int = 0
     recycled_allocations: int = 0
     frees: int = 0
@@ -93,10 +119,20 @@ class PagerStats:
     read_time_ns: int = 0
     write_time_ns: int = 0
 
-    def as_dict(self) -> dict[str, int]:
+    @property
+    def cache_hit_rate(self) -> float:
+        """Logical reads that did not become a syscall."""
+        if not self.page_reads:
+            return 0.0
+        return 1.0 - min(self.physical_reads / self.page_reads, 1.0)
+
+    def as_dict(self) -> dict[str, int | float]:
         return {
             "page_reads": self.page_reads,
             "page_writes": self.page_writes,
+            "physical_reads": self.physical_reads,
+            "physical_writes": self.physical_writes,
+            "cache_hit_rate": round(self.cache_hit_rate, 4),
             "allocations": self.allocations,
             "recycled_allocations": self.recycled_allocations,
             "frees": self.frees,
@@ -117,6 +153,7 @@ class Pager:
         "_meta",
         "_page_size",
         "_path",
+        "_pool",
         "_stats",
         "_tracer",
         "_verify_checksums",
@@ -131,6 +168,7 @@ class Pager:
         create: bool = True,
         verify_checksums: bool = True,
         tracer: Tracer | None = None,
+        buffer_pool_frames: int = DEFAULT_POOL_FRAMES,
     ) -> None:
         """Open ``path``, creating and initialising it when ``create`` is set.
 
@@ -145,6 +183,16 @@ class Pager:
         self._verify_checksums = verify_checksums
         self._writes_since_sync = 0
         self._closed = False
+
+        # Built before the file is touched, because loading the meta page
+        # already goes through it.
+        self._pool = BufferPool(
+            page_size=page_size,
+            capacity=buffer_pool_frames,
+            read_through=self._read_from_disk,
+            write_through=self._write_to_disk,
+            tracer=self._tracer,
+        )
 
         existed = self._path.exists()
         if not existed and not create:
@@ -164,6 +212,16 @@ class Pager:
                 raise CorruptDatabaseError(
                     f"{self._path} was created with {self._page_size}-byte pages; "
                     f"cannot reopen it with {page_size}-byte pages"
+                )
+            # The pool was sized for the requested page size, which the file may
+            # disagree with. Rebuild it now the real size is known.
+            if self._page_size != page_size:
+                self._pool = BufferPool(
+                    page_size=self._page_size,
+                    capacity=buffer_pool_frames,
+                    read_through=self._read_from_disk,
+                    write_through=self._write_to_disk,
+                    tracer=self._tracer,
                 )
             self._check_file_length()
         else:
@@ -197,6 +255,11 @@ class Pager:
         return self._stats
 
     @property
+    def buffer_pool(self) -> BufferPool:
+        """The page cache. Read it for the frame grid; do not bypass it."""
+        return self._pool
+
+    @property
     def tracer(self) -> Tracer:
         return self._tracer
 
@@ -207,6 +270,8 @@ class Pager:
     # -- meta page ---------------------------------------------------------
 
     def _load_meta(self) -> MetaPage:
+        # Read straight from the file rather than through the pool: the pool is
+        # sized in pages and the page size is exactly what this call discovers.
         self._file.seek(0)
         raw = self._file.read(DEFAULT_PAGE_SIZE)
         return MetaPage.from_bytes(raw, verify_checksum=self._verify_checksums)
@@ -245,7 +310,12 @@ class Pager:
                 f"(it holds pages 0..{self._meta.page_count - 1})"
             )
 
-    def _read_at(self, page_id: int) -> bytes:
+    # The two callbacks the buffer pool is given. Nothing else in the engine
+    # calls them: every other path goes through the pool, which is what makes
+    # "the pager is the only thing that touches the file" still true.
+
+    def _read_from_disk(self, page_id: int) -> bytes:
+        """One real ``pread``. Only the pool calls this."""
         offset = self.file_offset(page_id)
         started = time.perf_counter_ns()
         self._file.seek(offset)
@@ -257,40 +327,80 @@ class Pager:
                 f"short read on page {page_id}: got {len(raw)} of {self._page_size} bytes"
             )
 
-        self._stats.page_reads += 1
+        self._stats.physical_reads += 1
         self._stats.bytes_read += len(raw)
         self._stats.read_time_ns += elapsed
-        if self._tracer.storage:
-            self._tracer.emit(
-                PageReadEvent(
-                    page_id=page_id,
-                    file_offset=offset,
-                    source="disk",
-                    duration_ns=elapsed,
-                )
-            )
         return raw
 
-    def _write_at(self, page_id: int, raw: bytes) -> None:
-        if len(raw) != self._page_size:
-            raise ValueError(
-                f"page {page_id}: refusing to write {len(raw)} bytes "
-                f"into a {self._page_size}-byte slot"
-            )
+    def _write_to_disk(self, page_id: int, raw: bytes) -> None:
+        """One real ``write``, on eviction or flush. Only the pool calls this."""
         offset = self.file_offset(page_id)
         started = time.perf_counter_ns()
         self._file.seek(offset)
         self._file.write(raw)
         elapsed = time.perf_counter_ns() - started
 
-        self._stats.page_writes += 1
+        self._stats.physical_writes += 1
         self._stats.bytes_written += len(raw)
         self._stats.write_time_ns += elapsed
         self._writes_since_sync += 1
+
+    # -- logical page access, through the pool -----------------------------
+
+    def _fetch(self, page_id: int) -> tuple[bytes, bool]:
+        """Fetch a page's bytes; the flag says whether the pool served them.
+
+        Callers need the flag because a page that came out of a frame has
+        **already been verified** — see :meth:`read_page`.
+
+        Emits ``PageReadEvent`` for *every* logical read, not only the ones that
+        reach the disk — the ``source`` field is what distinguishes them, and it
+        has been in the schema since Milestone 1 waiting for this. Emitting only
+        on a miss would also break step mode's "run until the next page read",
+        which would start skipping cached reads.
+        """
+        started = time.perf_counter_ns()
+        misses_before = self._pool.stats.misses
+        raw = self._pool.fetch(page_id)
+        elapsed = time.perf_counter_ns() - started
+        cached = self._pool.stats.misses == misses_before
+
+        self._stats.page_reads += 1
+        if self._tracer.storage:
+            self._tracer.emit(
+                PageReadEvent(
+                    page_id=page_id,
+                    file_offset=self.file_offset(page_id),
+                    source="buffer_pool" if cached else "disk",
+                    duration_ns=elapsed,
+                )
+            )
+        return raw, cached
+
+    def _read_at(self, page_id: int) -> bytes:
+        """Bytes only, for callers that do not care where they came from."""
+        return self._fetch(page_id)[0]
+
+    def _write_at(self, page_id: int, raw: bytes) -> None:
+        """Hand a page to the pool. The disk write happens later, if at all."""
+        if len(raw) != self._page_size:
+            raise ValueError(
+                f"page {page_id}: refusing to write {len(raw)} bytes "
+                f"into a {self._page_size}-byte slot"
+            )
+        started = time.perf_counter_ns()
+        physical_before = self._stats.physical_writes
+        self._pool.store(page_id, raw)
+        elapsed = time.perf_counter_ns() - started
+
+        self._stats.page_writes += 1
         if self._tracer.storage:
             self._tracer.emit(
                 PageWriteEvent(
-                    page_id=page_id, file_offset=offset, duration_ns=elapsed
+                    page_id=page_id,
+                    file_offset=self.file_offset(page_id),
+                    duration_ns=elapsed,
+                    deferred=self._stats.physical_writes == physical_before,
                 )
             )
 
@@ -311,6 +421,22 @@ class Pager:
 
         Page 0 is rejected: the meta page has a different layout and is reached
         through :attr:`meta`.
+
+        **A page served from the pool is not re-verified.** Its checksum was
+        checked when it was admitted, or its bytes came from ``Page.to_bytes``,
+        which recomputes the checksum — so a frame's contents are valid by
+        construction and re-checking them proves nothing.
+
+        That is not a micro-optimisation. Verification is a CRC32 over the whole
+        page *plus* ``validate()``, which walks every slot; on a 4 KiB page
+        holding a hundred rows that is a hundred ``struct`` unpacks. Paying it
+        per logical read made the buffer pool almost worthless — it removed the
+        syscall and left the expensive half in place. Real systems verify at
+        admission for exactly this reason.
+
+        The cost is that in-memory corruption of a frame goes undetected. That
+        is the same bet PostgreSQL makes: ``data_checksums`` protects the
+        *storage* path, not RAM, and ECC memory is the answer to the other one.
         """
         self._ensure_open()
         if page_id == META_PAGE_ID:
@@ -318,12 +444,13 @@ class Pager:
                 "page 0 is the meta page; use Pager.meta or Pager.read_raw(0)"
             )
         self._check_page_id(page_id)
-        raw = self._read_at(page_id)
+        raw, cached = self._fetch(page_id)
         return Page.from_bytes(
             page_id,
             raw,
             self._page_size,
-            verify_checksum=self._verify_checksums,
+            verify_checksum=self._verify_checksums and not cached,
+            validate=not cached,
         )
 
     def write_page(self, page: Page) -> None:
@@ -364,6 +491,10 @@ class Pager:
             self._meta.page_count += 1
 
         page = Page.create(page_id, page_type, self._page_size)
+        # Whatever was cached under this id is superseded wholesale. Dropping it
+        # avoids writing bytes that are already dead — a recycled page would
+        # otherwise be flushed once with its old contents.
+        self._pool.invalidate(page_id)
         self._write_at(page_id, page.to_bytes())
         self._write_meta()
 
@@ -400,6 +531,7 @@ class Pager:
 
         page = Page.create(page_id, PageType.FREE, self._page_size)
         page.next_page_id = self._meta.free_list_head
+        self._pool.invalidate(page_id)
         self._write_at(page_id, page.to_bytes())
         self._meta.free_list_head = page_id
         self._write_meta()
@@ -438,6 +570,10 @@ class Pager:
         """
         self._ensure_open()
         started = time.perf_counter_ns()
+        # Dirty frames first: without this the fsync would make durable only
+        # whatever happened to have been evicted, and the contract callers have
+        # relied on since Milestone 1 would quietly stop holding.
+        self._pool.flush()
         self._file.flush()
         os.fsync(self._file.fileno())
         elapsed = time.perf_counter_ns() - started
@@ -459,6 +595,7 @@ class Pager:
         try:
             self.sync()
         finally:
+            self._pool.clear()
             self._file.close()
             self._closed = True
 
@@ -479,5 +616,6 @@ class Pager:
         state = "closed" if self._closed else "open"
         return (
             f"<Pager {self._path.name} {state} "
-            f"page_size={self._page_size} pages={self._meta.page_count}>"
+            f"page_size={self._page_size} pages={self._meta.page_count} "
+            f"pool={self._pool.resident_pages}/{self._pool.capacity}>"
         )

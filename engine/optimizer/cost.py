@@ -89,35 +89,40 @@ __all__ = [
     "CPU_TUPLE_COST",
     "DEFAULT_EQ_SELECTIVITY",
     "DEFAULT_INEQ_SELECTIVITY",
-    "PAGE_COST",
-    "RANDOM_PAGE_COST",
+    "PAGE_HIT_COST",
+    "PAGE_MISS_COST",
     "Cost",
+    "distinct_pages_touched",
     "estimate_selectivity",
     "index_scan_cost",
     "seq_scan_cost",
 ]
 
-#: One page: a ``pread`` of ``page_size`` bytes plus a CRC32 over all of it.
-#: The unit everything else is expressed in.
-PAGE_COST: Final = 1.0
+#: A page read the buffer pool could not serve: a ``pread``, a CRC32 and the
+#: O(1) header check. Measured at 1822 ns; the unit everything else is in.
+PAGE_MISS_COST: Final = 1.0
 
-#: A page read that cannot follow the previous one. Equal to ``PAGE_COST``
-#: today: there is no buffer pool, every read is a ``pread``, and the OS page
-#: cache makes locality almost irrelevant at this scale. Milestone 7 is what
-#: makes this differ — a hit becomes ~0 and a miss becomes a real seek.
-RANDOM_PAGE_COST: Final = 1.0
+#: A page read served from a frame: two 4 KiB copies and a ``Page`` object,
+#: with no syscall and no verification. Measured at 661 ns.
+#:
+#: Milestone 6 had ``RANDOM_PAGE_COST`` here, on the assumption that Milestone 7
+#: would make locality matter. It did not. With the pool the axis that decides
+#: cost is **hit against miss**, not sequential against random — there is no
+#: seek on an SSD, and the OS page cache was already flattening the difference.
+#: Estimating hits is what replaced it; see :func:`distinct_pages_touched`.
+PAGE_HIT_COST: Final = 0.36
 
-#: Decoding one record and evaluating a predicate against it, in interpreted
-#: Python. **Fifteen times more expensive** than PostgreSQL's ratio to a page
-#: read, and the term that decides most plans here.
-CPU_TUPLE_COST: Final = 0.15
+#: Decoding one record into Python values. Measured at 778 ns — *more than a
+#: third of a page miss*, which is the fact that makes this engine's cost model
+#: look nothing like PostgreSQL's, where a tuple is 1/100th of a page read.
+CPU_TUPLE_COST: Final = 0.43
 
-#: Evaluating one predicate against one already-decoded row. A third of a
+#: Evaluating one predicate against an already-decoded row. About a third of a
 #: decode: walking a small expression tree is real work, but nothing next to
-#: unpacking every column of a record. Charging a full ``CPU_TUPLE_COST`` here
-#: double-counts, and measurably so — it over-costed a filtered sequential scan
-#: by 45%, which biased every crossover toward the index.
-CPU_PREDICATE_COST: Final = 0.05
+#: unpacking every column. Charging a full ``CPU_TUPLE_COST`` here double-counts
+#: and over-costs a filtered sequential scan, which biases every crossover
+#: toward the index.
+CPU_PREDICATE_COST: Final = 0.14
 
 #: Comparing one key inside a B+ tree node. Cheap: the keys are encoded so the
 #: comparison is a ``memcmp``. See :mod:`engine.index.key`.
@@ -172,15 +177,46 @@ class Cost:
 def seq_scan_cost(stats: TableStatistics) -> Cost:
     """Read every page once, decode every row.
 
-    The predicate is *not* costed here — a ``Filter`` above the scan costs its
-    own evaluations, so charging them twice would bias every comparison toward
-    the index.
+    Every read is charged as a **miss**: a scan touches each page exactly once,
+    so the pool can never serve one — and worse, it evicts everything that was
+    in there. That is sequential flooding, and it is why PostgreSQL confines
+    large scans to a small ring buffer. ChenDB does not, so a scan is honestly
+    costed as all-misses and honestly *behaves* that way.
+
+    The predicate is not costed here: a ``Filter`` above the scan charges its
+    own evaluations, and counting them twice would bias every comparison.
     """
     return Cost(
-        io=stats.page_count * PAGE_COST,
+        io=stats.page_count * PAGE_MISS_COST,
         cpu=stats.row_count * CPU_TUPLE_COST,
         rows=float(stats.row_count),
     )
+
+
+def distinct_pages_touched(fetches: float, page_count: int) -> float:
+    """How many *distinct* pages ``fetches`` random row lookups will land on.
+
+    The classic occupancy result: with rows spread evenly over *P* pages, the
+    expected number of distinct pages hit by *N* independent fetches is
+    ``P * (1 - (1 - 1/P)**N)``. Cárdenas published it in 1975 and every
+    optimiser since has needed some version of it — PostgreSQL uses the
+    Mackert-Lohman refinement, which also accounts for the cache being finite.
+
+    It is what turns "the index will fetch 14,000 rows" into "…from about 233
+    distinct pages, so 233 misses and 13,767 hits", and without it the pool is
+    invisible to the planner: every fetch would be charged as a miss and the
+    index would look three times more expensive than it is.
+
+    The optimism here is deliberate and worth naming: it assumes a page touched
+    once stays resident. With a pool smaller than the working set that is false,
+    and the estimate is then too low. Modelling that properly needs the pool
+    size *and* the access pattern, which is what ``effective_cache_size`` tries
+    to approximate in PostgreSQL.
+    """
+    if page_count <= 0 or fetches <= 0:
+        return 0.0
+    distinct = page_count * (1.0 - (1.0 - 1.0 / page_count) ** fetches)
+    return min(distinct, fetches, float(page_count))
 
 
 def index_scan_cost(
@@ -196,8 +232,18 @@ def index_scan_cost(
     """
     matching = max(matching_rows, 0.0)
     leaves = matching / entries_per_leaf if entries_per_leaf > 0 else 0.0
+
+    # The descent and the leaves are read once each, so they are misses. The
+    # heap fetches are where the pool earns its memory: many of them land on a
+    # page a previous fetch already brought in.
+    misses = distinct_pages_touched(matching, stats.page_count)
+    hits = matching - misses
+
     return Cost(
-        io=(height * RANDOM_PAGE_COST) + (leaves * PAGE_COST) + (matching * RANDOM_PAGE_COST),
+        io=(height * PAGE_MISS_COST)
+        + (leaves * PAGE_MISS_COST)
+        + (misses * PAGE_MISS_COST)
+        + (hits * PAGE_HIT_COST),
         cpu=(matching * CPU_INDEX_COST) + (matching * CPU_TUPLE_COST),
         rows=matching,
     )

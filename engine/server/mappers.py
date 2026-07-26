@@ -39,6 +39,11 @@ from engine.planner.physical import (
 from engine.serialization.record import FieldLayout, RecordLayout
 from engine.serialization.schema import Column, Schema
 from engine.server.executions import Execution
+from engine.server.schemas.buffer import (
+    BufferPoolResponse,
+    BufferPoolStatsModel,
+    FrameModel,
+)
 from engine.server.schemas.catalog import (
     CatalogStatsModel,
     TableDetail,
@@ -87,6 +92,7 @@ from engine.server.schemas.sql import (
     StatementModel,
     TokenModel,
 )
+from engine.storage.buffer import PoolSnapshot
 from engine.storage.constants import INVALID_PAGE_ID
 from engine.storage.heap import RecordId
 from engine.storage.inspect import HeaderField, PageDetail, PageSummary, SlotDetail
@@ -699,4 +705,51 @@ def index_detail_to_api(
         ),
         tree=tree_snapshot_to_api(snapshot),
         stats=index_stats_to_api(stats),
+    )
+
+
+# --------------------------------------------------------------------------
+# Buffer pool (Milestone 7)
+# --------------------------------------------------------------------------
+
+
+def buffer_pool_to_api(snapshot: PoolSnapshot, pager: PagerStats) -> BufferPoolResponse:
+    """The frame grid plus the counters, for the pool view.
+
+    Takes a frozen snapshot rather than the live pool, so this runs after the
+    engine lock is released — the same rule every diagnostics mapper follows.
+    """
+    return BufferPoolResponse(
+        capacity=snapshot.capacity,
+        page_size=snapshot.page_size,
+        resident=snapshot.resident,
+        dirty=snapshot.dirty,
+        bytes_used=snapshot.resident * snapshot.page_size,
+        frames=[
+            FrameModel(
+                frame_id=frame.frame_id,
+                page_id=frame.page_id,
+                dirty=frame.dirty,
+                reads=frame.reads,
+                writes=frame.writes,
+                recency=frame.recency,
+                resident_for_ns=frame.resident_for_ns,
+            )
+            for frame in snapshot.frames
+        ],
+        stats=BufferPoolStatsModel(
+            hits=snapshot.stats.hits,
+            misses=snapshot.stats.misses,
+            lookups=snapshot.stats.lookups,
+            hit_rate=round(snapshot.stats.hit_rate, 4),
+            evictions=snapshot.stats.evictions,
+            dirty_evictions=snapshot.stats.dirty_evictions,
+            writes_absorbed=snapshot.stats.writes_absorbed,
+            flushes=snapshot.stats.flushes,
+            pages_flushed=snapshot.stats.pages_flushed,
+        ),
+        logical_reads=pager.page_reads,
+        physical_reads=pager.physical_reads,
+        logical_writes=pager.page_writes,
+        physical_writes=pager.physical_writes,
     )

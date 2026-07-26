@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-query";
 import { api, type TraceLevelName } from "@/lib/api";
 import type {
+  BufferPoolResponse,
   CatalogResponse,
   ColumnSpec,
   CreateIndexRequest,
@@ -44,6 +45,7 @@ export const queryKeys = {
     ["index", id, name, maxNodes] as const,
   indexSearch: (id: string, name: string, value: string) =>
     ["indexSearch", id, name, value] as const,
+  bufferPool: (id: string) => ["bufferPool", id] as const,
   pages: (id: string) => ["pages", id] as const,
   page: (id: string, pageId: number) => ["page", id, pageId] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -59,6 +61,7 @@ function invalidateDatabase(
     queryKeys.catalog(databaseId),
     queryKeys.tables(databaseId),
     queryKeys.pages(databaseId),
+    queryKeys.bufferPool(databaseId),
     queryKeys.indexes(databaseId),
     ["indexes", databaseId],
     ["index", databaseId],
@@ -190,6 +193,24 @@ export function useIndexSearch(
     queryFn: () => api.searchIndex(id!, name!, value),
     enabled: Boolean(id && name && value !== ""),
     retry: false,
+  });
+}
+
+/**
+ * The frame grid. Polled rather than pushed: the pool changes on *every* page
+ * read, so streaming it would be a firehose, and a cache's interesting
+ * behaviour — a working set settling in, a scan wiping it out — is visible at
+ * a human refresh rate anyway.
+ */
+export function useBufferPool(
+  id: string | null,
+  { refetchInterval = 1000 }: { refetchInterval?: number | false } = {},
+): UseQueryResult<BufferPoolResponse> {
+  return useQuery({
+    queryKey: queryKeys.bufferPool(id ?? ""),
+    queryFn: () => api.getBufferPool(id!),
+    enabled: Boolean(id),
+    refetchInterval,
   });
 }
 

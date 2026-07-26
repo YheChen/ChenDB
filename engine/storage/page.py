@@ -170,12 +170,24 @@ class Page:
         page_size: int = DEFAULT_PAGE_SIZE,
         *,
         verify_checksum: bool = True,
+        validate: bool = True,
     ) -> Page:
-        """Decode a page read from disk, validating its invariants."""
+        """Decode a page, checking its invariants unless told not to.
+
+        ``validate`` runs :meth:`validate_header` — the O(1) checks — not the
+        full slot walk, which is 13 µs on a full 4 KiB page and belongs to the
+        inspector rather than the read path.
+
+        Both default on, because the caller that reads from disk must make them.
+        The buffer pool is the one caller that turns them off: a resident page
+        was verified when it was admitted, or its bytes came from
+        :meth:`to_bytes`, which recomputes the checksum.
+        """
         page = cls(page_id, bytearray(raw), page_size)
         if verify_checksum:
             page.verify_checksum()
-        page.validate()
+        if validate:
+            page.validate_header()
         return page
 
     def to_bytes(self) -> bytes:
@@ -345,20 +357,40 @@ class Page:
         record_region = self._page_size - self.free_end
         return (record_region - live_bytes) + trailing_dead * SLOT_SIZE
 
-    def validate(self) -> None:
-        """Check the structural invariants that every page must satisfy."""
-        slot_count = self.slot_count
-        expected_free_start = PAGE_HEADER_SIZE + slot_count * SLOT_SIZE
+    def validate_header(self) -> None:
+        """Check the O(1) invariants: the free-space pointers agree.
+
+        Split out from :meth:`validate` because this is what a page read can
+        afford. Walking the slot directory costs one ``struct`` unpack per slot
+        — **13 µs on a full 4 KiB page**, measured, against 100 ns for the
+        checksum — so doing it per read made the buffer pool nearly pointless.
+
+        PostgreSQL draws the same line: it verifies the checksum and a few
+        header fields on read, and never walks the line pointer array to prove
+        it is self-consistent. A page that passes its checksum but has bad slots
+        is an engine bug, not media corruption, and a per-read scan is a poor
+        way to find one — :meth:`validate` is called explicitly by the page
+        inspector and by the tests, which is where it earns its cost.
+        """
+        expected_free_start = PAGE_HEADER_SIZE + self.slot_count * SLOT_SIZE
         if self.free_start != expected_free_start:
             raise CorruptPageError(
                 f"page {self.page_id}: free_start={self.free_start} but "
-                f"{slot_count} slots imply {expected_free_start}"
+                f"{self.slot_count} slots imply {expected_free_start}"
             )
         if not expected_free_start <= self.free_end <= self._page_size:
             raise CorruptPageError(
                 f"page {self.page_id}: free_end={self.free_end} outside "
                 f"[{expected_free_start}, {self._page_size}]"
             )
+
+    def validate(self) -> None:
+        """Check every invariant, including one pass over the slot directory.
+
+        O(slots), so not on the read path. See :meth:`validate_header`.
+        """
+        self.validate_header()
+        slot_count = self.slot_count
         for slot_id in range(slot_count):
             offset, length = self._read_slot(slot_id)
             if offset == _DEAD_OFFSET:

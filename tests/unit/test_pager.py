@@ -198,15 +198,21 @@ def test_the_meta_page_cannot_be_freed(pager: Pager):
 # -- statistics and durability ---------------------------------------------
 
 
-def test_stats_count_real_io(db_path: Path):
+def test_stats_count_logical_reads_separately_from_syscalls(db_path: Path):
+    # Before Milestone 7 these were one number. The gap between them is the
+    # buffer pool doing its job.
     with Pager(db_path, page_size=PAGE_SIZE) as pager:
         page = pager.allocate_page(PageType.HEAP)
         reads_before = pager.stats.page_reads
+        physical_before = pager.stats.physical_reads
         pager.read_page(page.page_id)
         pager.read_page(page.page_id)
-        # No cache in Milestone 1, so both reads hit the file.
-        assert pager.stats.page_reads == reads_before + 2
-        assert pager.stats.bytes_read == pager.stats.page_reads * PAGE_SIZE
+
+        assert pager.stats.page_reads == reads_before + 2, "both were asked for"
+        assert pager.stats.physical_reads == physical_before, (
+            "the page was already resident — neither read touched the file"
+        )
+        assert pager.stats.bytes_read == pager.stats.physical_reads * PAGE_SIZE
         assert pager.stats.allocations == 1
 
 
