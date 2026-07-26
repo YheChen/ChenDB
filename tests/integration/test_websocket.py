@@ -34,7 +34,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             json={"database_id": "demo", "page_size": PAGE_SIZE},
         )
         instance.post(
-            f"{API_PREFIX}/databases/demo/table",
+            f"{API_PREFIX}/databases/demo/tables",
             json={"name": "t", "columns": COLUMNS},
         )
         yield instance
@@ -42,7 +42,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 def insert(client: TestClient, count: int, start: int = 0) -> None:
     client.post(
-        f"{API_PREFIX}/databases/demo/records",
+        f"{API_PREFIX}/databases/demo/tables/t/records",
         json={"rows": [[i, f"row-{i:04d}"] for i in range(start, start + count)]},
     )
 
@@ -146,7 +146,7 @@ def test_a_client_that_never_reads_cannot_block_the_engine(client: TestClient):
 
         for batch in range(4):
             response = client.post(
-                f"{API_PREFIX}/databases/demo/records",
+                f"{API_PREFIX}/databases/demo/tables/t/records",
                 json={
                     "rows": [
                         [batch * 100 + i, f"row-{i}"] for i in range(100)
@@ -155,7 +155,7 @@ def test_a_client_that_never_reads_cannot_block_the_engine(client: TestClient):
             )
             assert response.status_code == 201, "a silent WebSocket blocked an insert"
 
-    assert client.get(f"{API_PREFIX}/databases/demo/records?limit=1000").json()[
+    assert client.get(f"{API_PREFIX}/databases/demo/tables/t/records?limit=1000").json()[
         "returned"
     ] == 400
 
@@ -168,12 +168,12 @@ def test_a_disconnected_client_does_not_block_later_queries(client: TestClient):
     # Socket closed. Subsequent work must proceed normally.
     for batch in range(3):
         response = client.post(
-            f"{API_PREFIX}/databases/demo/records",
+            f"{API_PREFIX}/databases/demo/tables/t/records",
             json={"rows": [[100 + batch, f"after-{batch}"]]},
         )
         assert response.status_code == 201
 
-    rows = client.get(f"{API_PREFIX}/databases/demo/records?limit=1000").json()
+    rows = client.get(f"{API_PREFIX}/databases/demo/tables/t/records?limit=1000").json()
     assert rows["returned"] == 8
 
 

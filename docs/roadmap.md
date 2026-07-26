@@ -9,8 +9,8 @@ hidden in the UI until the engine behind it exists.
 | 1 | Pages, slotted heap, records, persistence | Disk map, page inspector, event timeline | **done** |
 | 2 | Tokenizer, recursive-descent parser, AST | Monaco editor, token stream, AST tree | **done** |
 | 3 | Volcano operators: scan, filter, project | Operator tree, step-through, row inspector | **done** |
-| 4 | Persistent catalog, multiple tables | Schema browser, storage statistics | next |
-| 5 | Disk-backed B+ tree | Real tree view, search/split/range animation | |
+| 4 | Persistent catalog, multiple tables | Schema browser, storage statistics | **done** |
+| 5 | Disk-backed B+ tree | Real tree view, search/split/range animation | next |
 | 6 | Binder, logical + physical plans, cost model | Plan comparison, rejected alternatives | |
 | 7 | Buffer pool, pinning, LRU eviction | Frame grid, hit/miss animation, workloads | |
 | 8 | Transactions, undo records, rollback | Transaction timeline, before/after records | |
@@ -24,7 +24,7 @@ Engine version tracks the milestone: `0.N.0` means Milestone N is complete.
 | # | New page types | New meta fields |
 |---|---|---|
 | 1 | `META`, `HEAP`, `SCHEMA`, `FREE` | magic, version, page count, free list, heap/schema roots |
-| 4 | — (catalog uses `HEAP`) | `catalog_root_page` replaces the three M1 root pointers |
+| 4 | — (catalog uses `HEAP`; `SCHEMA` retired) | **v2**: `catalog_tables_*`, `catalog_columns_*`, `next_table_id` replace the three M1 root pointers |
 | 5 | `BTREE_INTERNAL`, `BTREE_LEAF` | — (index roots live in the catalog) |
 | 9 | — | `checkpoint_lsn`, `last_lsn`; page `lsn` starts being written |
 | 10 | — | tuple headers gain `xmin`/`xmax` |

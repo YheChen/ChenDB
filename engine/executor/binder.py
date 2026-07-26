@@ -15,18 +15,23 @@ PostgreSQL does the same thing in its ``transformStmt`` pass, turning a raw pars
 tree into a ``Query`` with resolved ``Var`` nodes carrying ``varno``/``varattno``.
 The parse tree it started from is thrown away.
 
-Scope in Milestone 3
+Scope in Milestone 4
 --------------------
-One table per database, so the "catalog" is a single :class:`Schema` handed in by
-the caller.  Milestone 4 replaces that with a real catalog lookup across many
-tables, and Milestone 6 moves binding into a proper front-end pass that also
-produces a logical plan. The *interface* here — statement in, bound statement
-out, :class:`BindingError` on a name that does not exist — is what survives.
+Table names now resolve against the real :class:`~engine.catalog.catalog.Catalog`,
+so ``SELECT * FROM nope`` fails here with the name of the table that does not
+exist and a list of the ones that do.  Milestone 6 moves binding into a proper
+front-end pass that also produces a logical plan; the *interface* here —
+statement in, bound statement out, :class:`BindingError` on a name that does not
+exist — is what survives.
+
+Still missing: joins (one table per ``FROM``), so a qualified ``users.age`` is
+accepted only when the qualifier names the table being scanned.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from engine.errors import BindingError, SchemaError
 from engine.parser.ast import (
@@ -46,6 +51,13 @@ from engine.parser.ast import (
 )
 from engine.serialization.schema import Column, Schema
 from engine.serialization.types import DataType
+
+if TYPE_CHECKING:
+    from engine.catalog.catalog import Catalog, TableInfo
+
+    #: Anything that can resolve a table name. A protocol in spirit; the concrete
+    #: :class:`~engine.catalog.catalog.Catalog` is the only implementation.
+    CatalogLike = Catalog
 
 __all__ = [
     "BoundColumnRef",
@@ -242,9 +254,10 @@ def _static_type(expression: Expression) -> DataType | None:
 # --------------------------------------------------------------------------
 
 
-def bind_select(statement: SelectStatement, table_name: str, schema: Schema) -> BoundSelect:
-    """Bind a ``SELECT`` against the one table this database holds."""
-    _require_table(statement.table.name, table_name, statement)
+def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect:
+    """Bind a ``SELECT`` against the catalog."""
+    info = _resolve_table(statement.table.name, catalog, statement)
+    table_name, schema = info.name, info.schema
 
     projections: list[Expression] = []
     output_columns: list[ResultColumn] = []
@@ -303,14 +316,15 @@ def _output_name(item: SelectItem, bound: Expression) -> str:
     return "?column?"
 
 
-def bind_insert(statement: InsertStatement, table_name: str, schema: Schema) -> BoundInsert:
+def bind_insert(statement: InsertStatement, catalog: CatalogLike) -> BoundInsert:
     """Bind an ``INSERT``, reordering values into schema order.
 
     A statement may name its columns in any order and omit nullable ones. The
     executor should not have to care, so every row comes out of here full-width
     and in declaration order, with ``NULL`` literals filled in for omissions.
     """
-    _require_table(statement.table.name, table_name, statement)
+    info = _resolve_table(statement.table.name, catalog, statement)
+    table_name, schema = info.name, info.schema
 
     if statement.columns is None:
         target_indices = tuple(range(len(schema)))
@@ -442,23 +456,32 @@ def _column_from(definition: ColumnDefinition) -> Column:
         ) from None
 
 
-def _require_table(
-    referenced: str, actual: str | None, statement: Statement
-) -> None:
-    if actual is None:
-        raise BindingError(
-            f"no table {referenced!r}: this database has no table yet",
-            start=statement.span.start,
-            end=statement.span.end,
-            line=statement.span.line,
-            column=statement.span.column,
-        )
-    if referenced.casefold() != actual.casefold():
-        raise BindingError(
-            f"no table named {referenced!r}; this database holds {actual!r}. "
-            f"Multiple tables per database arrive with the catalog in Milestone 4.",
-            start=statement.span.start,
-            end=statement.span.end,
-            line=statement.span.line,
-            column=statement.span.column,
-        )
+def _resolve_table(
+    referenced: str, catalog: CatalogLike, statement: Statement
+) -> TableInfo:
+    """Look up a table, turning a miss into a positioned :class:`BindingError`.
+
+    The message lists what *does* exist, because "no such table" without that is
+    the least helpful error a database can give.
+    """
+    info = catalog.get_table(referenced)
+    if info is not None:
+        return info
+
+    known = ", ".join(table.name for table in catalog.list_tables())
+    detail = f"this database has {known}" if known else "this database has no tables"
+    raise BindingError(
+        f"no table named {referenced!r}; {detail}",
+        start=statement.table.span.start
+        if isinstance(statement, SelectStatement | InsertStatement)
+        else statement.span.start,
+        end=statement.table.span.end
+        if isinstance(statement, SelectStatement | InsertStatement)
+        else statement.span.end,
+        line=statement.table.span.line
+        if isinstance(statement, SelectStatement | InsertStatement)
+        else statement.span.line,
+        column=statement.table.span.column
+        if isinstance(statement, SelectStatement | InsertStatement)
+        else statement.span.column,
+    )

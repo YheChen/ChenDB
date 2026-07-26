@@ -55,11 +55,11 @@ def query(client: TestClient, sql: str, **extra) -> list[dict]:
 
 def test_health_reports_execution(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 3
+    assert body["milestone"] == 4
     assert body["features"]["sql"] is True
     assert body["features"]["execution"] is True
+    assert body["features"]["catalog"] is True
     # Still nothing after this milestone.
-    assert body["features"]["catalog"] is False
     assert body["features"]["indexes"] is False
 
 
@@ -207,12 +207,26 @@ def test_an_unknown_column_is_422_with_a_position(seeded: TestClient):
     assert detail["sql_error"]["column"] == 8
 
 
-def test_an_unknown_table_explains_the_one_table_limit(seeded: TestClient):
+def test_an_unknown_table_lists_the_ones_that_exist(seeded: TestClient):
     response = seeded.post(
         f"{API_PREFIX}/databases/demo/query", json={"sql": "SELECT * FROM orders"}
     )
     assert response.status_code == 422
-    assert "Milestone 4" in response.json()["detail"]["message"]
+    detail = response.json()["detail"]
+    assert "no table named 'orders'" in detail["message"]
+    assert "users" in detail["message"]
+    # The position must point at the table name, not the whole statement.
+    assert detail["sql_error"]["start"] == len("SELECT * FROM ")
+
+
+def test_several_tables_can_be_queried_independently(seeded: TestClient):
+    query(seeded, "CREATE TABLE orders (id INTEGER, user_id INTEGER, total FLOAT)")
+    query(seeded, "INSERT INTO orders VALUES (1, 1, 9.99), (2, 1, 24.5)")
+
+    (orders,) = query(seeded, "SELECT total FROM orders WHERE user_id = 1")
+    (users,) = query(seeded, "SELECT email FROM users WHERE id = 1")
+    assert [row[0] for row in orders["rows"]] == [9.99, 24.5]
+    assert users["rows"] == [["ada@example.com"]]
 
 
 def test_a_syntax_error_is_422_here_unlike_parse(seeded: TestClient):
@@ -242,13 +256,22 @@ def test_querying_before_a_table_exists_is_explained(client: TestClient):
     assert "no table" in response.json()["detail"]["message"]
 
 
-def test_a_second_create_table_is_refused(seeded: TestClient):
+def test_creating_a_duplicate_table_is_refused(seeded: TestClient):
     response = seeded.post(
         f"{API_PREFIX}/databases/demo/query",
-        json={"sql": "CREATE TABLE orders (id INTEGER)"},
+        json={"sql": "CREATE TABLE users (id INTEGER)"},
     )
     assert response.status_code in (409, 422)
-    assert "Milestone 4" in response.json()["detail"]["message"]
+    assert "already exists" in response.json()["detail"]["message"]
+
+
+def test_a_reserved_table_name_is_refused(seeded: TestClient):
+    response = seeded.post(
+        f"{API_PREFIX}/databases/demo/query",
+        json={"sql": "CREATE TABLE chendb_sneaky (id INTEGER)"},
+    )
+    assert response.status_code in (409, 422)
+    assert "reserved" in response.json()["detail"]["message"]
 
 
 def test_create_table_if_not_exists_is_a_no_op(seeded: TestClient):

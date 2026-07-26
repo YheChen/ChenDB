@@ -16,9 +16,10 @@ no I/O, so they can — and must — run *outside* any engine lock.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
+from engine.catalog.catalog import CatalogStats, TableInfo
 from engine.database import Database
 from engine.diagnostics import SinkStats, TraceLevel, TraceRecord
 from engine.errors import SqlError
@@ -31,6 +32,12 @@ from engine.parser.tokens import Token
 from engine.serialization.record import FieldLayout, RecordLayout
 from engine.serialization.schema import Column, Schema
 from engine.server.executions import Execution
+from engine.server.schemas.catalog import (
+    CatalogStatsModel,
+    TableDetail,
+    TableStorageModel,
+    TableSummary,
+)
 from engine.server.schemas.database import (
     ColumnModel,
     DatabaseDetail,
@@ -38,7 +45,6 @@ from engine.server.schemas.database import (
     RecordIdModel,
     RowModel,
     SchemaModel,
-    TableResponse,
 )
 from engine.server.schemas.events import TraceRecordModel, TraceStatsModel
 from engine.server.schemas.pages import (
@@ -82,7 +88,6 @@ __all__ = [
     "row_to_api",
     "schema_to_api",
     "sql_error_to_api",
-    "table_to_api",
     "token_to_api",
     "trace_record_to_api",
     "trace_stats_to_api",
@@ -139,44 +144,22 @@ def pager_stats_to_api(stats: PagerStats) -> PagerStatsModel:
 def database_detail_to_api(
     db: Database,
     *,
-    row_count: int | None,
-    heap_page_ids: Iterable[int],
-    schema_page_ids: Iterable[int],
+    tables: Sequence[TableInfo],
     trace_level: TraceLevel,
     file_size_bytes: int,
 ) -> DatabaseDetail:
     meta = db.pager.meta
-    table = db.table
     return DatabaseDetail(
         database_id=db.database_id,
         page_size=db.page_size,
         page_count=db.page_count,
         file_size_bytes=file_size_bytes,
         format_version=meta.format_version,
-        table_name=table.name if table else None,
-        schema=schema_to_api(table.schema) if table else None,
-        row_count=row_count,
-        heap_page_ids=sorted(heap_page_ids),
-        schema_page_ids=sorted(schema_page_ids),
+        table_names=[info.name for info in tables],
+        table_count=len(tables),
         free_list_head=_optional_page_id(meta.free_list_head),
         stats=pager_stats_to_api(db.stats),
         trace_level=trace_level.name,
-    )
-
-
-def table_to_api(
-    db: Database, *, row_count: int, heap_page_ids: Iterable[int]
-) -> TableResponse:
-    table = db.table
-    assert table is not None  # callers check first and return 404 otherwise
-    meta = db.pager.meta
-    return TableResponse(
-        name=table.name,
-        schema=schema_to_api(table.schema),
-        row_count=row_count,
-        heap_page_ids=sorted(heap_page_ids),
-        first_page_id=meta.heap_first_page,
-        last_page_id=meta.heap_last_page,
     )
 
 
@@ -519,4 +502,62 @@ def execution_detail_to_api(execution: Execution) -> ExecutionDetail:
         error=execution.error,
         age_seconds=round(execution.age_seconds, 3),
         idle_seconds=round(execution.idle_seconds, 3),
+    )
+
+
+# -- catalog (Milestone 4) -------------------------------------------------
+
+
+def table_summary_to_api(
+    info: TableInfo, *, row_count: int, page_count: int
+) -> TableSummary:
+    return TableSummary(
+        table_id=info.table_id,
+        name=info.name,
+        column_count=info.column_count,
+        row_count=row_count,
+        page_count=page_count,
+        is_system=info.is_system,
+    )
+
+
+def table_storage_to_api(
+    info: TableInfo,
+    *,
+    page_ids: Sequence[int],
+    row_count: int,
+    page_size: int,
+    free_space: int,
+    reclaimable_space: int,
+) -> TableStorageModel:
+    return TableStorageModel(
+        first_page=info.first_page,
+        last_page=info.last_page,
+        page_ids=list(page_ids),
+        page_count=len(page_ids),
+        row_count=row_count,
+        bytes_allocated=len(page_ids) * page_size,
+        free_space=free_space,
+        reclaimable_space=reclaimable_space,
+    )
+
+
+def table_detail_to_api(info: TableInfo, storage: TableStorageModel) -> TableDetail:
+    return TableDetail(
+        table_id=info.table_id,
+        name=info.name,
+        is_system=info.is_system,
+        schema=schema_to_api(info.schema),
+        columns=[column_to_api(column) for column in info.schema],
+        storage=storage,
+    )
+
+
+def catalog_stats_to_api(stats: CatalogStats) -> CatalogStatsModel:
+    return CatalogStatsModel(
+        lookups=stats.lookups,
+        cache_hits=stats.cache_hits,
+        hit_rate=round(stats.hit_rate, 4),
+        scans=stats.scans,
+        tables_created=stats.tables_created,
     )

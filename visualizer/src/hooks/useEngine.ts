@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-query";
 import { api, type TraceLevelName } from "@/lib/api";
 import type {
+  CatalogResponse,
   ColumnSpec,
   DatabaseDetail,
   DatabaseListResponse,
@@ -22,16 +23,18 @@ import type {
   PageDetailModel,
   PageListResponse,
   RecordsResponse,
-  TableResponse,
+  TableDetail,
 } from "@/types/api";
 
 export const queryKeys = {
   health: ["health"] as const,
   databases: ["databases"] as const,
   database: (id: string) => ["database", id] as const,
-  table: (id: string) => ["table", id] as const,
-  records: (id: string, offset: number, limit: number) =>
-    ["records", id, offset, limit] as const,
+  catalog: (id: string) => ["catalog", id] as const,
+  tables: (id: string) => ["tables", id] as const,
+  table: (id: string, table: string) => ["table", id, table] as const,
+  records: (id: string, table: string, offset: number, limit: number) =>
+    ["records", id, table, offset, limit] as const,
   pages: (id: string) => ["pages", id] as const,
   page: (id: string, pageId: number) => ["page", id, pageId] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -44,8 +47,10 @@ function invalidateDatabase(
 ): void {
   for (const key of [
     queryKeys.database(databaseId),
-    queryKeys.table(databaseId),
+    queryKeys.catalog(databaseId),
+    queryKeys.tables(databaseId),
     queryKeys.pages(databaseId),
+    ["table", databaseId],
     ["records", databaseId],
     ["page", databaseId],
   ]) {
@@ -78,26 +83,37 @@ export function useDatabase(id: string | null): UseQueryResult<DatabaseDetail> {
   });
 }
 
-export function useTable(id: string | null): UseQueryResult<TableResponse> {
+export function useCatalog(id: string | null): UseQueryResult<CatalogResponse> {
   return useQuery({
-    queryKey: queryKeys.table(id ?? ""),
-    queryFn: () => api.getTable(id!),
+    queryKey: queryKeys.catalog(id ?? ""),
+    queryFn: () => api.getCatalog(id!),
     enabled: Boolean(id),
-    // A database with no table yet returns 404. That is an expected state, not
-    // a transient failure, so do not retry it.
+  });
+}
+
+export function useTable(
+  id: string | null,
+  table: string | null,
+): UseQueryResult<TableDetail> {
+  return useQuery({
+    queryKey: queryKeys.table(id ?? "", table ?? ""),
+    queryFn: () => api.getTable(id!, table!),
+    enabled: Boolean(id && table),
+    // An unknown table is an expected state, not a transient failure.
     retry: false,
   });
 }
 
 export function useRecords(
   id: string | null,
+  table: string | null,
   offset: number,
   limit: number,
 ): UseQueryResult<RecordsResponse> {
   return useQuery({
-    queryKey: queryKeys.records(id ?? "", offset, limit),
-    queryFn: () => api.listRecords(id!, offset, limit),
-    enabled: Boolean(id),
+    queryKey: queryKeys.records(id ?? "", table ?? "", offset, limit),
+    queryFn: () => api.listRecords(id!, table!, offset, limit),
+    enabled: Boolean(id && table),
     retry: false,
     placeholderData: (previous) => previous,
   });
@@ -154,19 +170,19 @@ export function useCreateTable(databaseId: string) {
   });
 }
 
-export function useInsertRecords(databaseId: string) {
+export function useInsertRecords(databaseId: string, table: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (rows: unknown[][]) => api.insertRecords(databaseId, rows),
+    mutationFn: (rows: unknown[][]) => api.insertRecords(databaseId, table, rows),
     onSuccess: () => invalidateDatabase(client, databaseId),
   });
 }
 
-export function useDeleteRecord(databaseId: string) {
+export function useDeleteRecord(databaseId: string, table: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ pageId, slotId }: { pageId: number; slotId: number }) =>
-      api.deleteRecord(databaseId, pageId, slotId),
+      api.deleteRecord(databaseId, table, pageId, slotId),
     onSuccess: () => invalidateDatabase(client, databaseId),
   });
 }

@@ -24,7 +24,6 @@ __all__ = [
     "RecordsResponse",
     "RowModel",
     "SchemaModel",
-    "TableResponse",
 ]
 
 #: Mirrors engine.serialization.types.DataType. A Literal rather than an import
@@ -124,25 +123,13 @@ class DatabaseDetail(ApiModel):
     page_count: int
     file_size_bytes: int
     format_version: int
-    table_name: str | None
-    schema_: SchemaModel | None = Field(default=None, alias="schema")
-    row_count: int | None = Field(
-        description="Live rows; null when no table is defined yet"
+    table_names: list[str] = Field(
+        description="User tables. System tables are listed by /catalog."
     )
-    heap_page_ids: list[int]
-    schema_page_ids: list[int]
+    table_count: int
     free_list_head: int | None
     stats: PagerStatsModel
     trace_level: str
-
-
-class TableResponse(ApiModel):
-    name: str
-    schema_: SchemaModel = Field(alias="schema")
-    row_count: int
-    heap_page_ids: list[int]
-    first_page_id: int
-    last_page_id: int
 
 
 class RecordIdModel(ApiModel):

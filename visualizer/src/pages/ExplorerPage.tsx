@@ -23,6 +23,7 @@
 import { useEffect, useState } from "react";
 import { SplitPane } from "@/components/SplitPane";
 import { cn } from "@/lib/format";
+import { CatalogPanel, TableDetailPanel } from "@/features/catalog/CatalogPanel";
 import { EventTimeline } from "@/features/events/EventTimeline";
 import { TopBar } from "@/features/layout/TopBar";
 import { PageInspector } from "@/features/pages/PageInspector";
@@ -30,14 +31,14 @@ import { PageListPanel } from "@/features/pages/PageListPanel";
 import { RecordsPanel } from "@/features/records/RecordsPanel";
 import { ExecutionWorkspace } from "@/features/execution/ExecutionWorkspace";
 import { SqlWorkspace } from "@/features/sql/SqlWorkspace";
-import { SchemaPanel } from "@/features/table/SchemaPanel";
-import { useDatabase, useDatabases, useHealth, useTable } from "@/hooks/useEngine";
+import { useCatalog, useDatabase, useDatabases, useHealth } from "@/hooks/useEngine";
 import { useEventStream } from "@/hooks/useEventStream";
 import { useTheme } from "@/hooks/useTheme";
 import type { TraceLevelName } from "@/lib/api";
 
 const DATABASE_KEY = "chendb.database";
 const WORKSPACE_KEY = "chendb.workspace";
+const TABLE_KEY = "chendb.table";
 
 type WorkspaceId = "storage" | "sql" | "execution";
 
@@ -53,13 +54,16 @@ export function ExplorerPage() {
     () => (read(WORKSPACE_KEY) as WorkspaceId | null) ?? "storage",
   );
   const [selectedPageId, setSelectedPageId] = useState<number | null>(null);
+  const [selectedTable, setSelectedTable] = useState<string | null>(() =>
+    read(TABLE_KEY),
+  );
   const [paused, setPaused] = useState(false);
   const [theme] = useTheme();
 
   const health = useHealth();
   const databases = useDatabases();
   const database = useDatabase(databaseId);
-  const table = useTable(databaseId);
+  const catalog = useCatalog(databaseId);
   const stream = useEventStream(databaseId, { paused });
 
   // Fall back to the first available database when none is chosen, or when the
@@ -73,6 +77,17 @@ export function ExplorerPage() {
 
   useEffect(() => write(DATABASE_KEY, databaseId), [databaseId]);
   useEffect(() => write(WORKSPACE_KEY, workspace), [workspace]);
+  useEffect(() => write(TABLE_KEY, selectedTable), [selectedTable]);
+
+  // Select the first table automatically, and drop a selection whose table has
+  // gone away — otherwise the detail panel shows a stale 404.
+  useEffect(() => {
+    if (!catalog.data) return;
+    const names = catalog.data.tables.map((table) => table.name);
+    const systemNames = catalog.data.system_tables.map((table) => table.name);
+    if (selectedTable && [...names, ...systemNames].includes(selectedTable)) return;
+    setSelectedTable(names[0] ?? null);
+  }, [catalog.data, selectedTable]);
 
   // Default to the meta page: it is the most instructive page in the file, and
   // an empty inspector on arrival teaches nothing.
@@ -135,7 +150,8 @@ export function ExplorerPage() {
           ) : (
             <StorageWorkspace
               databaseId={databaseId}
-              hasTable={table.isSuccess}
+              selectedTable={selectedTable}
+              onSelectTable={setSelectedTable}
               selectedPageId={selectedPageId}
               onSelectPage={setSelectedPageId}
             />
@@ -162,32 +178,45 @@ export function ExplorerPage() {
 
 function StorageWorkspace({
   databaseId,
-  hasTable,
+  selectedTable,
+  onSelectTable,
   selectedPageId,
   onSelectPage,
 }: {
   databaseId: string | null;
-  hasTable: boolean;
+  selectedTable: string | null;
+  onSelectTable: (table: string | null) => void;
   selectedPageId: number | null;
   onSelectPage: (pageId: number) => void;
 }) {
   return (
     <SplitPane
       direction="horizontal"
-      initialPercent={28}
-      minPercent={18}
-      maxPercent={45}
-      label="Resize the schema column"
+      initialPercent={30}
+      minPercent={20}
+      maxPercent={48}
+      label="Resize the catalog column"
       className="min-h-0 w-full"
       first={
         <div className="flex min-h-0 w-full flex-col gap-2 pr-1">
           <div className="min-h-0 flex-1">
-            <SchemaPanel databaseId={databaseId} onTableChange={() => undefined} />
+            <CatalogPanel
+              databaseId={databaseId}
+              selectedTable={selectedTable}
+              onSelectTable={onSelectTable}
+            />
+          </div>
+          <div className="min-h-0 flex-1">
+            <TableDetailPanel
+              databaseId={databaseId}
+              table={selectedTable}
+              onSelectPage={onSelectPage}
+            />
           </div>
           <div className="min-h-0 flex-1">
             <RecordsPanel
               databaseId={databaseId}
-              hasTable={hasTable}
+              table={selectedTable}
               onSelectPage={onSelectPage}
             />
           </div>

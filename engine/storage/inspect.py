@@ -13,8 +13,9 @@ mechanical dataclass-to-Pydantic mapping with no logic to get wrong.
 from __future__ import annotations
 
 import zlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Final
 
 from engine.errors import ChenDBError
@@ -128,20 +129,18 @@ def hexdump(
     return "\n".join(lines)
 
 
-def _owner_for(
-    page_id: int,
-    meta: MetaPage,
-    heap_pages: frozenset[int],
-    schema_pages: frozenset[int],
-    table_name: str | None,
-) -> str:
-    """Which structure a page belongs to. Milestone 5 adds index names here."""
+def _owner_for(page_id: int, owners: Mapping[int, str]) -> str:
+    """Which structure a page belongs to.
+
+    ``owners`` maps page id to table name, built by walking every table's chain.
+    With many tables this has to be a lookup rather than a set of flags, and it
+    is where Milestone 5 will add index names.
+    """
     if page_id == META_PAGE_ID:
         return "meta"
-    if page_id in schema_pages or page_id == meta.schema_page_id:
-        return "schema"
-    if page_id in heap_pages:
-        return table_name or "heap"
+    owner = owners.get(page_id)
+    if owner is not None:
+        return owner
     return "unallocated"
 
 
@@ -169,9 +168,7 @@ def summarize_page(
     pager: Pager,
     page_id: int,
     *,
-    heap_pages: frozenset[int] = frozenset(),
-    schema_pages: frozenset[int] = frozenset(),
-    table_name: str | None = None,
+    owners: Mapping[int, str] = MappingProxyType({}),
 ) -> PageSummary:
     """Describe one page without decoding its records.
 
@@ -216,7 +213,7 @@ def summarize_page(
         free_space=free_space,
         reclaimable_space=reclaimable,
         next_page_id=None if next_page == INVALID_PAGE_ID else next_page,
-        owner=_owner_for(page_id, pager.meta, heap_pages, schema_pages, table_name),
+        owner=_owner_for(page_id, owners),
         error=error,
     )
 
@@ -228,17 +225,31 @@ def _meta_header_fields(raw: bytes, meta: MetaPage) -> tuple[HeaderField, ...]:
         ("page_size", 20, 4, meta.page_size, "bytes per page, fixed at creation"),
         ("page_count", 24, 4, meta.page_count, "pages allocated in the file"),
         ("free_list_head", 28, 4, meta.free_list_head, "first recycled page"),
-        ("heap_first_page", 32, 4, meta.heap_first_page, "table's first heap page"),
-        ("heap_last_page", 36, 4, meta.heap_last_page, "table's last heap page"),
-        ("schema_page_id", 40, 4, meta.schema_page_id, "page holding the schema"),
-        ("lsn", 44, 8, meta.lsn, "reserved for the WAL (Milestone 9)"),
-        ("flags", 52, 4, meta.flags, "reserved"),
+        (
+            "catalog_tables_first",
+            32,
+            4,
+            meta.catalog_tables_first,
+            "first heap page of chendb_tables",
+        ),
+        ("catalog_tables_last", 36, 4, meta.catalog_tables_last, "its last page"),
+        (
+            "catalog_columns_first",
+            40,
+            4,
+            meta.catalog_columns_first,
+            "first heap page of chendb_columns",
+        ),
+        ("catalog_columns_last", 44, 4, meta.catalog_columns_last, "its last page"),
+        ("next_table_id", 48, 4, meta.next_table_id, "id the next table will get"),
+        ("lsn", 52, 8, meta.lsn, "reserved for the WAL (Milestone 9)"),
+        ("flags", 60, 4, meta.flags, "reserved"),
         (
             "checksum",
-            56,
+            64,
             4,
-            int.from_bytes(raw[56:60], "little"),
-            "CRC32 over bytes 0..56",
+            int.from_bytes(raw[64:68], "little"),
+            "CRC32 over bytes 0..64",
         ),
     )
     return tuple(
@@ -290,9 +301,7 @@ def inspect_page(
     page_id: int,
     *,
     schema: Schema | None = None,
-    heap_pages: frozenset[int] = frozenset(),
-    schema_pages: frozenset[int] = frozenset(),
-    table_name: str | None = None,
+    owners: Mapping[int, str] = MappingProxyType({}),
 ) -> PageDetail:
     """Fully describe a page, decoding records when a ``schema`` is supplied.
 
@@ -300,13 +309,7 @@ def inspect_page(
     situation Milestone 4's catalog fixes, and worth being able to see.
     """
     raw = pager.read_raw(page_id)
-    summary = summarize_page(
-        pager,
-        page_id,
-        heap_pages=heap_pages,
-        schema_pages=schema_pages,
-        table_name=table_name,
-    )
+    summary = summarize_page(pager, page_id, owners=owners)
 
     if page_id == META_PAGE_ID:
         return PageDetail(
@@ -327,9 +330,7 @@ def inspect_page(
         payload = raw[info.offset : info.offset + info.length] if info.is_live else b""
         record: RecordLayout | None = None
         decode_error: str | None = None
-        # Only heap pages hold schema-shaped records; a SCHEMA page's slot is a
-        # JSON chunk and decoding it as a tuple would be meaningless.
-        if info.is_live and schema is not None and page_id in heap_pages:
+        if info.is_live and schema is not None:
             try:
                 record = describe_record(schema, payload)
             except ChenDBError as exc:
@@ -386,18 +387,7 @@ def iter_page_summaries(
     pager: Pager,
     page_ids: Iterable[int],
     *,
-    heap_pages: frozenset[int] = frozenset(),
-    schema_pages: frozenset[int] = frozenset(),
-    table_name: str | None = None,
+    owners: Mapping[int, str] = MappingProxyType({}),
 ) -> list[PageSummary]:
     """Summarize several pages in one pass."""
-    return [
-        summarize_page(
-            pager,
-            page_id,
-            heap_pages=heap_pages,
-            schema_pages=schema_pages,
-            table_name=table_name,
-        )
-        for page_id in page_ids
-    ]
+    return [summarize_page(pager, page_id, owners=owners) for page_id in page_ids]

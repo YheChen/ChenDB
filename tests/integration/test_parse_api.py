@@ -38,7 +38,7 @@ def nodes_by_id(body: dict) -> dict[int, dict]:
 
 def test_health_reports_sql_parsing(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 3
+    assert body["milestone"] == 4
     assert body["features"]["sql"] is True
 
 
@@ -312,10 +312,22 @@ def test_a_parse_error_is_reported_as_an_event(client: TestClient):
     assert errors[0]["event"]["column"] == 14
 
 
-def test_parsing_reads_no_pages(client: TestClient):
-    # Parsing is purely syntactic in Milestone 2. Binding against the catalog,
-    # which will touch pages, arrives in Milestone 4.
-    before = client.get(f"{API_PREFIX}/databases/demo").json()["stats"]["page_reads"]
+def test_parsing_still_reads_no_pages(client: TestClient):
+    """Parsing stayed purely syntactic when Milestone 4 added binding.
+
+    Binding — which does read the catalog — happens at execution time, not parse
+    time, so /parse remains free of I/O. That is why the SQL workspace can parse
+    on every keystroke.
+    """
+    def page_reads() -> int:
+        return client.get(f"{API_PREFIX}/databases/demo").json()["stats"]["page_reads"]
+
+    # The measurement itself reads pages now — /databases lists the catalog — so
+    # calibrate against two back-to-back probes rather than assuming zero.
+    baseline = page_reads()
+    probe_cost = page_reads() - baseline
+
+    before = page_reads()
     parse(client, "SELECT * FROM users WHERE age > 1")
-    after = client.get(f"{API_PREFIX}/databases/demo").json()["stats"]["page_reads"]
-    assert after == before
+    after = page_reads()
+    assert after - before == probe_cost

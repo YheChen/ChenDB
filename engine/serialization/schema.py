@@ -5,13 +5,12 @@ between a row of Python values and its byte representation: encoding and
 decoding are meaningless without it, which is exactly why a database needs a
 persistent catalog.
 
-Milestone 1 keeps schemas in memory and persists a single table descriptor as
-JSON on one page.  Milestone 4 replaces that with real system tables.
+Schemas themselves are not persisted here: Milestone 4's catalog stores them as
+rows of ``chendb_columns`` and rebuilds a :class:`Schema` on lookup.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
@@ -19,7 +18,7 @@ from typing import Any, Final
 from engine.errors import SchemaError
 from engine.serialization.types import DataType, codec_for
 
-__all__ = ["Column", "Schema", "TableDescriptor"]
+__all__ = ["Column", "Schema"]
 
 #: Identifiers are compared case-insensitively but stored as written, matching
 #: the behaviour most people expect from SQLite. (PostgreSQL folds unquoted
@@ -180,34 +179,3 @@ class Schema:
             for column in self.columns
         )
         return f"<Schema {rendered}>"
-
-
-@dataclass(frozen=True, slots=True)
-class TableDescriptor:
-    """A named table plus its schema and storage root.
-
-    Milestone 1 persists exactly one of these, JSON-encoded, on a ``SCHEMA``
-    page.  Milestone 4 turns this into rows of a ``chendb_tables`` system table
-    and adds the multi-table lookups a real catalog needs.
-    """
-
-    name: str
-    schema: Schema
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise SchemaError("table name must not be empty")
-        if len(self.name) > _MAX_IDENTIFIER_LENGTH:
-            raise SchemaError(
-                f"table name {self.name!r} exceeds {_MAX_IDENTIFIER_LENGTH} characters"
-            )
-
-    def to_json(self) -> bytes:
-        """Encode compactly and deterministically, so a page diff is meaningful."""
-        payload = {"name": self.name, "schema": self.schema.to_dict()}
-        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-    @classmethod
-    def from_json(cls, raw: bytes) -> TableDescriptor:
-        payload = json.loads(raw.decode("utf-8"))
-        return cls(name=payload["name"], schema=Schema.from_dict(payload["schema"]))
