@@ -28,7 +28,12 @@ from typing import TYPE_CHECKING, Any
 
 from engine.diagnostics.events import QueryExecutedEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
-from engine.errors import BindingError, ExecutionError, QueryCancelledError
+from engine.errors import (
+    BindingError,
+    CatalogError,
+    ExecutionError,
+    QueryCancelledError,
+)
 from engine.executor.binder import (
     BoundInsert,
     BoundSelect,
@@ -134,9 +139,7 @@ def build_select_plan(
     access path. Milestone 5 adds an alternative, and Milestone 6 adds the cost
     model that chooses between them.
     """
-    heap = database.heap
-    if heap is None:  # pragma: no cover - the binder rejects this first
-        raise ExecutionError("this database has no table to scan")
+    heap = database.heap_for(bound.table_name)
 
     plan: Operator = SeqScan(
         "scan_1",
@@ -222,42 +225,44 @@ def _execute_create_table(
 ) -> QueryResult:
     name, schema = bind_create_table(statement)
 
-    if database.table is not None:
-        if statement.if_not_exists and database.table.name.casefold() == name.casefold():
+    existing = database.table(name)
+    if existing is not None:
+        if statement.if_not_exists:
             return QueryResult(
                 statement_kind=statement.node_type,
                 message=f"table {name!r} already exists, left unchanged",
             )
         raise BindingError(
-            f"this database already holds table {database.table.name!r}. "
-            f"Multiple tables per database arrive with the catalog in Milestone 4.",
-            start=statement.span.start,
-            end=statement.span.end,
-            line=statement.span.line,
-            column=statement.span.column,
+            f"table {name!r} already exists",
+            start=statement.table.span.start,
+            end=statement.table.span.end,
+            line=statement.table.span.line,
+            column=statement.table.span.column,
         )
 
-    database.create_table(name, schema)
+    try:
+        info = database.create_table(name, schema)
+    except CatalogError as exc:
+        # A reserved name, for instance. The catalog carries no source position,
+        # so attach the one from the statement.
+        raise BindingError(
+            str(exc),
+            start=statement.table.span.start,
+            end=statement.table.span.end,
+            line=statement.table.span.line,
+            column=statement.table.span.column,
+        ) from None
+
     return QueryResult(
         statement_kind=statement.node_type,
-        message=f"created table {name} with {len(schema)} column(s)",
+        message=f"created table {info.name} with {len(schema)} column(s)",
     )
 
 
 def _execute_insert(
     statement: InsertStatement, database: Database, context: ExecutionContext
 ) -> QueryResult:
-    table = database.table
-    if table is None:
-        raise BindingError(
-            f"no table {statement.table.name!r}: this database has no table yet",
-            start=statement.span.start,
-            end=statement.span.end,
-            line=statement.span.line,
-            column=statement.span.column,
-        )
-
-    bound: BoundInsert = bind_insert(statement, table.name, table.schema)
+    bound: BoundInsert = bind_insert(statement, database.catalog)
 
     # Every value is evaluated against an empty row: an INSERT's values are
     # constant expressions. `INSERT ... SELECT`, which would need a real input
@@ -270,7 +275,7 @@ def _execute_insert(
         for row in bound.rows
     ]
 
-    record_ids = database.insert_many(rows)
+    record_ids = database.insert_many(bound.table_name, rows)
     database.sync()
 
     stats = ExecutionStats(rows_affected=len(record_ids))
@@ -278,19 +283,14 @@ def _execute_insert(
         statement_kind=statement.node_type,
         record_ids=tuple(record_ids),
         stats=stats,
-        message=f"inserted {len(record_ids)} row(s) into {table.name}",
+        message=f"inserted {len(record_ids)} row(s) into {bound.table_name}",
     )
 
 
 def _execute_select(
     statement: SelectStatement, database: Database, context: ExecutionContext
 ) -> QueryResult:
-    table = database.table
-    bound = bind_select(
-        statement,
-        table.name if table else None,  # type: ignore[arg-type]
-        table.schema if table else None,  # type: ignore[arg-type]
-    )
+    bound = bind_select(statement, database.catalog)
     plan = build_select_plan(bound, database, context)
 
     rows: list[Row] = []

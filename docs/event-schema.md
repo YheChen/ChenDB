@@ -93,7 +93,7 @@ lock, which is what lets an HTTP response describe one consistent instant.
 
 ## Implemented events
 
-Twenty-one types across five categories. These are the only events that exist
+Twenty-three types across six categories. These are the only events that exist
 today.
 
 ### `lifecycle`
@@ -142,6 +142,17 @@ recursive descent building the tree bottom-up: leaves first, root last.
 `ParseErrorEvent` is `OPERATOR` rather than `VERBOSE` because a failed parse is a
 headline event and the editor needs its position to place a marker.
 
+### `catalog` — added in Milestone 4
+
+| Event | Level | Fields |
+|---|---|---|
+| `CatalogLookupEvent` | STORAGE | `object_type`, `name`, `found`, `from_cache` |
+| `TableCreatedEvent` | SUMMARY | `table_name`, `table_id`, `column_count`, `first_page` |
+
+`from_cache` is the field that matters: a miss costs a full scan of
+`chendb_tables` plus one of `chendb_columns`, so the hit rate is what makes the
+in-memory catalog cache worth having.
+
 ### `operator` — added in Milestone 3
 
 | Event | Level | Fields |
@@ -169,13 +180,6 @@ one event per row — exactly the flood trace levels exist to prevent.
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 4 — `catalog`
-
-```
-CatalogLookupEvent    object_type, name, found, page_id
-TableCreatedEvent     table_name, column_count, root_page_id
-```
 
 ### Milestone 5 — `index`
 

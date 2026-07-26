@@ -10,10 +10,13 @@
 
 import type {
   CreateDatabaseRequest,
+  CatalogResponse,
   ExecutionDetail,
   ExecutionListResponse,
   ParseResponse,
   QueryResultModel,
+  TableDetail,
+  TableSummary,
   CreateTableRequest,
   DatabaseDetail,
   DatabaseListResponse,
@@ -24,7 +27,6 @@ import type {
   PageDetailModel,
   PageListResponse,
   RecordsResponse,
-  TableResponse,
   TraceLevelResponse,
 } from "@/types/api";
 
@@ -133,22 +135,33 @@ export const api = {
   deleteDatabase: (id: string) =>
     request<void>(`/databases/${id}`, { method: "DELETE" }),
 
-  getTable: (id: string) => request<TableResponse>(`/databases/${id}/table`),
+  getCatalog: (id: string) => request<CatalogResponse>(`/databases/${id}/catalog`),
 
-  createTable: (id: string, payload: CreateTableRequest) =>
-    request<TableResponse>(`/databases/${id}/table`, json(payload)),
-
-  listRecords: (id: string, offset: number, limit: number) =>
-    request<RecordsResponse>(
-      `/databases/${id}/records?offset=${offset}&limit=${limit}`,
+  listTables: (id: string, includeSystem = false) =>
+    request<TableSummary[]>(
+      `/databases/${id}/tables${includeSystem ? "?include_system=true" : ""}`,
     ),
 
-  insertRecords: (id: string, rows: unknown[][]) =>
-    request<InsertRecordsResponse>(`/databases/${id}/records`, json({ rows })),
+  getTable: (id: string, table: string) =>
+    request<TableDetail>(`/databases/${id}/tables/${table}`),
 
-  deleteRecord: (id: string, pageId: number, slotId: number) =>
+  createTable: (id: string, payload: CreateTableRequest) =>
+    request<TableDetail>(`/databases/${id}/tables`, json(payload)),
+
+  listRecords: (id: string, table: string, offset: number, limit: number) =>
+    request<RecordsResponse>(
+      `/databases/${id}/tables/${table}/records?offset=${offset}&limit=${limit}`,
+    ),
+
+  insertRecords: (id: string, table: string, rows: unknown[][]) =>
+    request<InsertRecordsResponse>(
+      `/databases/${id}/tables/${table}/records`,
+      json({ rows }),
+    ),
+
+  deleteRecord: (id: string, table: string, pageId: number, slotId: number) =>
     request<DeleteRecordResponse>(
-      `/databases/${id}/records/${pageId}/${slotId}`,
+      `/databases/${id}/tables/${table}/records/${pageId}/${slotId}`,
       { method: "DELETE" },
     ),
 

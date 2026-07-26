@@ -39,7 +39,7 @@ INVALID_PAGE_ID = 0xFFFFFFFF
 META_PAGE_ID = 0
 
 #: Bumped whenever the layout of any on-disk structure changes.
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 #: Written at file offset 0 so ``head -c 16`` identifies a ChenDB file.
 MAGIC = b"ChenDB Format 1\x00"
@@ -62,10 +62,12 @@ class PageType(IntEnum):
     """A slotted page holding table tuples."""
 
     SCHEMA = 3
-    """Milestone 1 placeholder holding a JSON table descriptor.
+    """Retired in Milestone 4.
 
-    Milestone 4 replaces this with a real system catalog stored as ordinary
-    heap tuples, the way PostgreSQL stores ``pg_class`` and ``pg_attribute``.
+    Version 1 stored a JSON table descriptor here. The catalog now lives in
+    ordinary ``HEAP`` pages, the way PostgreSQL stores ``pg_class`` and
+    ``pg_attribute``. The value stays reserved so it is never reused for
+    something else.
     """
 
     BTREE_INTERNAL = 4

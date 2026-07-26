@@ -14,20 +14,22 @@ PAGE_SIZE = 256
 
 
 def test_every_page_is_summarised_and_attributed(db: Database, sample_rows):
-    db.insert_many(sample_rows)
+    db.insert_many("users", sample_rows)
     summaries = db.page_summaries()
 
     assert [s.page_id for s in summaries] == list(range(db.page_count))
     by_owner = {s.page_id: s.owner for s in summaries}
     assert by_owner[META_PAGE_ID] == "meta"
-    assert "schema" in by_owner.values()
+    # Every page now belongs to a named table — including the catalog's own.
+    assert "chendb_tables" in by_owner.values()
+    assert "chendb_columns" in by_owner.values()
     assert "users" in by_owner.values()
     assert all(s.checksum_valid for s in summaries)
 
 
 def test_page_summary_reports_real_free_space(db: Database):
-    db.insert((1, "row", None, True, 0.0))
-    heap_page_id = min(db.heap_page_ids())
+    db.insert("users", (1, "row", None, True, 0.0))
+    heap_page_id = min(db.heap_page_ids("users"))
     summary = next(s for s in db.page_summaries() if s.page_id == heap_page_id)
 
     page = db.read_page(heap_page_id)
@@ -48,14 +50,17 @@ def test_meta_page_detail_decodes_its_own_header(db: Database):
 
     assert fields["magic"].value.startswith("ChenDB")
     assert fields["page_size"].value == PAGE_SIZE
-    assert fields["format_version"].value == 1
+    assert fields["format_version"].value == 2
+    # The catalog's bootstrap pointers are the reason the meta page exists.
+    assert fields["catalog_tables_first"].value > 0
+    assert fields["catalog_columns_first"].value > 0
     assert detail.slots == ()
     assert detail.summary.checksum_valid
 
 
 def test_heap_page_detail_decodes_records_and_their_field_offsets(db: Database):
-    db.insert((7, "Ada", 36, True, 1.5))
-    heap_page_id = min(db.heap_page_ids())
+    db.insert("users", (7, "Ada", 36, True, 1.5))
+    heap_page_id = min(db.heap_page_ids("users"))
     detail = db.page_detail(heap_page_id)
 
     assert len(detail.slots) == 1
@@ -73,9 +78,9 @@ def test_heap_page_detail_decodes_records_and_their_field_offsets(db: Database):
 
 
 def test_deleted_slots_are_reported_as_tombstones(db: Database):
-    record_id = db.insert((1, "gone", None, True, 0.0))
-    db.insert((2, "stays", None, True, 0.0))
-    db.delete(record_id)
+    record_id = db.insert("users", (1, "gone", None, True, 0.0))
+    db.insert("users", (2, "stays", None, True, 0.0))
+    db.delete("users", record_id)
 
     detail = db.page_detail(record_id.page_id)
     tombstone = detail.slots[record_id.slot_id]
@@ -87,8 +92,8 @@ def test_deleted_slots_are_reported_as_tombstones(db: Database):
 
 
 def test_page_regions_tile_the_whole_page(db: Database):
-    db.insert((1, "x", None, True, 0.0))
-    detail = db.page_detail(min(db.heap_page_ids()))
+    db.insert("users", (1, "x", None, True, 0.0))
+    detail = db.page_detail(min(db.heap_page_ids("users")))
 
     assert detail.header_size == PAGE_HEADER_SIZE
     assert detail.slot_directory_end == PAGE_HEADER_SIZE + len(detail.slots) * SLOT_SIZE
@@ -102,7 +107,7 @@ def test_a_corrupt_page_still_renders_instead_of_raising(
 ):
     with Database.open(db_path, page_size=PAGE_SIZE) as db:
         db.create_table("users", users_schema)
-        record_id = db.insert((1, "victim", None, True, 0.0))
+        record_id = db.insert("users", (1, "victim", None, True, 0.0))
         heap_page_id = record_id.page_id
 
     raw = bytearray(db_path.read_bytes())
@@ -129,7 +134,7 @@ def test_hexdump_truncates_and_says_so():
 
 
 def test_page_map_renders_all_four_regions(db: Database):
-    db.insert((1, "x", None, True, 0.0))
-    rendered = render_page_map(db.page_detail(min(db.heap_page_ids())))
+    db.insert("users", (1, "x", None, True, 0.0))
+    rendered = render_page_map(db.page_detail(min(db.heap_page_ids("users"))))
     for region in ("header", "slot directory", "free space", "record data"):
         assert region in rendered

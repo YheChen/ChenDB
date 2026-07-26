@@ -10,7 +10,7 @@ file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M3     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M4     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  [ Storage ]  [ SQL ]  [ Execution ]                                     │
 ├──────────────────────┬───────────────────────┬───────────────────────────┤
@@ -31,7 +31,7 @@ file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Milestones 1–3 of 10 are complete.** Nothing is stubbed ahead of time: a
+**Milestones 1–4 of 10 are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -50,7 +50,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 0.3.0 — Milestone 3 (storage + parser + execution)
+ChenDB 0.4.0 — Milestone 4 (storage + parser + execution + catalog)
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
 created table users with 3 column(s)
 chendb> .insert 1 | ada@example.com | 36
@@ -105,14 +105,15 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Records** | INTEGER / FLOAT / BOOLEAN / TEXT · null bitmap · schema-driven encode and decode |
 | **Heap** | linked page chain · O(1) append · lazy scan · tombstone deletes |
 | **Persistence** | survives process death; `SIGKILL` tests prove it |
-| **Diagnostics** | 5 trace levels · 21 event types · bounded retention · provably result-neutral |
+| **Diagnostics** | 5 trace levels · 23 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **Execution** | volcano operators (scan / filter / project) · three-valued logic · step-through debugger with real cancellation |
+| **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
 
-Not yet built: a persistent catalog, indexes, a buffer pool, transactions, WAL,
-MVCC. Those are Milestones 4 through 10.
+Not yet built: indexes, a buffer pool, transactions, WAL, MVCC. Those are
+Milestones 5 through 10.
 
 ---
 
@@ -209,7 +210,7 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 605 tests
+.venv/bin/python -m pytest              # 619 tests
 npm --prefix visualizer test            # 62 tests
 ```
 
@@ -254,6 +255,7 @@ change the system observed.
 | [Milestone 1](docs/milestone-01-storage-engine.md) | storage: what shipped, measured, and what it cannot do |
 | [Milestone 2](docs/milestone-02-sql-parser.md) | the SQL front end, the grammar, and a bug worth recording |
 | [Milestone 3](docs/milestone-03-execution-engine.md) | the volcano model, three-valued logic, and step mode |
+| [Milestone 4](docs/milestone-04-catalog.md) | the catalog bootstrap problem, and format version 2 |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

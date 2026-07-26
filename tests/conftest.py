@@ -70,3 +70,17 @@ def db(db_path: Path, users_schema: Schema) -> Database:
     with Database.open(db_path, page_size=TINY_PAGE_SIZE) as instance:
         instance.create_table("users", users_schema)
         yield instance
+
+
+@pytest.fixture
+def catalog_db(db_path: Path, users_schema: Schema) -> Database:
+    """A database with two tables, for anything that needs more than one."""
+    orders = Schema.of(
+        Column("id", DataType.INTEGER, nullable=False, primary_key=True),
+        Column("user_id", DataType.INTEGER, nullable=False),
+        Column("total", DataType.FLOAT),
+    )
+    with Database.open(db_path, page_size=TINY_PAGE_SIZE) as instance:
+        instance.create_table("users", users_schema)
+        instance.create_table("orders", orders)
+        yield instance

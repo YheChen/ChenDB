@@ -20,6 +20,7 @@ serialize itself.  See ``docs/event-schema.md`` for the full catalogue.
 
 from engine.diagnostics.events import (
     AstNodeCreatedEvent,
+    CatalogLookupEvent,
     DatabaseClosedEvent,
     DatabaseOpenedEvent,
     DiagnosticEvent,
@@ -39,6 +40,7 @@ from engine.diagnostics.events import (
     RecordDeletedEvent,
     RecordInsertedEvent,
     RecordReadEvent,
+    TableCreatedEvent,
     TokenEvent,
     TokenizedEvent,
 )
@@ -93,4 +95,7 @@ __all__ = [
     "ExpressionEvalEvent",
     "QueryExecutedEvent",
     "ExecutionStateEvent",
+    # catalog (M4)
+    "CatalogLookupEvent",
+    "TableCreatedEvent",
 ]

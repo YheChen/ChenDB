@@ -388,3 +388,39 @@ class ExecutionStateEvent(DiagnosticEvent):
     execution_id: str
     state: str
     reason: str = ""
+
+
+# --------------------------------------------------------------------------
+# Catalog (Milestone 4)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogLookupEvent(DiagnosticEvent):
+    """A table was looked up by name.
+
+    ``from_cache`` is the interesting field: a miss costs a full scan of
+    ``chendb_tables`` plus one of ``chendb_columns``, so the hit rate is what
+    makes the in-memory catalog cache worth having.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.CATALOG
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    object_type: str
+    name: str
+    found: bool
+    from_cache: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TableCreatedEvent(DiagnosticEvent):
+    """A table was added to the catalog."""
+
+    category: ClassVar[EventCategory] = EventCategory.CATALOG
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    table_name: str
+    table_id: int
+    column_count: int
+    first_page: int

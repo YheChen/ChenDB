@@ -23,14 +23,14 @@ def build(path: Path, schema: Schema, level: TraceLevel) -> tuple[Database, Ring
 
 def workload(db: Database) -> list[tuple]:
     """Insert, point-read, delete, scan — one of each traced operation."""
-    record_ids = db.insert_many(
+    record_ids = db.insert_many("users",
         [(i, f"user-{i}", i % 90, i % 2 == 0, i / 3) for i in range(ROW_COUNT)]
     )
     for record_id in record_ids[:10]:
-        db.get(record_id)  # the only source of VERBOSE-level RecordReadEvents
+        db.get("users", record_id)  # the only source of VERBOSE-level RecordReadEvents
     for record_id in record_ids[::7]:
-        db.delete(record_id)
-    return db.rows()
+        db.delete("users", record_id)
+    return db.rows("users")
 
 
 def test_results_are_identical_at_every_trace_level(
@@ -105,6 +105,8 @@ def test_storage_level_emits_the_expected_event_families(
         EventCategory.LIFECYCLE,
         EventCategory.STORAGE,
         EventCategory.RECORD,
+        # Creating a table and looking it up both go through the catalog now.
+        EventCategory.CATALOG,
     }
 
 
@@ -113,8 +115,8 @@ def test_page_read_events_report_the_real_file_offset(
 ):
     db, sink = build(tmp_path / "offsets.chendb", users_schema, TraceLevel.STORAGE)
     with db:
-        db.insert((1, "x", None, True, 0.0))
-        list(db.scan())
+        db.insert("users", (1, "x", None, True, 0.0))
+        list(db.scan("users"))
 
     reads = [i.event for i in sink.snapshot() if i.event_type == "PageReadEvent"]
     assert reads

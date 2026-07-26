@@ -10,6 +10,14 @@ Every model sets ``extra="forbid"`` on request bodies, so a typo in a client
 payload is a 422 rather than a silently ignored field.
 """
 
+from engine.server.schemas.catalog import (
+    CatalogResponse,
+    CatalogStatsModel,
+    CreateTableRequest,
+    TableDetail,
+    TableStorageModel,
+    TableSummary,
+)
 from engine.server.schemas.common import (
     ApiError,
     HealthResponse,
@@ -19,7 +27,6 @@ from engine.server.schemas.common import (
 from engine.server.schemas.database import (
     ColumnModel,
     CreateDatabaseRequest,
-    CreateTableRequest,
     DatabaseDetail,
     DatabaseListResponse,
     DatabaseSummary,
@@ -31,7 +38,6 @@ from engine.server.schemas.database import (
     RecordsResponse,
     RowModel,
     SchemaModel,
-    TableResponse,
 )
 from engine.server.schemas.events import (
     EventsResponse,
@@ -56,6 +62,8 @@ from engine.server.schemas.pages import (
 
 __all__ = [
     "ApiError",
+    "CatalogResponse",
+    "CatalogStatsModel",
     "ColumnModel",
     "CreateDatabaseRequest",
     "CreateTableRequest",
@@ -82,7 +90,9 @@ __all__ = [
     "SchemaModel",
     "SetTraceLevelRequest",
     "SlotDetailModel",
-    "TableResponse",
+    "TableDetail",
+    "TableStorageModel",
+    "TableSummary",
     "TraceLevelResponse",
     "TraceRecordModel",
     "TraceStatsModel",

@@ -128,8 +128,12 @@ def test_offer_from_another_thread_reaches_the_loop():
         thread = threading.Thread(target=producer)
         thread.start()
         ready.set()
-        batch = await asyncio.wait_for(subscription.drain(max_batch=3), timeout=2)
-        results.extend(item.seq for item in batch)
+        # drain() returns as soon as it has at least one event, by design — it
+        # must not wait for a batch to fill. So keep draining until all three
+        # have arrived rather than assuming they land in one call.
+        while len(results) < 3:
+            batch = await asyncio.wait_for(subscription.drain(max_batch=3), timeout=2)
+            results.extend(item.seq for item in batch)
         thread.join(timeout=2)
 
     run(scenario())

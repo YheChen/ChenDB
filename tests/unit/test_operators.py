@@ -46,7 +46,7 @@ ROWS: list[tuple[object, ...]] = [
 def db(db_path):
     with Database.open(db_path, page_size=PAGE_SIZE) as instance:
         instance.create_table("users", SCHEMA)
-        instance.insert_many(ROWS)
+        instance.insert_many("users", ROWS)
         yield instance
 
 
@@ -54,7 +54,7 @@ def scan_of(db: Database, context: ExecutionContext | None = None) -> SeqScan:
     return SeqScan(
         "scan_1",
         context or ExecutionContext(),
-        heap=db.heap,
+        heap=db.heap_for("users"),
         schema=SCHEMA,
         table_name="users",
     )
@@ -170,7 +170,7 @@ def test_one_next_on_a_filter_can_cost_many_on_its_child(db: Database):
 def test_projection_narrows_and_computes(db: Database):
     context = ExecutionContext()
     statement = parse_statement("SELECT name, age * 2 AS doubled FROM users")
-    bound = bind_select(statement, "users", SCHEMA)
+    bound = bind_select(statement, db.catalog)
     plan = Project(
         "p",
         context,
@@ -187,7 +187,7 @@ def test_projection_narrows_and_computes(db: Database):
 def test_projection_can_reorder_and_repeat_columns(db: Database):
     context = ExecutionContext()
     statement = parse_statement("SELECT age, id, id FROM users")
-    bound = bind_select(statement, "users", SCHEMA)
+    bound = bind_select(statement, db.catalog)
     plan = Project(
         "p",
         context,

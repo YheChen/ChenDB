@@ -200,6 +200,15 @@ class BindingError(SqlError):
     """
 
 
+class CatalogError(ChenDBError):
+    """The catalog cannot satisfy a request.
+
+    An unknown table, a duplicate name, or an attempt to write a system table.
+    Distinct from :class:`BindingError` because it carries no source position: a
+    catalog operation may come from the API rather than from SQL.
+    """
+
+
 class ExecutionError(ChenDBError):
     """A query failed while running."""
 

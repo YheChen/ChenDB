@@ -239,17 +239,19 @@ def test_meta_page_roundtrip():
         page_size=PAGE_SIZE,
         page_count=7,
         free_list_head=3,
-        heap_first_page=1,
-        heap_last_page=5,
-        schema_page_id=2,
+        catalog_tables_first=1,
+        catalog_tables_last=2,
+        catalog_columns_first=3,
+        catalog_columns_last=4,
+        next_table_id=100,
         lsn=12345,
         flags=1,
     )
     assert MetaPage.from_bytes(meta.to_bytes()) == meta
 
 
-def test_meta_header_is_60_bytes_and_the_rest_is_reserved():
-    assert META_HEADER_SIZE == 60
+def test_meta_header_is_68_bytes_and_the_rest_is_reserved():
+    assert META_HEADER_SIZE == 68
     raw = MetaPage(page_size=PAGE_SIZE).to_bytes()
     assert len(raw) == PAGE_SIZE
     assert raw[META_HEADER_SIZE:] == bytes(PAGE_SIZE - META_HEADER_SIZE)
@@ -259,4 +261,13 @@ def test_meta_page_rejects_a_future_format_version():
     raw = bytearray(MetaPage(page_size=PAGE_SIZE).to_bytes())
     raw[16:20] = (999).to_bytes(4, "little")
     with pytest.raises(CorruptDatabaseError, match="format version 999"):
+        MetaPage.from_bytes(bytes(raw), verify_checksum=False)
+
+
+def test_a_version_1_file_is_rejected_with_an_explanation():
+    # Version 1 predates the catalog and cannot be upgraded in place. Saying so
+    # beats "unsupported version" or, worse, reinterpreting the bytes.
+    raw = bytearray(MetaPage(page_size=PAGE_SIZE).to_bytes())
+    raw[16:20] = (1).to_bytes(4, "little")
+    with pytest.raises(CorruptDatabaseError, match="Milestone 4"):
         MetaPage.from_bytes(bytes(raw), verify_checksum=False)

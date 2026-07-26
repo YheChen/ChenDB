@@ -19,7 +19,7 @@ from engine.serialization.record import (
     encode_record,
     estimate_record_size,
 )
-from engine.serialization.schema import Column, Schema, TableDescriptor
+from engine.serialization.schema import Column, Schema
 from engine.serialization.types import DataType, codec_for
 
 
@@ -268,14 +268,3 @@ def test_fixed_width_detection(schema: Schema):
     )
     assert fixed.is_fixed_width is True
     assert fixed.fixed_row_size == 1 + 8 + 1
-
-
-def test_table_descriptor_json_roundtrip(schema: Schema):
-    descriptor = TableDescriptor("users", schema)
-    restored = TableDescriptor.from_json(descriptor.to_json())
-    assert restored == descriptor
-
-
-def test_table_descriptor_json_is_deterministic(schema: Schema):
-    descriptor = TableDescriptor("users", schema)
-    assert descriptor.to_json() == descriptor.to_json()

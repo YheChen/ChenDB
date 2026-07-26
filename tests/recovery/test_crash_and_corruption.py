@@ -47,10 +47,10 @@ schema = Schema.of(
 db = Database.open({path!r}, page_size={page_size})
 db.create_table("t", schema)
 for i in range({synced}):
-    db.insert((i, f"synced-{{i}}"))
+    db.insert("t", (i, f"synced-{{i}}"))
 db.sync()
 for i in range({synced}, {synced} + {unsynced}):
-    db.insert((i, f"unsynced-{{i}}"))
+    db.insert("t", (i, f"unsynced-{{i}}"))
 sys.stdout.write("ready")
 sys.stdout.flush()
 # Die abruptly. No close(), no fsync, no cleanup handlers.
@@ -87,7 +87,7 @@ def test_synced_rows_survive_an_abrupt_kill(tmp_path: Path):
     crash_after_writing(path, synced=20, unsynced=0)
 
     with Database.open(path) as db:
-        rows = db.rows()
+        rows = db.rows("t")
         assert len(rows) == 20
         assert rows[0] == (0, "synced-0")
 
@@ -99,11 +99,11 @@ def test_the_file_is_still_openable_after_a_kill_mid_workload(tmp_path: Path):
     crash_after_writing(path, synced=10, unsynced=25)
 
     with Database.open(path) as db:
-        rows = db.rows()
+        rows = db.rows("t")
         ids = [row[0] for row in rows]
         assert ids[:10] == list(range(10)), "acknowledged, synced rows must survive"
         assert len(rows) >= 10
-        assert db.table is not None and db.table.name == "t"
+        assert db.table("t") is not None
 
 
 def test_a_killed_process_leaves_a_whole_number_of_pages(tmp_path: Path):
@@ -118,7 +118,7 @@ def test_a_killed_process_leaves_a_whole_number_of_pages(tmp_path: Path):
 def make_database(path: Path, rows: int = 5) -> None:
     with Database.open(path, page_size=PAGE_SIZE) as db:
         db.create_table("t", SIMPLE_SCHEMA)
-        db.insert_many([(i, f"row-{i}") for i in range(rows)])
+        db.insert_many("t", [(i, f"row-{i}") for i in range(rows)])
 
 
 def test_a_torn_data_page_is_detected_not_silently_returned(tmp_path: Path):
@@ -132,7 +132,7 @@ def test_a_torn_data_page_is_detected_not_silently_returned(tmp_path: Path):
     path.write_bytes(bytes(raw))
 
     with Database.open(path) as db, pytest.raises(ChecksumMismatchError):
-        db.rows()
+        db.rows("t")
 
 
 def test_a_damaged_meta_page_fails_the_open_rather_than_the_first_query(
@@ -173,9 +173,9 @@ def test_an_empty_file_is_initialised_rather_than_rejected(tmp_path: Path):
     path.touch()
     with Database.open(path, page_size=PAGE_SIZE) as db:
         db.create_table("t", SIMPLE_SCHEMA)
-        db.insert((1, "ok"))
+        db.insert("t", (1, "ok"))
     with Database.open(path) as db:
-        assert db.rows() == [(1, "ok")]
+        assert db.rows("t") == [(1, "ok")]
 
 
 def test_corruption_is_localised_to_the_damaged_page(tmp_path: Path):
@@ -188,7 +188,7 @@ def test_corruption_is_localised_to_the_damaged_page(tmp_path: Path):
     make_database(path, rows=60)
 
     with Database.open(path) as db:
-        heap_pages = sorted(db.heap_page_ids())
+        heap_pages = sorted(db.heap_page_ids("t"))
     victim = heap_pages[len(heap_pages) // 2]
 
     raw = bytearray(path.read_bytes())

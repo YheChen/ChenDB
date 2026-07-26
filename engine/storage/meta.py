@@ -45,7 +45,7 @@ from engine.storage.constants import (
 
 __all__ = ["META_HEADER_FORMAT", "META_HEADER_SIZE", "MetaPage"]
 
-META_HEADER_FORMAT: Final[str] = "<16sIIIIIIIQII"
+META_HEADER_FORMAT: Final[str] = "<16s9IQ2I"
 META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 60
 
 #: The checksum is the last field, so it covers everything before itself.
@@ -67,9 +67,11 @@ class MetaPage:
     page_count: int = 1
     format_version: int = FORMAT_VERSION
     free_list_head: int = INVALID_PAGE_ID
-    heap_first_page: int = INVALID_PAGE_ID
-    heap_last_page: int = INVALID_PAGE_ID
-    schema_page_id: int = INVALID_PAGE_ID
+    catalog_tables_first: int = INVALID_PAGE_ID
+    catalog_tables_last: int = INVALID_PAGE_ID
+    catalog_columns_first: int = INVALID_PAGE_ID
+    catalog_columns_last: int = INVALID_PAGE_ID
+    next_table_id: int = 0
     lsn: int = 0
     flags: int = 0
 
@@ -85,9 +87,11 @@ class MetaPage:
             self.page_size,
             self.page_count,
             self.free_list_head,
-            self.heap_first_page,
-            self.heap_last_page,
-            self.schema_page_id,
+            self.catalog_tables_first,
+            self.catalog_tables_last,
+            self.catalog_columns_first,
+            self.catalog_columns_last,
+            self.next_table_id,
             self.lsn,
             self.flags,
             0,  # checksum placeholder, filled in below
@@ -109,9 +113,11 @@ class MetaPage:
             page_size,
             page_count,
             free_list_head,
-            heap_first_page,
-            heap_last_page,
-            schema_page_id,
+            catalog_tables_first,
+            catalog_tables_last,
+            catalog_columns_first,
+            catalog_columns_last,
+            next_table_id,
             lsn,
             flags,
             stored_checksum,
@@ -122,9 +128,15 @@ class MetaPage:
                 f"bad magic {magic!r}: not a ChenDB database file"
             )
         if format_version != FORMAT_VERSION:
+            hint = (
+                " Version 1 files predate the catalog (Milestone 4) and cannot be "
+                "upgraded in place; recreate the database."
+                if format_version == 1
+                else ""
+            )
             raise CorruptDatabaseError(
                 f"format version {format_version} is not supported "
-                f"(this build understands version {FORMAT_VERSION})"
+                f"(this build understands version {FORMAT_VERSION}).{hint}"
             )
         if verify_checksum:
             actual = zlib.crc32(memoryview(raw)[:_CHECKSUM_OFFSET])
@@ -141,9 +153,11 @@ class MetaPage:
             page_count=page_count,
             format_version=format_version,
             free_list_head=free_list_head,
-            heap_first_page=heap_first_page,
-            heap_last_page=heap_last_page,
-            schema_page_id=schema_page_id,
+            catalog_tables_first=catalog_tables_first,
+            catalog_tables_last=catalog_tables_last,
+            catalog_columns_first=catalog_columns_first,
+            catalog_columns_last=catalog_columns_last,
+            next_table_id=next_table_id,
             lsn=lsn,
             flags=flags,
         )
@@ -156,5 +170,6 @@ class MetaPage:
     def __repr__(self) -> str:
         return (
             f"<MetaPage v{self.format_version} page_size={self.page_size} "
-            f"pages={self.page_count} heap={self.heap_first_page}..{self.heap_last_page}>"
+            f"pages={self.page_count} catalog={self.catalog_tables_first}/"
+            f"{self.catalog_columns_first}>"
         )

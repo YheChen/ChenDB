@@ -32,11 +32,11 @@ def seeded(client: TestClient) -> TestClient:
     """A client with a ``demo`` database holding a ``users`` table and 3 rows."""
     client.post(f"{API_PREFIX}/databases", json={"database_id": "demo", "page_size": PAGE_SIZE})
     client.post(
-        f"{API_PREFIX}/databases/demo/table",
+        f"{API_PREFIX}/databases/demo/tables",
         json={"name": "users", "columns": USERS_COLUMNS},
     )
     client.post(
-        f"{API_PREFIX}/databases/demo/records",
+        f"{API_PREFIX}/databases/demo/tables/users/records",
         json={"rows": [[1, "ada@example.com", 36], [2, "alan@example.com", None], [3, "grace@example.com", 45]]},
     )
     return client
@@ -47,13 +47,14 @@ def seeded(client: TestClient) -> TestClient:
 
 def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 3
+    assert body["milestone"] == 4
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
     assert body["features"]["page_inspector"] is True
     assert body["features"]["sql"] is True
     assert body["features"]["execution"] is True
+    assert body["features"]["catalog"] is True
     assert body["features"]["mvcc"] is False
 
 
@@ -69,7 +70,7 @@ def test_openapi_schema_is_served(client: TestClient):
 
 
 def test_endpoints_for_unbuilt_milestones_are_absent_not_stubbed(client: TestClient):
-    for path in ("/buffer-pool", "/locks", "/wal", "/indexes/x", "/catalog"):
+    for path in ("/buffer-pool", "/locks", "/wal", "/indexes/x"):
         assert client.get(f"{API_PREFIX}{path}").status_code == 404
 
 
@@ -86,8 +87,9 @@ def test_create_and_list_databases(client: TestClient):
     body = created.json()
     assert body["database_id"] == "demo"
     assert body["page_size"] == PAGE_SIZE
-    assert body["page_count"] == 1
-    assert body["table_name"] is None
+    assert body["page_count"] == 3, "meta page plus the two catalog heaps"
+    assert body["table_names"] == []
+    assert body["table_count"] == 0
 
     listing = client.get(f"{API_PREFIX}/databases").json()["databases"]
     assert [entry["database_id"] for entry in listing] == ["demo"]
@@ -118,7 +120,7 @@ def test_data_survives_reopening_through_the_api(seeded: TestClient):
     # Close the handle by deleting nothing but forcing a fresh open: list then
     # re-fetch. The rows must come back from disk, not from memory.
     seeded.app.state.workspace.close("demo")
-    rows = seeded.get(f"{API_PREFIX}/databases/demo/records").json()["rows"]
+    rows = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records").json()["rows"]
     assert [row["values"][0] for row in rows] == [1, 2, 3]
 
 
@@ -146,7 +148,7 @@ def test_no_response_contains_an_absolute_filesystem_path(seeded: TestClient):
         "/databases",
         "/databases/demo",
         "/databases/demo/pages",
-        "/databases/demo/records",
+        "/databases/demo/tables/users/records",
     ):
         body = seeded.get(f"{API_PREFIX}{path}").text
         assert "/private/" not in body and "/tmp/" not in body, path
@@ -162,41 +164,54 @@ def test_unknown_request_fields_are_rejected(client: TestClient):
 # -- schema ----------------------------------------------------------------
 
 
-def test_create_table_returns_the_schema(client: TestClient):
+def test_create_table_returns_the_schema_and_storage(client: TestClient):
     client.post(f"{API_PREFIX}/databases", json={"database_id": "demo", "page_size": PAGE_SIZE})
     response = client.post(
-        f"{API_PREFIX}/databases/demo/table",
+        f"{API_PREFIX}/databases/demo/tables",
         json={"name": "users", "columns": USERS_COLUMNS},
     )
     assert response.status_code == 201
     body = response.json()
     assert body["name"] == "users"
+    assert body["is_system"] is False
     assert [column["name"] for column in body["schema"]["columns"]] == ["id", "email", "age"]
     assert body["schema"]["null_bitmap_size"] == 1
     assert body["schema"]["fixed_row_size"] is None  # TEXT makes rows variable
-    assert body["row_count"] == 0
+    assert body["storage"]["row_count"] == 0
+    assert body["storage"]["page_count"] == 1
 
 
-def test_a_second_table_is_rejected_in_milestone_1(seeded: TestClient):
+def test_a_second_table_is_now_allowed(seeded: TestClient):
     response = seeded.post(
-        f"{API_PREFIX}/databases/demo/table",
+        f"{API_PREFIX}/databases/demo/tables",
         json={"name": "orders", "columns": USERS_COLUMNS},
     )
-    assert response.status_code == 409
-    assert "Milestone 4" in response.json()["detail"]["message"]
+    assert response.status_code == 201
+    listing = seeded.get(f"{API_PREFIX}/databases/demo/tables").json()
+    assert sorted(table["name"] for table in listing) == ["orders", "users"]
 
 
-def test_table_endpoint_404s_before_a_table_exists(client: TestClient):
-    client.post(f"{API_PREFIX}/databases", json={"database_id": "empty"})
-    response = client.get(f"{API_PREFIX}/databases/empty/table")
-    assert response.status_code == 404
-    assert response.json()["detail"]["error"] == "NoTable"
+def test_a_duplicate_table_is_rejected(seeded: TestClient):
+    response = seeded.post(
+        f"{API_PREFIX}/databases/demo/tables",
+        json={"name": "users", "columns": USERS_COLUMNS},
+    )
+    assert response.status_code in (409, 422)
+    assert "already exists" in response.json()["detail"]["message"]
+
+
+def test_an_unknown_table_lists_what_exists(seeded: TestClient):
+    response = seeded.get(f"{API_PREFIX}/databases/demo/tables/nope")
+    assert response.status_code in (404, 422)
+    detail = response.json()["detail"]
+    assert detail["error"] == "CatalogError"
+    assert "users" in detail["message"]
 
 
 def test_an_invalid_column_type_is_rejected(client: TestClient):
     client.post(f"{API_PREFIX}/databases", json={"database_id": "demo"})
     response = client.post(
-        f"{API_PREFIX}/databases/demo/table",
+        f"{API_PREFIX}/databases/demo/tables",
         json={"name": "t", "columns": [{"name": "c", "type": "BLOB"}]},
     )
     assert response.status_code == 422
@@ -207,7 +222,7 @@ def test_an_invalid_column_type_is_rejected(client: TestClient):
 
 def test_insert_reports_addresses_and_cost(seeded: TestClient):
     response = seeded.post(
-        f"{API_PREFIX}/databases/demo/records", json={"rows": [[4, "x@y.z", 1]]}
+        f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[4, "x@y.z", 1]]}
     )
     assert response.status_code == 201
     body = response.json()
@@ -217,7 +232,7 @@ def test_insert_reports_addresses_and_cost(seeded: TestClient):
 
 
 def test_scan_reports_rows_pages_and_time(seeded: TestClient):
-    body = seeded.get(f"{API_PREFIX}/databases/demo/records").json()
+    body = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records").json()
     assert [row["values"] for row in body["rows"]] == [
         [1, "ada@example.com", 36],
         [2, "alan@example.com", None],
@@ -231,17 +246,17 @@ def test_scan_reports_rows_pages_and_time(seeded: TestClient):
 
 
 def test_scan_paginates(seeded: TestClient):
-    first = seeded.get(f"{API_PREFIX}/databases/demo/records?limit=2").json()
+    first = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records?limit=2").json()
     assert first["returned"] == 2 and first["has_more"] is True
 
-    second = seeded.get(f"{API_PREFIX}/databases/demo/records?offset=2&limit=2").json()
+    second = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records?offset=2&limit=2").json()
     assert second["returned"] == 1 and second["has_more"] is False
     assert second["rows"][0]["values"][0] == 3
 
 
 def test_type_errors_are_reported_per_column(seeded: TestClient):
     response = seeded.post(
-        f"{API_PREFIX}/databases/demo/records", json={"rows": [["not-an-int", "a@b.c", 1]]}
+        f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [["not-an-int", "a@b.c", 1]]}
     )
     assert response.status_code == 422
     assert "'id'" in response.json()["detail"]["message"]
@@ -249,32 +264,32 @@ def test_type_errors_are_reported_per_column(seeded: TestClient):
 
 def test_not_null_violations_are_reported(seeded: TestClient):
     response = seeded.post(
-        f"{API_PREFIX}/databases/demo/records", json={"rows": [[9, None, 1]]}
+        f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[9, None, 1]]}
     )
     assert response.status_code == 422
     assert "NOT NULL" in response.json()["detail"]["message"]
 
 
 def test_wrong_arity_is_reported(seeded: TestClient):
-    response = seeded.post(f"{API_PREFIX}/databases/demo/records", json={"rows": [[1]]})
+    response = seeded.post(f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[1]]})
     assert response.status_code == 422
 
 
 def test_delete_by_record_id(seeded: TestClient):
-    rows = seeded.get(f"{API_PREFIX}/databases/demo/records").json()["rows"]
+    rows = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records").json()["rows"]
     target = rows[1]["record_id"]
 
     response = seeded.delete(
-        f"{API_PREFIX}/databases/demo/records/{target['page_id']}/{target['slot_id']}"
+        f"{API_PREFIX}/databases/demo/tables/users/records/{target['page_id']}/{target['slot_id']}"
     )
     assert response.status_code == 200 and response.json()["deleted"] is True
 
-    remaining = seeded.get(f"{API_PREFIX}/databases/demo/records").json()
+    remaining = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records").json()
     assert remaining["returned"] == 2
 
     # Deleting again is a no-op, not an error.
     again = seeded.delete(
-        f"{API_PREFIX}/databases/demo/records/{target['page_id']}/{target['slot_id']}"
+        f"{API_PREFIX}/databases/demo/tables/users/records/{target['page_id']}/{target['slot_id']}"
     )
     assert again.json()["deleted"] is False
 
@@ -288,7 +303,8 @@ def test_page_list_covers_the_whole_file(seeded: TestClient):
     assert body["total_bytes"] == body["page_size"] * body["page_count"]
 
     owners = {page["owner"] for page in body["pages"]}
-    assert {"meta", "schema", "users"} <= owners
+    # Every page belongs to a named table now, including the catalog's own.
+    assert {"meta", "chendb_tables", "chendb_columns", "users"} <= owners
     assert all(page["checksum_valid"] for page in body["pages"])
     # No buffer pool yet, so nothing can be cached-and-dirty.
     assert all(page["dirty"] is False for page in body["pages"])
@@ -328,10 +344,10 @@ def test_heap_page_detail_decodes_slots_records_and_the_null_bitmap(seeded: Test
 
 
 def test_a_deleted_slot_shows_as_a_tombstone(seeded: TestClient):
-    rows = seeded.get(f"{API_PREFIX}/databases/demo/records").json()["rows"]
+    rows = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records").json()["rows"]
     target = rows[0]["record_id"]
     seeded.delete(
-        f"{API_PREFIX}/databases/demo/records/{target['page_id']}/{target['slot_id']}"
+        f"{API_PREFIX}/databases/demo/tables/users/records/{target['page_id']}/{target['slot_id']}"
     )
 
     body = seeded.get(f"{API_PREFIX}/databases/demo/pages/{target['page_id']}").json()
@@ -391,7 +407,7 @@ def test_trace_level_can_be_read_and_changed(seeded: TestClient):
 
     seeded.events_before = seeded.get(f"{API_PREFIX}/databases/demo/events?limit=2000").json()
     before = seeded.events_before["stats"]["total_recorded"]
-    seeded.post(f"{API_PREFIX}/databases/demo/records", json={"rows": [[99, "q@r.s", 1]]})
+    seeded.post(f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[99, "q@r.s", 1]]})
     after = seeded.get(f"{API_PREFIX}/databases/demo/events?limit=1").json()["stats"]
     assert after["total_recorded"] == before, "OFF must record nothing"
 
@@ -417,7 +433,7 @@ def test_diagnostics_snapshots_are_internally_consistent(seeded: TestClient):
     """
     for _ in range(5):
         seeded.post(
-            f"{API_PREFIX}/databases/demo/records",
+            f"{API_PREFIX}/databases/demo/tables/users/records",
             json={"rows": [[i, f"user{i}@x.y", i] for i in range(20)]},
         )
         body = seeded.get(f"{API_PREFIX}/databases/demo/pages").json()

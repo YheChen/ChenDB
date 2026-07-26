@@ -15,7 +15,7 @@ from engine.serialization.record import (
     encode_record,
     estimate_record_size,
 )
-from engine.serialization.schema import Column, Schema, TableDescriptor
+from engine.serialization.schema import Column, Schema
 from engine.serialization.types import Codec, DataType, codec_for
 
 __all__ = [
@@ -26,7 +26,6 @@ __all__ = [
     "RecordLayout",
     "Row",
     "Schema",
-    "TableDescriptor",
     "codec_for",
     "decode_record",
     "describe_record",

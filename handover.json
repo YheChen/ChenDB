@@ -46,10 +46,14 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 4 \u2014 persistent catalog and schema explorer. Replace the M1 JSON schema page with real system tables stored as heap tuples; lift the one-table-per-database limit; catalog lookup replaces the Schema handed to the binder.",
+    "next": "Milestone 5 \u2014 B+ tree indexes and tree visualizer. Disk-backed tree with point lookup, insert, split, range scan, linked leaves; CREATE INDEX; an index system table (the reserved table-id gap 3..99 is for it).",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
+    },
+    "milestone_4": {
+      "state": "COMPLETE and MERGED to master",
+      "shipped": "engine/catalog/{system,catalog}.py; FILE FORMAT v2 (meta page holds catalog_tables_* / catalog_columns_* / next_table_id); Database API is table-scoped; /catalog + /tables endpoints; visualizer Catalog + Table detail panels."
     }
   },
   "architecture_invariants": {
@@ -74,7 +78,9 @@
     "monaco": "Imported from 'monaco-editor/esm/vs/editor/editor.api' (NOT 'monaco-editor') \u2014 the latter pulls every built-in language and roughly triples the bundle. Custom 'chendb-sql' Monarch grammar with only the keywords the engine's lexer knows. loader.config({monaco}) points @monaco-editor/react at the local copy instead of a CDN.",
     "three_valued_logic": "NULL is *unknown*, not false. Only an exact True passes a WHERE (is_true()). FALSE AND NULL is FALSE; TRUE OR NULL is TRUE. IsNullTest is a distinct AST node, never BinaryOp(EQ, x, NULL). Truth tables are pinned exhaustively in tests/unit/test_expression.py \u2014 getting them wrong gives silently wrong answers.",
     "volcano_model": "Explicit open()/next()/close() rather than Python generators, because it is the real volcano interface, operators must be inspectable while suspended, and pausing between calls must be trivial. Cost is a method call per row per operator; vectorised execution (batches of ~2048) is the big idea deliberately given up.",
-    "step_mode": "StepController blocks the engine thread on a threading.Condition at checkpoints. Cancellation RAISES inside the engine thread at the next checkpoint so operators unwind through close(). 'Run until page read' works by registering the controller as a diagnostics SINK \u2014 storage knows nothing about stepping. A paused execution holds its database lock; cancel() deliberately needs no lock. ExecutionStore.reap() cancels idle executions on every store operation (no background timer)."
+    "step_mode": "StepController blocks the engine thread on a threading.Condition at checkpoints. Cancellation RAISES inside the engine thread at the next checkpoint so operators unwind through close(). 'Run until page read' works by registering the controller as a diagnostics SINK \u2014 storage knows nothing about stepping. A paused execution holds its database lock; cancel() deliberately needs no lock. ExecutionStore.reap() cancels idle executions on every store operation (no background timer).",
+    "catalog_bootstrap": "The system tables' own schemas are COMPILED IN (engine/catalog/system.py), not stored \u2014 otherwise decoding chendb_tables would require reading chendb_tables. Unlike PostgreSQL, chendb_tables holds NO row about itself: that would be two sources of truth for where the catalog lives. System descriptors are synthesised from the compiled schemas plus the meta pointers. Table ids 1-2 are system, users start at 100, 3-99 reserved for future system tables.",
+    "catalog_cache": "Lookups cached in memory per open database; a miss is O(tables)+O(columns) page reads. Coherence by single writer: every mutation goes through Catalog and updates the cache in the same call. CRITICAL: when a table's heap extends, its chendb_tables row must be rewritten \u2014 a stale last_page makes a reopened database append into the MIDDLE of the chain, silently."
   },
   "gotchas": [
     "The visualizer needs BOTH resolve.alias in vite.config.ts AND paths in tsconfig.json for '@/*'. tsc passing does not mean Rollup will resolve it.",
@@ -89,14 +95,17 @@
     "Milestone 1 persists the schema as JSON across a CHAIN of SCHEMA pages (a 380-byte descriptor does not fit one 256-byte page). Milestone 4 replaces this with real system tables.",
     "Small page sizes (256) are used throughout the tests deliberately: 4 rows fill a page, so chaining/compaction are exercised by a handful of inserts.",
     "Response models: prefer required-but-nullable over optional. A Pydantic field with a default (default_factory=list, = None) becomes `?` in the generated TS even though the server always sends it, which forces `?? []` at every call site. Drop the default and use `X | None` instead.",
-    "Operator.open() contains checkpoints, so it must sit INSIDE the try block in _execute_select \u2014 otherwise cancelling during open propagates instead of returning a partial result. Fixed once; test_cancelling_unwinds_the_operator_tree guards it."
+    "Operator.open() contains checkpoints, so it must sit INSIDE the try block in _execute_select \u2014 otherwise cancelling during open propagates instead of returning a partial result. Fixed once; test_cancelling_unwinds_the_operator_tree guards it.",
+    "Column `position` is stored in chendb_columns and is load-bearing: a heap scan returns PHYSICAL order, not column order, and they diverge once a deleted slot is reused. _load_schema sorts by position and rejects non-contiguous positions as corruption.",
+    "File format v2: version-1 files are rejected on open, deliberately. Delete old *.chendb files after pulling M4.",
+    "GET /databases/{db} now scans the catalog, so it CAUSES page reads. Do not use it to measure page reads across an operation without calibrating against two back-to-back probes."
   ],
   "test_layout": {
-    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators",
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog",
     "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "605 Python tests, 62 frontend tests",
+    "counts_at_handover": "619 Python tests, 62 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256."
   }
 }

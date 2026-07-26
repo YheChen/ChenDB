@@ -7,7 +7,7 @@
  * buffer pool and index milestones will visibly improve.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
@@ -23,17 +23,21 @@ const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 export function RecordsPanel({
   databaseId,
-  hasTable,
+  table,
   onSelectPage,
 }: {
   databaseId: string | null;
-  hasTable: boolean;
+  table: string | null;
   onSelectPage: (pageId: number) => void;
 }) {
   const [offset, setOffset] = useState(0);
   const [limit, setLimit] = useState(50);
-  const query = useRecords(hasTable ? databaseId : null, offset, limit);
-  const remove = useDeleteRecord(databaseId ?? "");
+  const query = useRecords(databaseId, table, offset, limit);
+  const remove = useDeleteRecord(databaseId ?? "", table ?? "");
+
+  // A different table means a different row set; keeping the offset would show
+  // page 3 of a table that has one page.
+  useEffect(() => setOffset(0), [table]);
 
   if (!databaseId) {
     return (
@@ -43,12 +47,12 @@ export function RecordsPanel({
     );
   }
 
-  if (!hasTable) {
+  if (!table) {
     return (
       <Panel title="Rows" className="h-full">
         <EmptyState
-          title="No table yet"
-          hint="Define a table in the Schema panel. Milestone 2 replaces that form with CREATE TABLE."
+          title="No table selected"
+          hint="Pick one from the catalog, or run CREATE TABLE in the Execution workspace."
         />
       </Panel>
     );
@@ -56,7 +60,7 @@ export function RecordsPanel({
 
   return (
     <Panel
-      title="Rows"
+      title={`Rows · ${table}`}
       subtitle={
         query.data
           ? `${formatCount(query.data.returned)} shown from offset ${query.data.offset}`

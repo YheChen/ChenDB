@@ -31,6 +31,23 @@ export interface AstTreeModel {
   root_ids: number[];
 }
 
+export interface CatalogResponse {
+  tables: TableSummary[];
+  system_tables: TableSummary[];
+  /** Id the next created table will receive */
+  next_table_id: number;
+  stats: CatalogStatsModel;
+}
+
+/** Catalog cache effectiveness. A miss costs two full catalog scans. */
+export interface CatalogStatsModel {
+  lookups: number;
+  cache_hits: number;
+  hit_rate: number;
+  scans: number;
+  tables_created: number;
+}
+
 export interface ColumnModel {
   name: string;
   type: "INTEGER" | "FLOAT" | "BOOLEAN" | "TEXT";
@@ -55,10 +72,10 @@ export interface CreateDatabaseRequest {
 }
 
 /**
- * Milestone 1 has no SQL parser, so tables are defined structurally.
+ * Programmatic table creation.
  * 
- * Milestone 2 adds ``POST /query`` with ``CREATE TABLE``; this endpoint stays
- * as the programmatic path.
+ * ``CREATE TABLE`` through ``POST /query`` is the primary path from Milestone 3
+ * onward; this stays for clients that would rather not build SQL strings.
  */
 export interface CreateTableRequest {
   name: string;
@@ -71,12 +88,9 @@ export interface DatabaseDetail {
   page_count: number;
   file_size_bytes: number;
   format_version: number;
-  table_name: null | string;
-  schema?: SchemaModel | null;
-  /** Live rows; null when no table is defined yet */
-  row_count: null | number;
-  heap_page_ids: number[];
-  schema_page_ids: number[];
+  /** User tables. System tables are listed by /catalog. */
+  table_names: string[];
+  table_count: number;
   free_list_head: null | number;
   stats: PagerStatsModel;
   trace_level: string;
@@ -449,13 +463,39 @@ export interface StepRequest {
   sql: string;
 }
 
-export interface TableResponse {
+export interface TableDetail {
+  table_id: number;
   name: string;
+  is_system: boolean;
   schema: SchemaModel;
+  columns: ColumnModel[];
+  storage: TableStorageModel;
+}
+
+/** What a table costs on disk. Computed, not cached. */
+export interface TableStorageModel {
+  first_page: number;
+  last_page: number;
+  page_ids: number[];
+  page_count: number;
+  /** Live rows. O(pages) to compute — no cached count. */
   row_count: number;
-  heap_page_ids: number[];
-  first_page_id: number;
-  last_page_id: number;
+  /** page_count * page_size */
+  bytes_allocated: number;
+  /** Contiguous free bytes across the table's pages */
+  free_space: number;
+  /** Bytes held by tombstoned rows, recoverable by compaction */
+  reclaimable_space: number;
+}
+
+export interface TableSummary {
+  table_id: number;
+  name: string;
+  column_count: number;
+  row_count: number;
+  page_count: number;
+  /** True for chendb_* tables, which belong to the engine */
+  is_system: boolean;
 }
 
 /** One token, with the source range it covers. */
