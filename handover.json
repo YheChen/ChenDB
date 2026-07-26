@@ -37,7 +37,8 @@
     "browser_verify": "Use mcp__Claude_Browser__preview_start with {name: 'visualizer'} (.claude/launch.json defines it), then read_page/computer. Start the Python server separately with Bash first.",
     "bench_index": ".venv/bin/python benchmarks/index_vs_scan.py",
     "example_m5": ".venv/bin/python examples/milestone5_indexes.py",
-    "example_m6": ".venv/bin/python examples/milestone6_planner.py"
+    "example_m6": ".venv/bin/python examples/milestone6_planner.py",
+    "example_m7": ".venv/bin/python examples/milestone7_buffer_pool.py"
   },
   "status": {
     "milestone_1": {
@@ -49,7 +50,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 7 \u2014 buffer pool, pinning, LRU eviction. NOT STARTED. See milestone_7_plan below.",
+    "next": "Milestone 8 \u2014 transactions, undo records, rollback. NOT STARTED. See milestone_8_plan below.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -65,6 +66,11 @@
     "milestone_6": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/planner/{logical,statistics,physical}.py and engine/optimizer/{cost,rules}.py; NO format bump (statistics are in memory, deliberately); EXPLAIN, EXPLAIN ANALYZE and ANALYZE in the parser and executor; 5 planner events; PlannerOptions for forcing an access path; StepController.arm() so stepping starts at execution not planning; PlanModel carries estimated-vs-actual per operator, every alternative with its cost, and statistics staleness; visualizer shows 'est N' per operator and a 'what the planner considered' section; .analyze / .stats-of in the CLI; benchmarks/index_vs_scan.py now grades the planner's choice; examples/milestone6_planner.py; docs/milestone-06-planner.md."
+    },
+    "milestone_7": {
+      "state": "COMPLETE and MERGED to master",
+      "shipped": "engine/storage/buffer.py (BufferPool: fixed frames, copy-in/copy-out, write-back, exact LRU via OrderedDict, no pin counts); Pager routes all page I/O through it and splits logical page_reads/page_writes from physical_reads/physical_writes; Page.validate split into validate_header (O(1), on the read path) and validate (O(slots), explicit); read_page skips verification on a hit; Database.open gains buffer_pool_frames; BufferPoolEvent; PageWriteEvent.deferred; cost model RECALIBRATED \u2014 PAGE_HIT_COST/PAGE_MISS_COST replace PAGE_COST/RANDOM_PAGE_COST, plus distinct_pages_touched (Cardenas); GET /buffer-pool; visualizer Buffer pool workspace with a workload runner; benchmarks updated; examples/milestone7_buffer_pool.py; docs/milestone-07-buffer-pool.md.",
+      "headline_numbers": "read_page hit 661ns vs miss 1822ns (2.75x). THE WIN WAS NOT THE SYSCALL: Page.validate() walked every slot at 13,290ns against 103ns for the CRC32 and 303ns for the pread. Splitting it took an index scan over 14k rows from 307ms to 86ms. Write-back absorbed 95% of writes (3,169 logical -> 143 syscalls). Sequential flooding measured at a 0.0% hit rate for a 75-page scan through a 16-frame pool. The crossover MOVED: bucket < 200 (20% selectivity) was SeqScan in M6 and is IndexScan now."
     }
   },
   "architecture_invariants": {
@@ -105,7 +111,9 @@
     "physical_nodes_are_data": "PhysicalIndexScan holds an index NAME and key bounds, not a BPlusTree. materialise() turns a plan into operators as a separate step, which is what lets EXPLAIN cost a query it never runs and lets the API serialise a plan outside the engine lock.",
     "every_alternative_is_reported": "PlanAlternativeEvent fires once per candidate, chosen or not, and PlanModel.alternatives carries all of them with rejected_because. A planner that reports only its answer cannot be checked.",
     "disabled_paths_are_penalised": "PlannerOptions turns a path off by adding DISABLE_COST = 1e10, not by removing it \u2014 PostgreSQL's disable_cost trick \u2014 because a query with every path disabled must still produce a plan.",
-    "stepping_starts_at_execution": "StepController.arm() gates checkpoints until the operator tree opens. Planning reads pages (gathering statistics scans the table), so without it the first dozen steps of every stepped query were the planner counting rows. Cancellation is NOT gated. EXPLAIN is how you inspect the part that is skipped."
+    "stepping_starts_at_execution": "StepController.arm() gates checkpoints until the operator tree opens. Planning reads pages (gathering statistics scans the table), so without it the first dozen steps of every stepped query were the planner counting rows. Cancellation is NOT gated. EXPLAIN is how you inspect the part that is skipped.",
+    "buffer_pool_has_no_pin_counts": "ChenDB's pool copies OUT of a frame on read and INTO it on write, so a caller's Page is independent and eviction can never invalidate one. That removes the need for pin counts entirely \u2014 and no caller had to change. A textbook pool lends a pointer into the frame and requires pinning; that is the right design once there are concurrent readers (Milestone 10). Pin counts that are always zero would be ceremony, so there are none, and BufferPoolEvent has no pin_count field despite the planned schema naming one.",
+    "validate_is_off_the_read_path": "Page.validate() is O(slots) \u2014 13.3us on a full 4 KiB page, measured, against 103ns for the CRC32. Running it per read made the buffer pool nearly worthless. from_bytes now runs validate_header() (O(1)) only; the full slot walk is explicit, for the inspector and tests. PostgreSQL draws the same line. If a test needs the strong check, call page.validate() directly."
   },
   "gotchas": [
     "The visualizer needs BOTH resolve.alias in vite.config.ts AND paths in tsconfig.json for '@/*'. tsc passing does not mean Rollup will resolve it.",
@@ -138,30 +146,34 @@
     "ANALYZE (gather statistics) and EXPLAIN ANALYZE (run the query, report actual rows) do opposite things and share a word. Both exist; do not conflate them.",
     "The API caps a response at DEFAULT_MAX_ROWS = 10,000. A benchmark or test measuring a predicate matching more must pass max_rows, or the measurement stops early while the estimate covers the whole predicate \u2014 which makes a correct cost model look like it over-estimates by 40%.",
     "Operator ids are numbered PER TYPE (filter_1, project_1), not globally. A shared counter produced project_2 for the first project and broke several step-mode tests. See _Namer in engine/planner/physical.py.",
-    "PlanTree and PlanPanel are different components. Adding something to PlanPanel does NOT make it appear in the Execution workspace, which renders PlanTree directly \u2014 the alternatives section had to be wired into both."
+    "PlanTree and PlanPanel are different components. Adding something to PlanPanel does NOT make it appear in the Execution workspace, which renders PlanTree directly \u2014 the alternatives section had to be wired into both.",
+    "PagerStats.page_reads is LOGICAL from Milestone 7 (times the engine asked); physical_reads is syscalls. Tests asserting page_reads as a proxy for I/O now measure logical reads \u2014 usually what they meant, but check.",
+    "tests/integration/test_websocket.py's drain_events(until=N) BLOCKS FOREVER if N exceeds the connection's queue capacity: a burst happens inside one request, so every event is offered before the loop runs and all but the newest queue_size are dropped. Adding BufferPoolEvent pushed a test past the ceiling and hung the suite. Keep `until` under websocket_queue_size.",
+    "A table smaller than the pool never evicts, so a test or example that wants to show eviction must either seed past the capacity or open with buffer_pool_frames=<small>. Database.open takes that parameter for this reason.",
+    "Every INSERT through the API ends in a sync, which flushes the pool \u2014 so the dirty frame count is normally 0 in API tests. That is the durability contract holding, not the pool failing to buffer. Assert on writes_absorbed instead."
   ],
   "test_layout": {
-    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model",
-    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli, test_planner_api",
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
+    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli, test_planner_api, test_buffer_pool_api",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "874 Python tests, 89 frontend tests",
+    "counts_at_handover": "931 Python tests, 103 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py."
   },
-  "milestone_7_plan": {
-    "goal": "A buffer pool: pages cached in memory with pinning and LRU eviction, so a page read stops being a syscall. This is the milestone that makes RANDOM_PAGE_COST mean something and moves the index/scan crossover.",
+  "milestone_8_plan": {
+    "goal": "Transactions: BEGIN / COMMIT / ROLLBACK, undo records, and atomicity for multi-statement work. The first milestone where a failure part-way through leaves the database unchanged rather than half-changed.",
     "engine_files_to_create": [
-      "engine/storage/buffer.py \u2014 BufferPool: frames, a page table, pin counts, dirty flags, an eviction policy. Pager.read_page becomes a pool lookup; keep Pager as the thing that actually touches the file.",
-      "Pinning is the hard part. A page in use must not be evicted, so every caller that holds a Page needs to pin and release it. Today HeapFile, BTreeNode and inspect.py all hold pages informally \u2014 audit them. Getting this wrong evicts a page someone is writing to, which corrupts silently.",
-      "Eviction policy: start with LRU, then note why real systems do not use it. PostgreSQL uses a clock sweep with usage counts because true LRU needs a lock on every access; a sequential scan also evicts everything useful, which is why PostgreSQL rings-buffers large scans."
+      "engine/transaction/manager.py \u2014 TransactionManager: ids, state, the active transaction. One at a time (the database lock already enforces that), so no concurrency control yet \u2014 that is Milestone 10.",
+      "engine/transaction/undo.py \u2014 undo records. A physical undo log is simplest: before-images of the pages a statement touched, replayed backwards on rollback. A logical one (insert -> delete, delete -> reinsert) is smaller but has to reason about the index too. Pick one and say why.",
+      "Database.insert/delete/create_table must enlist in the active transaction. create_table is the interesting case: it writes several rows across two system tables and is NOT atomic today \u2014 that is called out in engine/database.py's docstring and is precisely what this milestone fixes."
     ],
-    "recalibrate_the_cost_model": "MANDATORY, not optional. RANDOM_PAGE_COST is 1.0 today only because every read is a pread into the OS cache. With a pool a hit is nearly free and a miss is a real read, so both PAGE_COST and RANDOM_PAGE_COST have to be re-measured. The us-per-cost-unit column in benchmarks/index_vs_scan.py is the regression test: if it stops being flat, the model is wrong and the planner cannot be trusted. Expect the crossover to move a long way \u2014 the index scan's dominant term is re-reading heap pages a pool would keep.",
-    "cost_model_extension": "Estimating what fraction of a scan will hit the pool is the next real modelling problem, and is what PostgreSQL's effective_cache_size approximates. Milestone 7 can ship without it; say so if it does.",
-    "events_to_add": "BufferPoolEvent \u2014 action: hit|miss|pin|unpin|evict|flush, frame_id, page_id, dirty, pin_count. Signature already in docs/event-schema.md. EventCategory.BUFFER_POOL exists. Emit at STORAGE; a hit per page read is a lot of events, so consider VERBOSE for hits and STORAGE for misses.",
-    "api": "GET /databases/{db}/buffer-pool returning the frame grid: per frame the page id, pin count, dirty flag and last-used order, plus hit/miss counters. Flip features.buffer_pool; MILESTONE = 7; version 0.7.0 in engine/__init__.py AND pyproject.toml.",
-    "visualizer": "A Buffer pool workspace gated on features.buffer_pool: the frame grid with hit/miss animation, and a workload runner so a user can watch a sequential scan evict everything. PageReadEvent already carries source: 'disk' | 'buffer_pool' \u2014 that field has been in the schema since Milestone 1 and finally becomes non-constant.",
-    "gotcha_to_expect": "PagerStats.page_reads currently counts syscalls. Once there is a pool it has to distinguish logical reads from physical ones, and several tests assert on page_reads as a proxy for I/O \u2014 they will all need revisiting, and some of them are measuring the wrong thing already."
+    "interaction_with_the_buffer_pool": "The pool must NOT flush an uncommitted page, or a crash mid-transaction leaves half of it on disk. Milestone 7 flushes on eviction with no notion of commit. The clean fix is the WAL rule (write the log record before the page), which is Milestone 9 \u2014 so M8 either pins dirty uncommitted pages in the pool (bounded, can exhaust it) or accepts that rollback after an eviction needs the undo log to reach the disk too. Decide explicitly and document it; this is the single hardest interaction in the project.",
+    "events_to_add": "TransactionEvent (transaction_id, action: begin|commit|abort|rollback_started|rollback_done, isolation_level) and UndoRecordEvent (transaction_id, page_id, slot_id, kind, before_image_size). Signatures in docs/event-schema.md. EventCategory.TRANSACTION exists. PageReadEvent and PageWriteEvent already carry a transaction_id field, unused since Milestone 1 \u2014 this is what it was for.",
+    "sql": "BEGIN / COMMIT / ROLLBACK are in parser._NOT_YET pointing at Milestone 8. Add the three statements to ast.py and parse_statement. execute_script currently applies statements before a failure \u2014 its docstring says Milestone 8 makes that atomic, so make it so.",
+    "api": "GET /databases/{db}/transactions plus begin/commit/rollback. Flip features.transactions; MILESTONE = 8; version 0.8.0 in engine/__init__.py AND pyproject.toml.",
+    "visualizer": "A Transactions workspace: the timeline of a transaction, the undo records it accumulated, and a before/after view of a row. A rollback button that visibly puts the rows back is the demo.",
+    "gotcha_to_expect": "Statistics and the catalog cache are in memory and are NOT transactional. A rolled-back CREATE TABLE must invalidate Catalog._cache and StatisticsCatalog, or the engine keeps serving a table that no longer exists on disk. Catalog.invalidate() already exists for this."
   }
 }

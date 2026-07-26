@@ -94,6 +94,131 @@
         "title": "AstTreeModel",
         "type": "object"
       },
+      "BufferPoolResponse": {
+        "properties": {
+          "bytes_used": {
+            "description": "resident * page_size",
+            "title": "Bytes Used",
+            "type": "integer"
+          },
+          "capacity": {
+            "description": "Frames in the pool",
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "dirty": {
+            "title": "Dirty",
+            "type": "integer"
+          },
+          "frames": {
+            "items": {
+              "$ref": "#/components/schemas/FrameModel"
+            },
+            "title": "Frames",
+            "type": "array"
+          },
+          "logical_reads": {
+            "description": "Times the engine asked for a page, cumulative for this handle",
+            "title": "Logical Reads",
+            "type": "integer"
+          },
+          "logical_writes": {
+            "title": "Logical Writes",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "physical_reads": {
+            "description": "\u2026and how many became a syscall",
+            "title": "Physical Reads",
+            "type": "integer"
+          },
+          "physical_writes": {
+            "title": "Physical Writes",
+            "type": "integer"
+          },
+          "resident": {
+            "title": "Resident",
+            "type": "integer"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/BufferPoolStatsModel"
+          }
+        },
+        "required": [
+          "capacity",
+          "page_size",
+          "resident",
+          "dirty",
+          "bytes_used",
+          "frames",
+          "stats",
+          "logical_reads",
+          "physical_reads",
+          "logical_writes",
+          "physical_writes"
+        ],
+        "title": "BufferPoolResponse",
+        "type": "object"
+      },
+      "BufferPoolStatsModel": {
+        "properties": {
+          "dirty_evictions": {
+            "description": "Evictions that had to write the frame back first",
+            "title": "Dirty Evictions",
+            "type": "integer"
+          },
+          "evictions": {
+            "title": "Evictions",
+            "type": "integer"
+          },
+          "flushes": {
+            "title": "Flushes",
+            "type": "integer"
+          },
+          "hit_rate": {
+            "description": "Hits over lookups, 0..1",
+            "title": "Hit Rate",
+            "type": "number"
+          },
+          "hits": {
+            "title": "Hits",
+            "type": "integer"
+          },
+          "lookups": {
+            "title": "Lookups",
+            "type": "integer"
+          },
+          "misses": {
+            "title": "Misses",
+            "type": "integer"
+          },
+          "pages_flushed": {
+            "title": "Pages Flushed",
+            "type": "integer"
+          },
+          "writes_absorbed": {
+            "description": "Logical writes that never reached the disk because the page was already dirty in a frame. The write-back win, counted directly.",
+            "title": "Writes Absorbed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hits",
+          "misses",
+          "lookups",
+          "hit_rate",
+          "evictions",
+          "dirty_evictions",
+          "writes_absorbed",
+          "flushes",
+          "pages_flushed"
+        ],
+        "title": "BufferPoolStatsModel",
+        "type": "object"
+      },
       "CatalogResponse": {
         "properties": {
           "next_object_id": {
@@ -770,6 +895,62 @@
           "value"
         ],
         "title": "FieldLayoutModel",
+        "type": "object"
+      },
+      "FrameModel": {
+        "description": "One slot of the pool.\n\nThere is no ``pin_count``. ChenDB's pool copies out of a frame rather than\nlending it, so nothing can be holding one when it is reused and a pin count\nwould always read zero \u2014 a number that never prevents anything. See\n``engine/storage/buffer.py`` for when that stops being true.",
+        "properties": {
+          "dirty": {
+            "description": "Written since it was loaded, so the disk copy is stale",
+            "title": "Dirty",
+            "type": "boolean"
+          },
+          "frame_id": {
+            "title": "Frame Id",
+            "type": "integer"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the frame is free",
+            "title": "Page Id"
+          },
+          "reads": {
+            "description": "Times this page was served while resident",
+            "title": "Reads",
+            "type": "integer"
+          },
+          "recency": {
+            "description": "0 is the most recently used, and the last to be evicted. -1 for a free frame.",
+            "title": "Recency",
+            "type": "integer"
+          },
+          "resident_for_ns": {
+            "title": "Resident For Ns",
+            "type": "integer"
+          },
+          "writes": {
+            "description": "Times this page was written while resident",
+            "title": "Writes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "frame_id",
+          "page_id",
+          "dirty",
+          "reads",
+          "writes",
+          "recency",
+          "resident_for_ns"
+        ],
+        "title": "FrameModel",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2831,7 +3012,7 @@
   "info": {
     "description": "HTTP and WebSocket access to a running ChenDB engine, for the Visual Database\nExplorer.\n\nEverything served here is real engine state read from a real database file.\nEndpoints for features that do not exist yet are absent rather than stubbed:\ncheck `features` on `/health` to see what this build supports.",
     "title": "ChenDB Engine API",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2970,6 +3151,51 @@
         "summary": "Database detail",
         "tags": [
           "databases"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/buffer-pool": {
+      "get": {
+        "operationId": "get_buffer_pool_api_v1_databases__database_id__buffer_pool_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BufferPoolResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every frame, and how often the cache helped",
+        "tags": [
+          "buffer-pool"
         ]
       }
     },

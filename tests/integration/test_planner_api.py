@@ -61,9 +61,9 @@ def plan_of(client: TestClient, sql: str) -> dict:
 
 def test_health_reports_the_planner(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 6
+    assert body["milestone"] == 7
     assert body["features"]["planner"] is True
-    assert body["features"]["buffer_pool"] is False
+    assert body["features"]["buffer_pool"] is True
 
 
 # -- estimates beside actuals -----------------------------------------------

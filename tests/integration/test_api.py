@@ -47,7 +47,7 @@ def seeded(client: TestClient) -> TestClient:
 
 def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 6
+    assert body["milestone"] == 7
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
@@ -57,6 +57,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     assert body["features"]["catalog"] is True
     assert body["features"]["indexes"] is True
     assert body["features"]["planner"] is True
+    assert body["features"]["buffer_pool"] is True
     assert body["features"]["mvcc"] is False
 
 
@@ -398,7 +399,7 @@ def test_event_payloads_carry_real_storage_facts(seeded: TestClient):
     for event in reads:
         payload = event["event"]
         assert payload["file_offset"] == payload["page_id"] * PAGE_SIZE
-        assert payload["source"] == "disk"
+        assert payload["source"] in ("disk", "buffer_pool")
 
 
 def test_trace_level_can_be_read_and_changed(seeded: TestClient):

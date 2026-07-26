@@ -236,18 +236,42 @@ is a read of the table and happens whether or not anything is being planned.
 
 ---
 
+## `buffer_pool` — Milestone 7
+
+```
+BufferPoolEvent  STORAGE  action: miss|dirty|evict|flush, frame_id, page_id,
+                          dirty, resident, pages_written
+                 VERBOSE  action: hit
+```
+
+`hit` is the one action at `VERBOSE`, and deliberately: it is the common case by
+design, and one event per cached page read would drown everything else in the
+stream. A miss, an eviction or a flush is rare and is exactly what you want to
+see.
+
+There is **no `pin_count`**, despite the planned schema naming one. ChenDB's pool
+copies out of a frame rather than lending it, so no caller can be holding one
+when it is reused and a pin count would always read zero — a number that never
+prevents anything. `engine/storage/buffer.py` explains when that stops being
+true.
+
+Two existing events changed meaning in this milestone:
+
+* `PageReadEvent.source` was constant `"disk"` from Milestone 1 and now says
+  `"buffer_pool"` on a hit. The field was in the schema from the start precisely
+  so this change needed no consumer to be updated.
+* `PageWriteEvent` gained `deferred`, true when the pool absorbed the write and
+  nothing reached the disk — which since Milestone 7 is the common case. The
+  bytes go out later, reported as a `BufferPoolEvent` with action `evict` or
+  `flush`.
+
+---
+
 ## Planned events
 
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 7 — `buffer_pool`
-
-```
-BufferPoolEvent       action: hit|miss|pin|unpin|evict|flush,
-                      frame_id, page_id, dirty, pin_count
-```
 
 ### Milestone 8 — `transaction`
 

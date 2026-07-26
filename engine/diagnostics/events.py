@@ -24,6 +24,7 @@ from typing import ClassVar, Literal
 from engine.diagnostics.levels import EventCategory, TraceLevel
 
 __all__ = [
+    "BufferPoolEvent",
     "CostEstimateEvent",
     "DatabaseClosedEvent",
     "DatabaseOpenedEvent",
@@ -50,9 +51,16 @@ __all__ = [
     "StatisticsGatheredEvent",
 ]
 
-#: Where a page came from.  Milestone 1 always reads from ``"disk"``; the
-#: buffer pool in Milestone 7 introduces ``"buffer_pool"``.
+#: Where a page came from.  Constant ``"disk"`` until Milestone 7 added the
+#: buffer pool; the field was in the schema from Milestone 1 precisely so that
+#: change would need no consumer to be updated.
 PageSource = Literal["disk", "buffer_pool"]
+
+#: What the buffer pool just did.  There is no ``pin``/``unpin``: ChenDB's pool
+#: copies out of a frame rather than lending it, so nothing can be holding one
+#: when it is reused.  See :mod:`engine.storage.buffer` for why, and for when
+#: that stops being true.
+BufferPoolAction = Literal["hit", "miss", "dirty", "evict", "flush"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +167,10 @@ class PageWriteEvent(DiagnosticEvent):
     file_offset: int
     duration_ns: int
     transaction_id: int | None = None
+    deferred: bool = False
+    """True when the buffer pool absorbed the write and nothing reached the
+    disk. From Milestone 7 that is the common case: the bytes go out on
+    eviction or on ``sync``, reported as a :class:`BufferPoolEvent`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -657,3 +669,38 @@ class CostEstimateEvent(DiagnosticEvent):
     io_cost: float
     cpu_cost: float
     estimated_rows: float
+
+
+# --------------------------------------------------------------------------
+# Buffer pool (Milestone 7)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class BufferPoolEvent(DiagnosticEvent):
+    """One thing the buffer pool did.
+
+    ``hit`` is ``VERBOSE`` and everything else is ``STORAGE``, because a hit is
+    the common case by design: one event per cached page read would drown every
+    other event in the stream. A miss, an eviction or a flush is rare and is
+    exactly what you want to see.
+
+    There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
+    lending it, so no caller can be holding one when it is reused and pin counts
+    would always read zero — a number in the UI that never prevents anything.
+    :mod:`engine.storage.buffer` explains when that stops being true.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.BUFFER_POOL
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    action: BufferPoolAction
+    frame_id: int
+    """``-1`` for a flush, which is about the whole pool rather than one frame."""
+    page_id: int
+    dirty: bool
+    resident: int
+    """Pages in the pool after this operation. The pool filling up, then
+    staying full, is the shape of a cache doing its job."""
+    pages_written: int = 0
+    """Flush only: how many dirty frames reached the disk."""

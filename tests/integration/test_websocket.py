@@ -56,6 +56,13 @@ def drain_events(
     the events an operation produces are not all the ones a test cares about —
     an insert also emits catalog lookups and a heap scan of ``chendb_indexes``,
     so counting raw frames would stop before the interesting ones arrive.
+
+    **``until`` must be below the connection's queue capacity.** A burst of work
+    happens entirely inside one request, so every event is offered before the
+    event loop next runs and the queue drops all but the newest ``queue_size``.
+    Asking for more than that blocks on ``receive_json`` forever — which is
+    exactly what happened when Milestone 7's ``BufferPoolEvent`` pushed the
+    per-insert event count past the ceiling.
     """
     collected: list[dict] = []
     for _ in range(max_frames):
@@ -110,12 +117,19 @@ def test_events_stream_live_as_the_engine_works(client: TestClient):
 
 
 def test_sequence_numbers_increase_across_frames(client: TestClient):
+    # Two batches with a drain between, so the client keeps up and genuinely
+    # sees several frames rather than one over-full one. See drain_events on
+    # why a single big burst cannot deliver more than the queue capacity.
+    seqs: list[int] = []
     with client.websocket_connect(STREAM_PATH) as websocket:
         websocket.receive_json()
-        insert(client, 10)
-        events = drain_events(websocket, until=20)
+        for batch in range(2):
+            insert(client, 4, start=batch * 4)
+            seqs.extend(
+                event["seq"] for event in drain_events(websocket, until=8)
+            )
 
-    seqs = [event["seq"] for event in events]
+    assert len(seqs) >= 8
     assert seqs == sorted(seqs)
     assert len(seqs) == len(set(seqs))
 

@@ -11,6 +11,7 @@
  *   │  SQL:       Editor        │ Tokens / AST                  │
  *   │  Execution: Editor        │ Plan · Results · Step controls│
  *   │  Indexes:   Index list    │ Point lookup · B+ tree        │
+ *   │  Buffer:    Counters      │ Workloads │ Frame grid        │
  *   │                                                          │
  *   ├──────────────────────────────────────────────────────────┤
  *   │ Event timeline (shared by every workspace)               │
@@ -33,6 +34,7 @@ import { PageInspector } from "@/features/pages/PageInspector";
 import { PageListPanel } from "@/features/pages/PageListPanel";
 import { RecordsPanel } from "@/features/records/RecordsPanel";
 import { ExecutionWorkspace } from "@/features/execution/ExecutionWorkspace";
+import { BufferWorkspace } from "@/features/buffer/BufferWorkspace";
 import { IndexWorkspace } from "@/features/indexes/IndexWorkspace";
 import { SqlWorkspace } from "@/features/sql/SqlWorkspace";
 import { useCatalog, useDatabase, useDatabases, useHealth } from "@/hooks/useEngine";
@@ -44,13 +46,14 @@ const DATABASE_KEY = "chendb.database";
 const WORKSPACE_KEY = "chendb.workspace";
 const TABLE_KEY = "chendb.table";
 
-type WorkspaceId = "storage" | "sql" | "execution" | "indexes";
+type WorkspaceId = "storage" | "sql" | "execution" | "indexes" | "buffer";
 
 const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "storage", label: "Storage", feature: "storage" },
   { id: "sql", label: "SQL", feature: "sql" },
   { id: "execution", label: "Execution", feature: "execution" },
   { id: "indexes", label: "Indexes", feature: "indexes" },
+  { id: "buffer", label: "Buffer pool", feature: "buffer_pool" },
 ];
 
 export function ExplorerPage() {
@@ -146,7 +149,15 @@ export function ExplorerPage() {
         label="Resize the workspace against the event timeline"
         className="min-h-0 flex-1"
         first={
-          workspace === "indexes" && databaseId ? (
+          workspace === "buffer" && databaseId ? (
+            <BufferWorkspace
+              databaseId={databaseId}
+              onSelectPage={(pageId) => {
+                setSelectedPageId(pageId);
+                setWorkspace("storage");
+              }}
+            />
+          ) : workspace === "indexes" && databaseId ? (
             <IndexWorkspace
               databaseId={databaseId}
               onSelectPage={(pageId) => {

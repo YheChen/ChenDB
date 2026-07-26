@@ -23,7 +23,8 @@ from engine.executor.engine import execute_script, plan_query
 from engine.optimizer.cost import (
     CPU_PREDICATE_COST,
     CPU_TUPLE_COST,
-    PAGE_COST,
+    PAGE_HIT_COST,
+    PAGE_MISS_COST,
     estimate_selectivity,
 )
 from engine.optimizer.rules import RULES
@@ -112,7 +113,8 @@ def main() -> int:
             # -- 3. the constants ------------------------------------------
             rule("3. What things cost, measured for this engine")
 
-            print(f"   PAGE_COST           {PAGE_COST:>6}   a pread plus a CRC32 over 4 KiB")
+            print(f"   PAGE_MISS_COST      {PAGE_MISS_COST:>6}   a pread the buffer pool could not serve")
+            print(f"   PAGE_HIT_COST       {PAGE_HIT_COST:>6}   the same page, already in a frame")
             print(f"   CPU_TUPLE_COST      {CPU_TUPLE_COST:>6}   decode one record, in Python")
             print(f"   CPU_PREDICATE_COST  {CPU_PREDICATE_COST:>6}   evaluate a predicate on a decoded row")
             print("\n   PostgreSQL's defaults put cpu_tuple_cost at 1/100th of a page")

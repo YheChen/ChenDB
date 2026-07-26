@@ -31,6 +31,39 @@ export interface AstTreeModel {
   root_ids: number[];
 }
 
+export interface BufferPoolResponse {
+  /** Frames in the pool */
+  capacity: number;
+  page_size: number;
+  resident: number;
+  dirty: number;
+  /** resident * page_size */
+  bytes_used: number;
+  frames: FrameModel[];
+  stats: BufferPoolStatsModel;
+  /** Times the engine asked for a page, cumulative for this handle */
+  logical_reads: number;
+  /** …and how many became a syscall */
+  physical_reads: number;
+  logical_writes: number;
+  physical_writes: number;
+}
+
+export interface BufferPoolStatsModel {
+  hits: number;
+  misses: number;
+  lookups: number;
+  /** Hits over lookups, 0..1 */
+  hit_rate: number;
+  evictions: number;
+  /** Evictions that had to write the frame back first */
+  dirty_evictions: number;
+  /** Logical writes that never reached the disk because the page was already dirty in a frame. The write-back win, counted directly. */
+  writes_absorbed: number;
+  flushes: number;
+  pages_flushed: number;
+}
+
 export interface CatalogResponse {
   tables: TableSummary[];
   system_tables: TableSummary[];
@@ -186,6 +219,29 @@ export interface FieldLayoutModel {
   offset: number;
   length: number;
   value: unknown;
+}
+
+/**
+ * One slot of the pool.
+ * 
+ * There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
+ * lending it, so nothing can be holding one when it is reused and a pin count
+ * would always read zero — a number that never prevents anything. See
+ * ``engine/storage/buffer.py`` for when that stops being true.
+ */
+export interface FrameModel {
+  frame_id: number;
+  /** Null when the frame is free */
+  page_id: null | number;
+  /** Written since it was loaded, so the disk copy is stale */
+  dirty: boolean;
+  /** Times this page was served while resident */
+  reads: number;
+  /** Times this page was written while resident */
+  writes: number;
+  /** 0 is the most recently used, and the last to be evicted. -1 for a free frame. */
+  recency: number;
+  resident_for_ns: number;
 }
 
 /** One decoded header field, with the bytes it was read from. */

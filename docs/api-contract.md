@@ -157,8 +157,42 @@ pretending otherwise.
 a one-column `QUERY PLAN` result set, so any client that can display a `SELECT`
 can display it.
 
-Arriving later: `/buffer-pool` (7), `/transactions` (8), `/wal` (9),
-`/locks` (10).
+### Milestone 7 — the buffer pool
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/databases/{db}/buffer-pool` | every frame, plus hit and miss counters |
+
+```json
+{
+  "capacity": 128, "page_size": 4096, "resident": 128, "dirty": 0,
+  "bytes_used": 524288,
+  "frames": [
+    { "frame_id": 0, "page_id": 7, "dirty": false, "reads": 5, "writes": 0,
+      "recency": 0, "resident_for_ns": 1200000 },
+    { "frame_id": 1, "page_id": null, "dirty": false, "reads": 0, "writes": 0,
+      "recency": -1, "resident_for_ns": 0 }
+  ],
+  "stats": { "hits": 2901, "misses": 0, "lookups": 2901, "hit_rate": 1.0,
+             "evictions": 8, "dirty_evictions": 2, "writes_absorbed": 3026,
+             "flushes": 1, "pages_flushed": 143 },
+  "logical_reads": 2901, "physical_reads": 0,
+  "logical_writes": 3169, "physical_writes": 143
+}
+```
+
+**Free frames are reported too.** The grid has a fixed shape, so a page
+appearing in a slot reads as a change rather than as the whole layout reflowing.
+`recency` is `0` for the most recently used and `-1` for a free frame; the
+highest rank among resident frames is what eviction takes next.
+
+There is no `pin_count` — see the event schema for why.
+
+The gap between `logical_reads` and `physical_reads` is the pool working. Those
+two counters are cumulative for the open handle, not for the pool, so they
+survive a `clear()`.
+
+Arriving later: `/transactions` (8), `/wal` (9), `/locks` (10).
 
 ## Errors
 

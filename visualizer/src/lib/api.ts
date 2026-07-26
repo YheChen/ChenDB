@@ -9,6 +9,7 @@
  */
 
 import type {
+  BufferPoolResponse,
   CreateDatabaseRequest,
   CatalogResponse,
   ExecutionDetail,
@@ -225,6 +226,9 @@ export const api = {
       `/databases/${id}/indexes/${encodeURIComponent(name)}/search` +
         `?value=${encodeURIComponent(value)}`,
     ),
+
+  getBufferPool: (id: string) =>
+    request<BufferPoolResponse>(`/databases/${id}/buffer-pool`),
 
   listPages: (id: string) => request<PageListResponse>(`/databases/${id}/pages`),
 

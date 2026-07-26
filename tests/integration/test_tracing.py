@@ -107,6 +107,8 @@ def test_storage_level_emits_the_expected_event_families(
         EventCategory.RECORD,
         # Creating a table and looking it up both go through the catalog now.
         EventCategory.CATALOG,
+        # Every page read and write goes through the pool from Milestone 7.
+        EventCategory.BUFFER_POOL,
     }
 
 
@@ -122,7 +124,9 @@ def test_page_read_events_report_the_real_file_offset(
     assert reads
     for event in reads:
         assert event.file_offset == event.page_id * PAGE_SIZE
-        assert event.source == "disk"  # no buffer pool until Milestone 7
+        # Constant "disk" until Milestone 7. The field was in the schema from
+        # Milestone 1 for exactly this moment, so no consumer had to change.
+        assert event.source in ("disk", "buffer_pool")
         assert event.duration_ns >= 0
 
 

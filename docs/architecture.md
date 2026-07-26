@@ -50,6 +50,7 @@ engine/
 │   ├── page.py            slotted page: records in a fixed-size block
 │   ├── meta.py            page 0 — root of every persistent structure
 │   ├── pager.py           page id → file offset; allocation; checksums; fsync
+│   ├── buffer.py          the page cache: frames, write-back, LRU
 │   ├── heap.py            a chain of pages holding one table
 │   └── inspect.py         read-only views of all of the above
 │

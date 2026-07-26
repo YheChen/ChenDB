@@ -38,7 +38,7 @@ def nodes_by_id(body: dict) -> dict[int, dict]:
 
 def test_health_reports_sql_parsing(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 6
+    assert body["milestone"] == 7
     assert body["features"]["sql"] is True
 
 

@@ -20,6 +20,7 @@ from engine.server.config import ServerConfig, load_config
 from engine.server.deps import http_status_for
 from engine.server.executions import ExecutionStore
 from engine.server.routers import (
+    buffer,
     catalog,
     databases,
     events,
@@ -38,7 +39,7 @@ API_PREFIX = f"/api/{API_VERSION}"
 
 #: Highest completed milestone. The frontend reads this from /health and hides
 #: panels for anything not built yet, rather than showing dead controls.
-MILESTONE = 6
+MILESTONE = 7
 
 #: Advertised capabilities. Each flips to true in the milestone that ships it.
 FEATURES: dict[str, bool] = {
@@ -51,7 +52,7 @@ FEATURES: dict[str, bool] = {
     "catalog": True,       # Milestone 4 — real system tables
     "indexes": True,       # Milestone 5 — B+ trees, CREATE INDEX, tree view
     "planner": True,       # Milestone 6 — cost model, EXPLAIN, alternatives
-    "buffer_pool": False,  # Milestone 7
+    "buffer_pool": True,   # Milestone 7 — frames, write-back, LRU
     "transactions": False, # Milestone 8
     "wal": False,          # Milestone 9
     "mvcc": False,         # Milestone 10
@@ -139,6 +140,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(databases.router, prefix=API_PREFIX)
     app.include_router(catalog.router, prefix=API_PREFIX)
     app.include_router(indexes.router, prefix=API_PREFIX)
+    app.include_router(buffer.router, prefix=API_PREFIX)
     app.include_router(pages.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(sql.router, prefix=API_PREFIX)
