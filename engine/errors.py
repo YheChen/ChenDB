@@ -117,3 +117,70 @@ class NullConstraintViolation(SerializationError):
 
 class SchemaError(ChenDBError):
     """A schema definition is itself invalid (no columns, duplicate names, ...)."""
+
+
+# --------------------------------------------------------------------------
+# SQL front end
+# --------------------------------------------------------------------------
+
+
+class SqlError(ChenDBError):
+    """Base class for failures in the SQL front end.
+
+    Every subclass carries the source position that caused it, so a caller can
+    point at the offending characters rather than just reporting "syntax error".
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        start: int = 0,
+        end: int = 0,
+        line: int = 1,
+        column: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.start = start
+        self.end = end
+        self.line = line
+        self.column = column
+
+    def __str__(self) -> str:
+        return f"{self.message} (line {self.line}, column {self.column})"
+
+
+class LexError(SqlError):
+    """The tokenizer could not turn the input into tokens.
+
+    An unterminated string, an unknown character, a malformed number.
+    """
+
+
+class ParseError(SqlError):
+    """The tokens do not form a valid statement."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        start: int = 0,
+        end: int = 0,
+        line: int = 1,
+        column: int = 1,
+        expected: tuple[str, ...] = (),
+        found: str = "",
+    ) -> None:
+        super().__init__(message, start=start, end=end, line=line, column=column)
+        self.expected = expected
+        self.found = found
+
+
+class UnsupportedSqlError(ParseError):
+    """Valid SQL that this milestone does not implement yet.
+
+    Distinct from :class:`ParseError` on purpose: "you wrote this wrong" and
+    "ChenDB cannot do this yet" are different messages, and only the second one
+    should point at a milestone.
+    """

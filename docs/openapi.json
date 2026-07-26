@@ -1,6 +1,99 @@
 {
   "components": {
     "schemas": {
+      "AstNodeModel": {
+        "description": "One AST node in the flattened tree.",
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "description": "Scalar fields: operator, name, value, data_type, ...",
+            "title": "Attributes",
+            "type": "object"
+          },
+          "children": {
+            "description": "node_ids of direct children, in order",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "column": {
+            "title": "Column",
+            "type": "integer"
+          },
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "label": {
+            "description": "Short display label: the operator, name or value if it has one",
+            "title": "Label",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "integer"
+          },
+          "node_type": {
+            "description": "Class name, e.g. 'BinaryOp'",
+            "title": "Node Type",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          },
+          "text": {
+            "description": "The source fragment this node was parsed from",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "node_type",
+          "start",
+          "end",
+          "line",
+          "column",
+          "text",
+          "children",
+          "attributes",
+          "label"
+        ],
+        "title": "AstNodeModel",
+        "type": "object"
+      },
+      "AstTreeModel": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/AstNodeModel"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "root_ids": {
+            "description": "One per statement, in source order",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Root Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes",
+          "root_ids"
+        ],
+        "title": "AstTreeModel",
+        "type": "object"
+      },
       "ColumnModel": {
         "properties": {
           "fixed_size": {
@@ -844,6 +937,92 @@
         "title": "PagerStatsModel",
         "type": "object"
       },
+      "ParseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sql": {
+            "description": "One or more statements, separated by semicolons",
+            "maxLength": 100000,
+            "title": "Sql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "title": "ParseRequest",
+        "type": "object"
+      },
+      "ParseResponse": {
+        "description": "Tokens, AST and error together \u2014 all three are partial-result friendly.\n\n``tokens`` can be non-empty while ``statements`` is empty and ``error`` is\nset: that is a half-typed query, the normal state of one being written.",
+        "properties": {
+          "ast": {
+            "$ref": "#/components/schemas/AstTreeModel"
+          },
+          "duration_ns": {
+            "title": "Duration Ns",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SqlErrorModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lexed_ok": {
+            "description": "False when tokenizing failed, so `tokens` is truncated",
+            "title": "Lexed Ok",
+            "type": "boolean"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          },
+          "statements": {
+            "items": {
+              "$ref": "#/components/schemas/StatementModel"
+            },
+            "title": "Statements",
+            "type": "array"
+          },
+          "token_count": {
+            "title": "Token Count",
+            "type": "integer"
+          },
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/TokenModel"
+            },
+            "title": "Tokens",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sql",
+          "ok",
+          "tokens",
+          "ast",
+          "statements",
+          "lexed_ok",
+          "token_count",
+          "node_count",
+          "duration_ns"
+        ],
+        "title": "ParseResponse",
+        "type": "object"
+      },
       "RecordIdModel": {
         "description": "PostgreSQL calls this a ctid: the physical address of a row.",
         "properties": {
@@ -1099,6 +1278,95 @@
         "title": "SlotDetailModel",
         "type": "object"
       },
+      "SqlErrorModel": {
+        "description": "A lex or parse failure, positioned for an editor marker.",
+        "properties": {
+          "column": {
+            "title": "Column",
+            "type": "integer"
+          },
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "expected": {
+            "description": "What the parser would have accepted",
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected",
+            "type": "array"
+          },
+          "found": {
+            "default": "",
+            "description": "What it saw instead",
+            "title": "Found",
+            "type": "string"
+          },
+          "kind": {
+            "description": "LexError, ParseError or UnsupportedSqlError",
+            "title": "Kind",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "message",
+          "start",
+          "end",
+          "line",
+          "column"
+        ],
+        "title": "SqlErrorModel",
+        "type": "object"
+      },
+      "StatementModel": {
+        "description": "One parsed statement.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "Statement node type, e.g. 'SelectStatement'",
+            "title": "Kind",
+            "type": "string"
+          },
+          "root_id": {
+            "title": "Root Id",
+            "type": "integer"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root_id",
+          "kind",
+          "start",
+          "end",
+          "text"
+        ],
+        "title": "StatementModel",
+        "type": "object"
+      },
       "TableResponse": {
         "properties": {
           "first_page_id": {
@@ -1137,6 +1405,70 @@
           "last_page_id"
         ],
         "title": "TableResponse",
+        "type": "object"
+      },
+      "TokenModel": {
+        "description": "One token, with the source range it covers.",
+        "properties": {
+          "column": {
+            "title": "Column",
+            "type": "integer"
+          },
+          "end": {
+            "description": "Character offset one past the last",
+            "title": "End",
+            "type": "integer"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when type is 'keyword'",
+            "title": "Keyword"
+          },
+          "lexeme": {
+            "description": "Exact source text, before unescaping",
+            "title": "Lexeme",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "start": {
+            "description": "Character offset of the first character",
+            "title": "Start",
+            "type": "integer"
+          },
+          "type": {
+            "description": "Token category: keyword, identifier, int_literal, ...",
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "description": "Decoded value, for literals",
+            "title": "Value"
+          }
+        },
+        "required": [
+          "index",
+          "type",
+          "lexeme",
+          "start",
+          "end",
+          "line",
+          "column"
+        ],
+        "title": "TokenModel",
         "type": "object"
       },
       "TraceLevelResponse": {
@@ -1316,7 +1648,7 @@
   "info": {
     "description": "HTTP and WebSocket access to a running ChenDB engine, for the Visual Database\nExplorer.\n\nEverything served here is real engine state read from a real database file.\nEndpoints for features that do not exist yet are absent rather than stubbed:\ncheck `features` on `/health` to see what this build supports.",
     "title": "ChenDB Engine API",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1692,6 +2024,62 @@
         "summary": "Inspect one page: header, slot directory, raw bytes, decoded records",
         "tags": [
           "pages"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/parse": {
+      "post": {
+        "description": "Parse ``sql`` without executing it.\n\nAlways 200, even for invalid SQL: a syntax error is a *result* here, not a\nfailed request. The editor needs the tokens that did scan and the position\nof the failure, and an HTTP error status would throw both away.\n\nThe database's tracer is used, so parser events appear in the same timeline\nas storage events. Parsing touches no pages, so the engine lock is not held.",
+        "operationId": "parse_sql_api_v1_databases__database_id__parse_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tokenize and parse SQL, returning tokens, AST and any error",
+        "tags": [
+          "sql"
         ]
       }
     },

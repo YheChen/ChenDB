@@ -25,8 +25,9 @@ or observed, by attaching a diagnostics sink::
 
 Milestone 1 implements the storage engine: fixed-size pages, a slotted page
 layout, binary record encoding, a heap file and a persistent metadata page.
-SQL, planning, execution, indexes, transactions, WAL and MVCC follow in
-Milestones 2-10; see ``docs/roadmap.md``.
+Milestone 2 adds the SQL front end: a tokenizer, a recursive-descent parser and
+an AST that records the source span of every node. Nothing executes yet —
+that is Milestone 3. See ``docs/roadmap.md``.
 """
 
 from engine.database import Database
@@ -44,7 +45,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 __all__ = [

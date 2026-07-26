@@ -1,0 +1,109 @@
+{
+  "project": {
+    "name": "ChenDB",
+    "what": "A relational database engine written from scratch in Python, plus a React web app (the Visual Database Explorer) that shows what the engine is doing while it does it. Monorepo: engine/ + visualizer/.",
+    "repo_path": "/Users/yanzhenchen/Desktop/GitHub Projects/ChenDB",
+    "remote": "https://github.com/YheChen/ChenDB.git",
+    "default_branch": "master",
+    "git_identity": "Yanzhen Chen <yanzhen@trybree.com>",
+    "gh_cli": "authenticated as YheChen (scopes: gist, read:org, repo, workflow)",
+    "python": "3.14.4 at /opt/homebrew/bin/python3; project targets >=3.13",
+    "node": "v25.6.0, npm 11.8.0"
+  },
+
+  "workflow_conventions": {
+    "branching": "One branch per milestone: milestone-N-<slug>. Branch from master.",
+    "pr": "One PR per milestone, opened with `gh pr create`. PR body: what was built, why, measured numbers, known limits with the milestone that resolves each, and a review guide. Do NOT merge unless asked.",
+    "commit_trailer": "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>",
+    "pr_body_trailer": "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "versioning": "engine.__version__ and pyproject version track the milestone: 0.N.0 means Milestone N complete. Bump both, plus MILESTONE in engine/server/app.py.",
+    "verified_means": "python -m pytest passes; npm --prefix visualizer test passes; npx tsc -b --noEmit clean; npm run build clean; ruff check clean; AND the change was seen working in the browser via the preview tools (not just asserted in tests).",
+    "honesty_rule": "Features that do not exist are ABSENT from the API and HIDDEN in the UI — never stubbed, never greyed out. engine/server/app.py:FEATURES drives which visualizer workspace tabs render."
+  },
+
+  "commands": {
+    "install": "python3 -m venv .venv && .venv/bin/pip install -e '.[server,dev]' && npm --prefix visualizer install",
+    "engine_cli": ".venv/bin/python -m engine demo.chendb   (dot-commands; .help)",
+    "server": ".venv/bin/python -m engine.server --workspace workspace --port 8000",
+    "ui": "npm --prefix visualizer run dev   (localhost:5173, proxies /api to :8000)",
+    "test_python": ".venv/bin/python -m pytest -q -W 'ignore::DeprecationWarning'",
+    "test_frontend": "npm --prefix visualizer test",
+    "typecheck": "npx --prefix visualizer tsc -b --noEmit  (or: cd visualizer && npx tsc -b --noEmit)",
+    "build_frontend": "npm --prefix visualizer run build",
+    "lint": ".venv/bin/ruff check engine tests benchmarks examples scripts",
+    "coverage": ".venv/bin/python -m pytest -q --cov=engine --cov-report=term",
+    "bench": ".venv/bin/python benchmarks/trace_overhead.py",
+    "example": ".venv/bin/python examples/milestone1_storage.py",
+    "regen_api_types": ".venv/bin/python scripts/generate_api_types.py && rm -rf .openapi-tmp",
+    "make": "make help lists everything",
+    "browser_verify": "Use mcp__Claude_Browser__preview_start with {name: 'visualizer'} (.claude/launch.json defines it), then read_page/computer. Start the Python server separately with Bash first."
+  },
+
+  "status": {
+    "milestone_1": {
+      "state": "COMPLETE — PR #1 open at https://github.com/YheChen/ChenDB/pull/1 (branch milestone-1-storage-engine, NOT merged)",
+      "shipped": "Slotted pages, pager + free list, CRC32 checksums, meta page, heap chain, record codecs with null bitmap, diagnostics (5 levels, 11 events, 4 sinks), FastAPI server with WS event stream, visualizer Storage workspace (disk map, page inspector, event timeline)."
+    },
+    "milestone_2": {
+      "state": "COMPLETE, not yet committed/PRed as of this handover — branch milestone-2-sql-parser",
+      "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
+      "remaining_before_pr": [
+        "docs/milestone-02-sql-parser.md",
+        "update docs/roadmap.md, docs/event-schema.md (M2 events now implemented), README.md",
+        "examples/milestone2_parser.py",
+        "commit + gh pr create"
+      ]
+    },
+    "next": "Milestone 3 — execution engine and operator debugger. See docs/roadmap.md."
+  },
+
+  "architecture_invariants": {
+    "enforced_by": "tests/unit/test_architecture_boundaries.py (AST-scans imports; fails the build)",
+    "rules": [
+      "engine/ outside engine/server/ must not import fastapi, starlette, uvicorn, pydantic, anyio.",
+      "engine/ outside engine/server/ must import ONLY the standard library and engine itself.",
+      "engine/server/ imports engine; never the reverse.",
+      "Diagnostic events must not define to_json/model_dump/serialize — conversion happens only in engine/server/mappers.py.",
+      "A subprocess test loads `engine` and asserts no web package landed in sys.modules."
+    ],
+    "consequence": "`import engine` works with zero third-party packages installed. Keep it that way."
+  },
+
+  "key_design_decisions": {
+    "diagnostics": "Events are frozen dataclasses with `category`/`level` as ClassVars. ALWAYS guard emits with the cached flag: `if tracer.storage: tracer.emit(XEvent(...))`. Measured 8.5ns guarded vs 296ns unguarded (35x) because Python builds the argument before the call. NULL_TRACER is the no-op default.",
+    "snapshot_consistency": "Diagnostics endpoints: take the ManagedDatabase lock, copy immutable dataclasses, RELEASE, then map to Pydantic. Never serialize under the lock.",
+    "ws_backpressure": "Per-connection bounded asyncio.Queue; on overflow drop OLDEST and report count in a `dropped` frame. Subscription.offer() runs on the engine thread and only calls loop.call_soon_threadsafe — it must never block.",
+    "ast_spans": "Every AST node carries node_id + SourceSpan(start, end, line, column). Node.children()/attributes() are generic via dataclasses.fields. INVARIANT: a node field must be a scalar, a Node, or a FLAT tuple — never a tuple of tuples (that made InsertStatement values invisible; fixed with the ValuesRow node). Guarded by test_no_node_hides_children_inside_a_nested_tuple.",
+    "ast_wire_format": "The AST crosses the wire FLAT (nodes[] + root_ids[]), not nested — recursive Pydantic makes bad OpenAPI, and the UI needs random access by node_id anyway.",
+    "parse_errors": "analyze_sql() never raises; it returns ParseOutcome with partial tokens + statements + error. POST /parse always returns 200 — invalid SQL is a result, not a failed request. UnsupportedSqlError (subclass of ParseError) is used for valid-SQL-not-implemented-yet and names a milestone.",
+    "typescript_types": "visualizer/src/types/api.ts is GENERATED from OpenAPI by scripts/generate_api_types.py. Never hand-edit. Re-run after any schema change.",
+    "monaco": "Imported from 'monaco-editor/esm/vs/editor/editor.api' (NOT 'monaco-editor') — the latter pulls every built-in language and roughly triples the bundle. Custom 'chendb-sql' Monarch grammar with only the keywords the engine's lexer knows. loader.config({monaco}) points @monaco-editor/react at the local copy instead of a CDN."
+  },
+
+  "gotchas": [
+    "The visualizer needs BOTH resolve.alias in vite.config.ts AND paths in tsconfig.json for '@/*'. tsc passing does not mean Rollup will resolve it.",
+    "vitest must match the Vite major version (vitest 3 for Vite 6), or you get two copies of Vite's types and unusable errors in vite.config.ts.",
+    "Vite's `?worker` import needs src/vite-env.d.ts with /// <reference types=\"vite/client\" />.",
+    "Pydantic fields with default_factory become OPTIONAL in the generated TS (e.g. SqlErrorModel.expected). Normalise with `?? []`.",
+    "starlette's TestClient websocket transport is UNBOUNDED, so the WS drop policy can never be exercised through it. That policy is unit-tested directly in tests/unit/test_ws_backpressure.py.",
+    "GET /databases/{db} calls db.count(), which itself does page reads — do not use it to measure page reads across an operation unless the database has no table.",
+    "PagerStats reset per handle. Reopening a Database gives fresh counters; the ring-buffer sink survives if you pass the same tracer.",
+    "Ruff N818 is globally ignored: exception class names (DatabaseNotFound, InvalidDatabaseId, ...) are returned verbatim in the API error envelope and asserted on by clients.",
+    "Crash tests SIGKILL a child process on purpose. Never 'fix' them to close cleanly — a cooperative shutdown flushes the very buffers under test.",
+    "Milestone 1 persists the schema as JSON across a CHAIN of SCHEMA pages (a 380-byte descriptor does not fit one 256-byte page). Milestone 4 replaces this with real system tables.",
+    "Small page sizes (256) are used throughout the tests deliberately: 4 rows fill a page, so chaining/compaction are exercised by a handful of inserts."
+  ],
+
+  "test_layout": {
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries",
+    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api",
+    "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
+    "tests/concurrency/": "empty until Milestone 10",
+    "counts_at_handover": "470 Python tests, 53 frontend tests, 94% engine coverage",
+    "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256."
+  },
+
+  "open_questions_for_user": [
+    "PR #1 (Milestone 1) is still open and unmerged. Milestone 2 branched from it, so the M2 branch contains M1's commits. If the user wants independent PRs, M2 should be rebased onto master after M1 merges. Ask before merging anything."
+  ]
+}

@@ -19,6 +19,7 @@ serialize itself.  See ``docs/event-schema.md`` for the full catalogue.
 """
 
 from engine.diagnostics.events import (
+    AstNodeCreatedEvent,
     DatabaseClosedEvent,
     DatabaseOpenedEvent,
     DiagnosticEvent,
@@ -29,9 +30,13 @@ from engine.diagnostics.events import (
     PageFreedEvent,
     PageReadEvent,
     PageWriteEvent,
+    ParsedEvent,
+    ParseErrorEvent,
     RecordDeletedEvent,
     RecordInsertedEvent,
     RecordReadEvent,
+    TokenEvent,
+    TokenizedEvent,
 )
 from engine.diagnostics.levels import EventCategory, TraceLevel
 from engine.diagnostics.sink import (
@@ -73,4 +78,10 @@ __all__ = [
     "RecordDeletedEvent",
     "RecordReadEvent",
     "HeapScanEvent",
+    # parser (M2)
+    "TokenizedEvent",
+    "TokenEvent",
+    "AstNodeCreatedEvent",
+    "ParsedEvent",
+    "ParseErrorEvent",
 ]

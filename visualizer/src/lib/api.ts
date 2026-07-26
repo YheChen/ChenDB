@@ -10,6 +10,7 @@
 
 import type {
   CreateDatabaseRequest,
+  ParseResponse,
   CreateTableRequest,
   DatabaseDetail,
   DatabaseListResponse,
@@ -137,6 +138,9 @@ export const api = {
       `/databases/${id}/records/${pageId}/${slotId}`,
       { method: "DELETE" },
     ),
+
+  parseSql: (id: string, sql: string) =>
+    request<ParseResponse>(`/databases/${id}/parse`, json({ sql })),
 
   listPages: (id: string) => request<PageListResponse>(`/databases/${id}/pages`),
 

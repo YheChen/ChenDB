@@ -18,7 +18,7 @@ from engine import __version__ as engine_version
 from engine.errors import ChenDBError
 from engine.server.config import ServerConfig, load_config
 from engine.server.deps import http_status_for
-from engine.server.routers import databases, events, pages
+from engine.server.routers import databases, events, pages, sql
 from engine.server.schemas.common import ApiError, HealthResponse
 from engine.server.workspace import Workspace
 
@@ -29,7 +29,7 @@ API_PREFIX = f"/api/{API_VERSION}"
 
 #: Highest completed milestone. The frontend reads this from /health and hides
 #: panels for anything not built yet, rather than showing dead controls.
-MILESTONE = 1
+MILESTONE = 2
 
 #: Advertised capabilities. Each flips to true in the milestone that ships it.
 FEATURES: dict[str, bool] = {
@@ -37,7 +37,7 @@ FEATURES: dict[str, bool] = {
     "page_inspector": True,
     "diagnostics": True,
     "event_stream": True,
-    "sql": False,          # Milestone 2
+    "sql": True,           # Milestone 2 — parsing only, no execution
     "execution": False,    # Milestone 3
     "catalog": False,      # Milestone 4
     "indexes": False,      # Milestone 5
@@ -125,6 +125,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(databases.router, prefix=API_PREFIX)
     app.include_router(pages.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
+    app.include_router(sql.router, prefix=API_PREFIX)
     return app
 
 

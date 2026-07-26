@@ -6,6 +6,31 @@
  * The source of truth is the Pydantic models in engine/server/schemas/.
  */
 
+/** One AST node in the flattened tree. */
+export interface AstNodeModel {
+  node_id: number;
+  /** Class name, e.g. 'BinaryOp' */
+  node_type: string;
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+  /** The source fragment this node was parsed from */
+  text: string;
+  /** node_ids of direct children, in order */
+  children: number[];
+  /** Scalar fields: operator, name, value, data_type, ... */
+  attributes: Record<string, unknown>;
+  /** Short display label: the operator, name or value if it has one */
+  label: string;
+}
+
+export interface AstTreeModel {
+  nodes: AstNodeModel[];
+  /** One per statement, in source order */
+  root_ids: number[];
+}
+
 export interface ColumnModel {
   name: string;
   type: "INTEGER" | "FLOAT" | "BOOLEAN" | "TEXT";
@@ -195,6 +220,31 @@ export interface PagerStatsModel {
   write_time_ns: number;
 }
 
+export interface ParseRequest {
+  /** One or more statements, separated by semicolons */
+  sql: string;
+}
+
+/**
+ * Tokens, AST and error together — all three are partial-result friendly.
+ * 
+ * ``tokens`` can be non-empty while ``statements`` is empty and ``error`` is
+ * set: that is a half-typed query, the normal state of one being written.
+ */
+export interface ParseResponse {
+  sql: string;
+  ok: boolean;
+  tokens: TokenModel[];
+  ast: AstTreeModel;
+  statements: StatementModel[];
+  error?: SqlErrorModel | null;
+  /** False when tokenizing failed, so `tokens` is truncated */
+  lexed_ok: boolean;
+  token_count: number;
+  node_count: number;
+  duration_ns: number;
+}
+
 /** PostgreSQL calls this a ctid: the physical address of a row. */
 export interface RecordIdModel {
   page_id: number;
@@ -253,6 +303,31 @@ export interface SlotDetailModel {
   decode_error?: null | string;
 }
 
+/** A lex or parse failure, positioned for an editor marker. */
+export interface SqlErrorModel {
+  /** LexError, ParseError or UnsupportedSqlError */
+  kind: string;
+  message: string;
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+  /** What the parser would have accepted */
+  expected?: string[];
+  /** What it saw instead */
+  found?: string;
+}
+
+/** One parsed statement. */
+export interface StatementModel {
+  root_id: number;
+  /** Statement node type, e.g. 'SelectStatement' */
+  kind: string;
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface TableResponse {
   name: string;
   schema: SchemaModel;
@@ -260,6 +335,25 @@ export interface TableResponse {
   heap_page_ids: number[];
   first_page_id: number;
   last_page_id: number;
+}
+
+/** One token, with the source range it covers. */
+export interface TokenModel {
+  index: number;
+  /** Token category: keyword, identifier, int_literal, ... */
+  type: string;
+  /** Exact source text, before unescaping */
+  lexeme: string;
+  /** Character offset of the first character */
+  start: number;
+  /** Character offset one past the last */
+  end: number;
+  line: number;
+  column: number;
+  /** Set when type is 'keyword' */
+  keyword?: null | string;
+  /** Decoded value, for literals */
+  value?: unknown;
 }
 
 export interface TraceLevelResponse {
