@@ -10,7 +10,10 @@
 
 import type {
   CreateDatabaseRequest,
+  ExecutionDetail,
+  ExecutionListResponse,
   ParseResponse,
+  QueryResultModel,
   CreateTableRequest,
   DatabaseDetail,
   DatabaseListResponse,
@@ -36,6 +39,16 @@ export const TRACE_LEVELS = [
   "VERBOSE",
 ] as const;
 export type TraceLevelName = (typeof TRACE_LEVELS)[number];
+
+/** How far a stepped execution runs before pausing again. */
+export const RESUME_MODES = [
+  "step",
+  "continue",
+  "until_row",
+  "until_page_read",
+  "until_operator",
+] as const;
+export type ResumeModeName = (typeof RESUME_MODES)[number];
 
 /** An error carrying the server's structured envelope, when there is one. */
 export class ApiRequestError extends Error {
@@ -141,6 +154,40 @@ export const api = {
 
   parseSql: (id: string, sql: string) =>
     request<ParseResponse>(`/databases/${id}/parse`, json({ sql })),
+
+  runQuery: (id: string, sql: string, maxRows?: number) =>
+    request<QueryResultModel[]>(
+      `/databases/${id}/query`,
+      json({ sql, ...(maxRows ? { max_rows: maxRows } : {}) }),
+    ),
+
+  startSteppedQuery: (id: string, sql: string) =>
+    request<ExecutionDetail>(`/databases/${id}/query/step`, json({ sql })),
+
+  getExecution: (executionId: string) =>
+    request<ExecutionDetail>(`/executions/${executionId}`),
+
+  listExecutions: (databaseId?: string) =>
+    request<ExecutionListResponse>(
+      `/executions${databaseId ? `?database_id=${databaseId}` : ""}`,
+    ),
+
+  stepExecution: (executionId: string) =>
+    request<ExecutionDetail>(`/executions/${executionId}/next`, { method: "POST" }),
+
+  continueExecution: (executionId: string) =>
+    request<ExecutionDetail>(`/executions/${executionId}/continue`, {
+      method: "POST",
+    }),
+
+  resumeExecution: (executionId: string, mode: ResumeModeName, operatorId?: string) =>
+    request<ExecutionDetail>(
+      `/executions/${executionId}/resume`,
+      json({ mode, ...(operatorId ? { operator_id: operatorId } : {}) }),
+    ),
+
+  cancelExecution: (executionId: string) =>
+    request<ExecutionDetail>(`/executions/${executionId}/cancel`, { method: "POST" }),
 
   listPages: (id: string) => request<PageListResponse>(`/databases/${id}/pages`),
 

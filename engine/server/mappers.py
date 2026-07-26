@@ -22,11 +22,15 @@ from typing import Any
 from engine.database import Database
 from engine.diagnostics import SinkStats, TraceLevel, TraceRecord
 from engine.errors import SqlError
+from engine.executor.binder import ResultColumn
+from engine.executor.engine import QueryResult
+from engine.executor.operators import Operator
 from engine.parser.analyze import ParseOutcome
 from engine.parser.ast import Node, walk
 from engine.parser.tokens import Token
 from engine.serialization.record import FieldLayout, RecordLayout
 from engine.serialization.schema import Column, Schema
+from engine.server.executions import Execution
 from engine.server.schemas.database import (
     ColumnModel,
     DatabaseDetail,
@@ -44,6 +48,14 @@ from engine.server.schemas.pages import (
     PageSummaryModel,
     RecordLayoutModel,
     SlotDetailModel,
+)
+from engine.server.schemas.query import (
+    ExecutionDetail,
+    ExecutionSummary,
+    OperatorNodeModel,
+    PlanModel,
+    QueryResultModel,
+    ResultColumnModel,
 )
 from engine.server.schemas.sql import (
     AstNodeModel,
@@ -398,4 +410,113 @@ def parse_outcome_to_api(outcome: ParseOutcome) -> ParseResponse:
         token_count=len(outcome.tokens),
         node_count=outcome.node_count,
         duration_ns=outcome.duration_ns,
+    )
+
+
+# -- query execution (Milestone 3) -----------------------------------------
+
+
+def result_column_to_api(column: ResultColumn) -> ResultColumnModel:
+    return ResultColumnModel(
+        name=column.name,
+        type=column.data_type.sql_name if column.data_type else None,
+    )
+
+
+def _operator_nodes(root: Operator) -> list[OperatorNodeModel]:
+    """Flatten an operator tree, parents before children."""
+    nodes: list[OperatorNodeModel] = []
+    stack = [root]
+    while stack:
+        operator = stack.pop()
+        nodes.append(
+            OperatorNodeModel(
+                operator_id=operator.operator_id,
+                operator_type=operator.operator_type,
+                detail=operator.detail,
+                children=[child.operator_id for child in operator.children],
+                output_columns=[
+                    result_column_to_api(column) for column in operator.output_columns
+                ],
+                next_calls=operator.stats.next_calls,
+                input_rows=operator.stats.input_rows,
+                output_rows=operator.stats.output_rows,
+                rows_rejected=getattr(operator, "rows_rejected", 0),
+                duration_ns=operator.stats.duration_ns,
+            )
+        )
+        stack.extend(reversed(operator.children))
+    return nodes
+
+
+def plan_to_api(root: Operator) -> PlanModel:
+    return PlanModel(nodes=_operator_nodes(root), root_id=root.operator_id)
+
+
+def _json_row(row: Sequence[Any]) -> list[Any]:
+    """Rows are already JSON-safe: every column type maps to a JSON scalar."""
+    return list(row)
+
+
+def query_result_to_api(result: QueryResult) -> QueryResultModel:
+    stats = result.stats
+    return QueryResultModel(
+        statement_kind=result.statement_kind,
+        returns_rows=result.returns_rows,
+        message=result.message,
+        columns=[result_column_to_api(column) for column in result.columns],
+        rows=[_json_row(row) for row in result.rows],
+        record_ids=[record_id_to_api(rid) for rid in result.record_ids],
+        plan=plan_to_api(result.plan) if result.plan is not None else None,
+        rows_returned=stats.rows_returned,
+        rows_affected=stats.rows_affected,
+        rows_scanned=stats.rows_scanned,
+        rows_rejected=stats.rows_rejected,
+        pages_read=stats.pages_read,
+        pages_written=stats.pages_written,
+        duration_ns=stats.duration_ns,
+        truncated=stats.truncated,
+        cancelled=result.cancelled,
+    )
+
+
+def execution_summary_to_api(execution: Execution) -> ExecutionSummary:
+    return ExecutionSummary(
+        execution_id=execution.execution_id,
+        database_id=execution.database_id,
+        statement_kind=execution.statement_kind,
+        state=execution.state.value,  # type: ignore[arg-type]
+        steps_taken=execution.controller.steps_taken,
+        age_seconds=round(execution.age_seconds, 3),
+        idle_seconds=round(execution.idle_seconds, 3),
+    )
+
+
+def execution_detail_to_api(execution: Execution) -> ExecutionDetail:
+    """Snapshot a stepped execution.
+
+    Reads the controller's state once and the plan once, so the response cannot
+    describe a pause reason from one instant and a plan from another.
+    """
+    reason = execution.pause_reason
+    result = execution.result
+    plan = result.plan if result is not None else None
+
+    return ExecutionDetail(
+        execution_id=execution.execution_id,
+        database_id=execution.database_id,
+        sql=execution.sql,
+        statement_kind=execution.statement_kind,
+        state=execution.state.value,  # type: ignore[arg-type]
+        steps_taken=execution.controller.steps_taken,
+        pause_kind=reason.kind.value if reason else None,
+        pause_operator_id=reason.operator_id if reason else None,
+        pause_detail=reason.detail if reason else "",
+        plan=plan_to_api(plan) if plan is not None else None,
+        current_row=None,
+        rows_so_far=len(result.rows) if result is not None else 0,
+        result=query_result_to_api(result) if result is not None else None,
+        error=execution.error,
+        age_seconds=round(execution.age_seconds, 3),
+        idle_seconds=round(execution.idle_seconds, 3),
     )

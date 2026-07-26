@@ -18,7 +18,8 @@ from engine import __version__ as engine_version
 from engine.errors import ChenDBError
 from engine.server.config import ServerConfig, load_config
 from engine.server.deps import http_status_for
-from engine.server.routers import databases, events, pages, sql
+from engine.server.executions import ExecutionStore
+from engine.server.routers import databases, events, pages, query, sql
 from engine.server.schemas.common import ApiError, HealthResponse
 from engine.server.workspace import Workspace
 
@@ -29,7 +30,7 @@ API_PREFIX = f"/api/{API_VERSION}"
 
 #: Highest completed milestone. The frontend reads this from /health and hides
 #: panels for anything not built yet, rather than showing dead controls.
-MILESTONE = 2
+MILESTONE = 3
 
 #: Advertised capabilities. Each flips to true in the milestone that ships it.
 FEATURES: dict[str, bool] = {
@@ -38,7 +39,7 @@ FEATURES: dict[str, bool] = {
     "diagnostics": True,
     "event_stream": True,
     "sql": True,           # Milestone 2 — parsing only, no execution
-    "execution": False,    # Milestone 3
+    "execution": True,     # Milestone 3 — volcano operators + step mode
     "catalog": False,      # Milestone 4
     "indexes": False,      # Milestone 5
     "planner": False,      # Milestone 6
@@ -66,9 +67,14 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.config = resolved
         app.state.workspace = Workspace(resolved)
+        app.state.executions = ExecutionStore(resolved)
         try:
             yield
         finally:
+            # Stepped executions hold engine threads and database locks. Cancel
+            # them before closing databases, or close_all() would block on a
+            # lock a paused query still owns.
+            app.state.executions.shutdown()
             # Closing each handle fsyncs it. Without this, a server stopped
             # with Ctrl-C could leave recent writes only in the OS page cache.
             app.state.workspace.close_all()
@@ -126,6 +132,8 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(pages.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(sql.router, prefix=API_PREFIX)
+    app.include_router(query.router, prefix=API_PREFIX)
+    app.include_router(query.executions_router, prefix=API_PREFIX)
     return app
 
 

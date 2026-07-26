@@ -10,9 +10,9 @@ file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M2     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M3     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  [ Storage ]  [ SQL ]                                                    │
+│  [ Storage ]  [ SQL ]  [ Execution ]                                     │
 ├──────────────────────┬───────────────────────┬───────────────────────────┤
 │  SCHEMA              │  DISK MAP             │  PAGE INSPECTOR           │
 │  users · 16 rows     │  0  META    meta      │  HEAP page 3  checksum ok │
@@ -31,7 +31,7 @@ file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Milestones 1–2 of 10 are complete.** Nothing is stubbed ahead of time: a
+**Milestones 1–3 of 10 are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -50,7 +50,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 0.2.0 — Milestone 2 (storage engine + SQL parser)
+ChenDB 0.3.0 — Milestone 3 (storage + parser + execution)
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
 created table users with 3 column(s)
 chendb> .insert 1 | ada@example.com | 36
@@ -105,18 +105,39 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Records** | INTEGER / FLOAT / BOOLEAN / TEXT · null bitmap · schema-driven encode and decode |
 | **Heap** | linked page chain · O(1) append · lazy scan · tombstone deletes |
 | **Persistence** | survives process death; `SIGKILL` tests prove it |
-| **Diagnostics** | 5 trace levels · 16 event types · bounded retention · provably result-neutral |
+| **Diagnostics** | 5 trace levels · 21 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
+| **Execution** | volcano operators (scan / filter / project) · three-valued logic · step-through debugger with real cancellation |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
 
-Not yet built: query **execution**, a persistent catalog, indexes, a buffer
-pool, transactions, WAL, MVCC. Those are Milestones 3 through 10. Parsing is not
-executing, so there is a `POST /parse` and deliberately no `POST /query`.
+Not yet built: a persistent catalog, indexes, a buffer pool, transactions, WAL,
+MVCC. Those are Milestones 4 through 10.
 
 ---
 
-## Two bits worth looking at
+## Three bits worth looking at
+
+**You can watch a row move through the plan.** Step a query and the checkpoints
+read:
+
+```
+operator_next  project_1   Project.next()        ← next() travels DOWN
+operator_next  filter_1    Filter.next()
+operator_next  scan_1      SeqScan.next()
+page_read                  page 3 at offset 768  ← storage does its work
+row_emitted    scan_1      (1, 'ada@x.com', 36)  ← rows travel UP
+row_emitted    filter_1    (1, 'ada@x.com', 36)
+row_emitted    project_1   ('ada@x.com')
+...
+row_emitted    scan_1      (2, 'alan@x.com', NULL)
+operator_next  scan_1      SeqScan.next()        ← no filter emit: dropped
+```
+
+Those last two lines are the interesting ones. `NULL >= 18` is *unknown*, and
+unknown is not TRUE, so the filter silently drops the row. Required SQL
+behaviour, made visible.
+
 
 **The AST knows where it came from.** Click any node and the editor highlights
 the exact SQL that produced it:
@@ -188,8 +209,8 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 470 tests
-npm --prefix visualizer test            # 53 tests
+.venv/bin/python -m pytest              # 605 tests
+npm --prefix visualizer test            # 62 tests
 ```
 
 Two are worth singling out.
@@ -216,6 +237,7 @@ change the system observed.
 | `python benchmarks/trace_overhead.py` | measure diagnostics overhead |
 | `python examples/milestone1_storage.py` | narrated walkthrough of the storage engine |
 | `python examples/milestone2_parser.py` | narrated walkthrough of the SQL front end |
+| `python examples/milestone3_execution.py` | narrated walkthrough of the executor |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
 
@@ -231,6 +253,7 @@ change the system observed.
 | [API contract](docs/api-contract.md) | HTTP, WebSocket, security boundaries |
 | [Milestone 1](docs/milestone-01-storage-engine.md) | storage: what shipped, measured, and what it cannot do |
 | [Milestone 2](docs/milestone-02-sql-parser.md) | the SQL front end, the grammar, and a bug worth recording |
+| [Milestone 3](docs/milestone-03-execution-engine.md) | the volcano model, three-valued logic, and step mode |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

@@ -47,13 +47,13 @@ def seeded(client: TestClient) -> TestClient:
 
 def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 2
+    assert body["milestone"] == 3
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
     assert body["features"]["page_inspector"] is True
     assert body["features"]["sql"] is True
-    assert body["features"]["execution"] is False
+    assert body["features"]["execution"] is True
     assert body["features"]["mvcc"] is False
 
 
@@ -69,7 +69,7 @@ def test_openapi_schema_is_served(client: TestClient):
 
 
 def test_endpoints_for_unbuilt_milestones_are_absent_not_stubbed(client: TestClient):
-    for path in ("/query", "/executions/1", "/buffer-pool", "/locks", "/wal", "/indexes/x"):
+    for path in ("/buffer-pool", "/locks", "/wal", "/indexes/x", "/catalog"):
         assert client.get(f"{API_PREFIX}{path}").status_code == 404
 
 

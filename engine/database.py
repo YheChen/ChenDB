@@ -350,6 +350,15 @@ class Database:
         return self._pager.page_count
 
     @property
+    def heap(self) -> HeapFile | None:
+        """The table's heap, or ``None`` before a table exists.
+
+        Exposed for the executor's sequential scan. Milestone 4's catalog
+        replaces this with a per-table lookup.
+        """
+        return self._heap
+
+    @property
     def pager(self) -> Pager:
         """Escape hatch for tools and tests that need page-level access."""
         return self._pager

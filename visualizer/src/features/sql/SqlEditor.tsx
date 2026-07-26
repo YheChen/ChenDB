@@ -77,6 +77,8 @@ export function SqlEditor({
   theme,
   highlight,
   onCursorOffset,
+  runLabel = "Parse ⌘↵",
+  title = "SQL",
 }: {
   sql: string;
   onChange: (next: string) => void;
@@ -87,6 +89,9 @@ export function SqlEditor({
   /** Character range to highlight, from the AST or token selection. */
   highlight: { start: number; end: number } | null;
   onCursorOffset: (offset: number) => void;
+  /** The primary action's label. "Parse ⌘↵" in the SQL workspace, "Run ⌘↵" in Execution. */
+  runLabel?: string;
+  title?: string;
 }) {
   const editorRef = useRef<monacoNs.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monacoNs | null>(null);
@@ -190,7 +195,7 @@ export function SqlEditor({
 
   return (
     <Panel
-      title="SQL"
+      title={title}
       subtitle={status()}
       className="h-full"
       bodyClassName="flex flex-col"
@@ -213,7 +218,7 @@ export function SqlEditor({
             ))}
           </select>
           <Button variant="primary" onClick={onParse} disabled={isPending}>
-            Parse ⌘↵
+            {runLabel}
           </Button>
         </>
       }
