@@ -229,3 +229,89 @@ class HeapScanEvent(DiagnosticEvent):
     pages_scanned: int = 0
     rows_emitted: int = 0
     duration_ns: int = 0
+
+
+# --------------------------------------------------------------------------
+# Parser (Milestone 2)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class TokenizedEvent(DiagnosticEvent):
+    """A SQL string was scanned into tokens."""
+
+    category: ClassVar[EventCategory] = EventCategory.PARSER
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    source_length: int
+    token_count: int
+    duration_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class TokenEvent(DiagnosticEvent):
+    """One token was produced.
+
+    ``VERBOSE`` because a large script produces thousands, and the token stream
+    is already available in full from the parse response.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.PARSER
+    level: ClassVar[TraceLevel] = TraceLevel.VERBOSE
+
+    index: int
+    token_type: str
+    lexeme: str
+    start: int
+    end: int
+    keyword: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AstNodeCreatedEvent(DiagnosticEvent):
+    """A parse rule completed and built a node.
+
+    Emitted bottom-up, so the order shows how recursive descent assembles the
+    tree: leaves before the nodes that contain them.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.PARSER
+    level: ClassVar[TraceLevel] = TraceLevel.VERBOSE
+
+    node_id: int
+    node_type: str
+    start: int
+    end: int
+    child_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedEvent(DiagnosticEvent):
+    """A script finished parsing."""
+
+    category: ClassVar[EventCategory] = EventCategory.PARSER
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    statement_count: int
+    node_count: int
+    duration_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class ParseErrorEvent(DiagnosticEvent):
+    """Parsing failed, with the exact position.
+
+    ``OPERATOR`` rather than ``VERBOSE``: a failed parse is a headline event,
+    and the editor needs the position to place a marker.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.PARSER
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    message: str
+    start: int
+    end: int
+    line: int
+    column: int
+    expected: str = ""
+    found: str = ""
