@@ -53,6 +53,22 @@ class ServerConfig:
     max_page_bytes_returned: int = 65_536
     """Guard against a pathological page size flooding a JSON response."""
 
+    max_rows_per_query: int = 10_000
+    """Ceiling on rows one query returns, so a response cannot be unbounded."""
+
+    max_executions: int = 32
+    """Stepped executions retained at once. Each holds a thread and, while
+    running, its database's lock — so this is a real resource, not a cache."""
+
+    execution_step_timeout_seconds: float = 10.0
+    """How long an HTTP request waits for a stepped query to reach its next
+    checkpoint. Mandatory: without it an engine-side bug would hang a worker."""
+
+    execution_idle_timeout_seconds: float = 300.0
+    """A paused execution untouched for this long is cancelled. A client that
+    starts a stepped query and vanishes would otherwise hold the database lock
+    forever."""
+
     cors_origins: tuple[str, ...] = DEFAULT_CORS_ORIGINS
 
     def __post_init__(self) -> None:
@@ -62,6 +78,10 @@ class ServerConfig:
             raise ValueError("CHENDB_WS_QUEUE_SIZE must be at least 1")
         if self.max_open_databases < 1:
             raise ValueError("CHENDB_MAX_OPEN_DATABASES must be at least 1")
+        if self.max_executions < 1:
+            raise ValueError("CHENDB_MAX_EXECUTIONS must be at least 1")
+        if self.execution_step_timeout_seconds <= 0:
+            raise ValueError("CHENDB_STEP_TIMEOUT must be positive")
 
     @property
     def workspace_path(self) -> Path:
@@ -84,6 +104,8 @@ def load_config() -> ServerConfig:
         default_trace_level=TraceLevel[level_name],
         trace_capacity=_env_int("CHENDB_TRACE_CAPACITY", 20_000),
         max_open_databases=_env_int("CHENDB_MAX_OPEN_DATABASES", 16),
+        max_rows_per_query=_env_int("CHENDB_MAX_ROWS_PER_QUERY", 10_000),
+        max_executions=_env_int("CHENDB_MAX_EXECUTIONS", 32),
         websocket_queue_size=_env_int("CHENDB_WS_QUEUE_SIZE", 512),
         cors_origins=(
             tuple(origin.strip() for origin in origins.split(",") if origin.strip())

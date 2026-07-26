@@ -184,3 +184,36 @@ class UnsupportedSqlError(ParseError):
     "ChenDB cannot do this yet" are different messages, and only the second one
     should point at a milestone.
     """
+
+
+# --------------------------------------------------------------------------
+# Binding and execution
+# --------------------------------------------------------------------------
+
+
+class BindingError(SqlError):
+    """A statement is syntactically valid but does not match the schema.
+
+    An unknown table or column, a projection of a column that does not exist, an
+    ``INSERT`` naming a column twice.  Carries a source position, so the editor
+    can point at the offending identifier rather than the whole statement.
+    """
+
+
+class ExecutionError(ChenDBError):
+    """A query failed while running."""
+
+
+class EvaluationError(ExecutionError):
+    """An expression could not be evaluated.
+
+    A type mismatch the binder could not catch statically, or division by zero.
+    """
+
+
+class QueryCancelledError(ExecutionError):
+    """Execution was cancelled by its controller.
+
+    Raised inside the engine thread at the next checkpoint so operators unwind
+    through their normal ``close()`` path rather than being abandoned.
+    """

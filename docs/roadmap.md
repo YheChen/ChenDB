@@ -8,8 +8,8 @@ hidden in the UI until the engine behind it exists.
 |---|--------|------------|--------|
 | 1 | Pages, slotted heap, records, persistence | Disk map, page inspector, event timeline | **done** |
 | 2 | Tokenizer, recursive-descent parser, AST | Monaco editor, token stream, AST tree | **done** |
-| 3 | Volcano operators: scan, filter, project | Operator tree, step-through, row inspector | next |
-| 4 | Persistent catalog, multiple tables | Schema browser, storage statistics | |
+| 3 | Volcano operators: scan, filter, project | Operator tree, step-through, row inspector | **done** |
+| 4 | Persistent catalog, multiple tables | Schema browser, storage statistics | next |
 | 5 | Disk-backed B+ tree | Real tree view, search/split/range animation | |
 | 6 | Binder, logical + physical plans, cost model | Plan comparison, rejected alternatives | |
 | 7 | Buffer pool, pinning, LRU eviction | Frame grid, hit/miss animation, workloads | |

@@ -28,6 +28,7 @@ import { TopBar } from "@/features/layout/TopBar";
 import { PageInspector } from "@/features/pages/PageInspector";
 import { PageListPanel } from "@/features/pages/PageListPanel";
 import { RecordsPanel } from "@/features/records/RecordsPanel";
+import { ExecutionWorkspace } from "@/features/execution/ExecutionWorkspace";
 import { SqlWorkspace } from "@/features/sql/SqlWorkspace";
 import { SchemaPanel } from "@/features/table/SchemaPanel";
 import { useDatabase, useDatabases, useHealth, useTable } from "@/hooks/useEngine";
@@ -38,11 +39,12 @@ import type { TraceLevelName } from "@/lib/api";
 const DATABASE_KEY = "chendb.database";
 const WORKSPACE_KEY = "chendb.workspace";
 
-type WorkspaceId = "storage" | "sql";
+type WorkspaceId = "storage" | "sql" | "execution";
 
 const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "storage", label: "Storage", feature: "storage" },
   { id: "sql", label: "SQL", feature: "sql" },
+  { id: "execution", label: "Execution", feature: "execution" },
 ];
 
 export function ExplorerPage() {
@@ -122,7 +124,13 @@ export function ExplorerPage() {
         label="Resize the workspace against the event timeline"
         className="min-h-0 flex-1"
         first={
-          workspace === "sql" && databaseId ? (
+          workspace === "execution" && databaseId ? (
+            <ExecutionWorkspace
+              databaseId={databaseId}
+              theme={theme}
+              onSelectPage={setSelectedPageId}
+            />
+          ) : workspace === "sql" && databaseId ? (
             <SqlWorkspace databaseId={databaseId} theme={theme} />
           ) : (
             <StorageWorkspace

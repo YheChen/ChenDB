@@ -36,19 +36,22 @@ def nodes_by_id(body: dict) -> dict[int, dict]:
 # -- feature advertisement -------------------------------------------------
 
 
-def test_health_reports_sql_parsing_but_not_execution(client: TestClient):
+def test_health_reports_sql_parsing(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 2
+    assert body["milestone"] == 3
     assert body["features"]["sql"] is True
-    assert body["features"]["execution"] is False
 
 
-def test_there_is_still_no_query_endpoint(client: TestClient):
-    # Parsing is not executing. A /query that returned an AST would be worse
-    # than no /query at all.
+def test_parse_is_separate_from_query(client: TestClient):
+    """Parsing and executing stayed distinct endpoints when M3 added /query.
+
+    /parse returns 200 with partial results for invalid SQL; /query returns 422.
+    Collapsing them would lose the editor's ability to show a half-typed query.
+    """
+    bad = {"sql": "SELECT * FROM"}
+    assert client.post(PARSE, json=bad).status_code == 200
     assert (
-        client.post(f"{API_PREFIX}/databases/demo/query", json={"sql": "SELECT 1"}).status_code
-        == 404
+        client.post(f"{API_PREFIX}/databases/demo/query", json=bad).status_code == 422
     )
 
 

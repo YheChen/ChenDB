@@ -107,6 +107,48 @@ export interface EventsResponse {
   page: PageInfo;
 }
 
+/** A stepped execution's current state, including where it is paused. */
+export interface ExecutionDetail {
+  execution_id: string;
+  database_id: string;
+  sql: string;
+  statement_kind: string;
+  state: "pending" | "running" | "paused" | "finished" | "cancelled" | "failed";
+  steps_taken: number;
+  /** operator_open, operator_next, row_emitted, operator_close or page_read */
+  pause_kind: null | string;
+  /** Which operator is at the checkpoint */
+  pause_operator_id: null | string;
+  /** The row or page involved, rendered for display */
+  pause_detail: string;
+  /** Available once the operators have been built */
+  plan: PlanModel | null;
+  /** The row at the checkpoint, when paused on one */
+  current_row: null | unknown[];
+  /** Rows emitted from the root up to this point */
+  rows_so_far: number;
+  /** Null until the execution has finished */
+  result: QueryResultModel | null;
+  error: string;
+  age_seconds: number;
+  idle_seconds: number;
+}
+
+export interface ExecutionListResponse {
+  executions: ExecutionSummary[];
+  max_executions: number;
+}
+
+export interface ExecutionSummary {
+  execution_id: string;
+  database_id: string;
+  statement_kind: string;
+  state: "pending" | "running" | "paused" | "finished" | "cancelled" | "failed";
+  steps_taken: number;
+  age_seconds: number;
+  idle_seconds: number;
+}
+
 export interface FieldLayoutModel {
   index: number;
   name: string;
@@ -149,6 +191,28 @@ export interface InsertRecordsResponse {
   inserted: number;
   record_ids: RecordIdModel[];
   pages_allocated: number;
+  duration_ns: number;
+}
+
+/** One node of the physical plan, with what it actually did. */
+export interface OperatorNodeModel {
+  operator_id: string;
+  /** SeqScan, Filter or Project */
+  operator_type: string;
+  /** Predicate, table or projection list */
+  detail: string;
+  /** operator_ids of inputs, left to right */
+  children: string[];
+  output_columns: ResultColumnModel[];
+  /** Times this operator was asked for a row */
+  next_calls: number;
+  /** Rows it consumed from its children */
+  input_rows: number;
+  /** Rows it produced */
+  output_rows: number;
+  /** Filter only: rows whose predicate was not TRUE; 0 elsewhere */
+  rows_rejected: number;
+  /** Time spent inside this operator's own work */
   duration_ns: number;
 }
 
@@ -245,6 +309,46 @@ export interface ParseResponse {
   duration_ns: number;
 }
 
+export interface PlanModel {
+  nodes: OperatorNodeModel[];
+  root_id: string;
+}
+
+export interface QueryRequest {
+  /** One or more statements, separated by semicolons */
+  sql: string;
+  /** Override the row ceiling */
+  max_rows?: null | number;
+}
+
+/** The outcome of one statement. */
+export interface QueryResultModel {
+  /** SelectStatement, InsertStatement or CreateTableStatement */
+  statement_kind: string;
+  returns_rows: boolean;
+  /** Summary for statements that return no rows */
+  message: string;
+  columns: ResultColumnModel[];
+  rows: unknown[][];
+  /** Where each row lives; empty when the projection computes values */
+  record_ids: RecordIdModel[];
+  /** Null for statements with no operator tree */
+  plan: PlanModel | null;
+  rows_returned: number;
+  /** Rows written, for INSERT */
+  rows_affected: number;
+  /** Rows the scan produced before filtering */
+  rows_scanned: number;
+  /** Rows a filter dropped */
+  rows_rejected: number;
+  pages_read: number;
+  pages_written: number;
+  duration_ns: number;
+  /** True when the row ceiling cut the result short */
+  truncated: boolean;
+  cancelled: boolean;
+}
+
 /** PostgreSQL calls this a ctid: the physical address of a row. */
 export interface RecordIdModel {
   page_id: number;
@@ -273,6 +377,18 @@ export interface RecordsResponse {
   /** Page reads this request caused */
   pages_read: number;
   duration_ns: number;
+}
+
+export interface ResultColumnModel {
+  name: string;
+  /** SQL type, or null when an expression's type is not statically known */
+  type: null | string;
+}
+
+export interface ResumeRequest {
+  mode?: "step" | "continue" | "until_row" | "until_page_read" | "until_operator";
+  /** Required by until_operator; ignored otherwise */
+  operator_id?: null | string;
 }
 
 export interface RowModel {
@@ -326,6 +442,11 @@ export interface StatementModel {
   start: number;
   end: number;
   text: string;
+}
+
+export interface StepRequest {
+  /** Exactly one statement. Stepping a script is refused. */
+  sql: string;
 }
 
 export interface TableResponse {

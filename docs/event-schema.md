@@ -93,7 +93,7 @@ lock, which is what lets an HTTP response describe one consistent instant.
 
 ## Implemented events
 
-Sixteen types across four categories. These are the only events that exist
+Twenty-one types across five categories. These are the only events that exist
 today.
 
 ### `lifecycle`
@@ -142,8 +142,25 @@ recursive descent building the tree bottom-up: leaves first, root last.
 `ParseErrorEvent` is `OPERATOR` rather than `VERBOSE` because a failed parse is a
 headline event and the editor needs its position to place a marker.
 
-`RecordReadEvent` is `VERBOSE` because a scan would otherwise emit one event
-per row — exactly the flood trace levels exist to prevent.
+### `operator` — added in Milestone 3
+
+| Event | Level | Fields |
+|---|---|---|
+| `OperatorEvent` | OPERATOR | `operator_id`, `operator_type`, `action`, `input_rows`, `output_rows`, `row` |
+| `ExpressionEvalEvent` | VERBOSE | `operator_id`, `node_id`, `expression`, `result` |
+| `QueryExecutedEvent` | SUMMARY | `statement_kind`, `rows_returned`, `rows_affected`, `duration_ns`, `cancelled` |
+| `ExecutionStateEvent` | SUMMARY | `execution_id`, `state`, `reason` |
+
+`OperatorEvent.action` is `opened`, `next`, `row_emitted`, `exhausted` or
+`closed`. `next` is a call *into* an operator and travels down the tree;
+`row_emitted` is a row coming *out* and travels up. Both are needed to show a row
+moving through the plan.
+
+`ExpressionEvalEvent` is `VERBOSE` because a filter evaluates its predicate once
+per row.
+
+`RecordReadEvent` is `VERBOSE` for the same reason: a scan would otherwise emit
+one event per row — exactly the flood trace levels exist to prevent.
 
 ---
 
@@ -152,15 +169,6 @@ per row — exactly the flood trace levels exist to prevent.
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 3 — `operator`
-
-```
-OperatorEvent         operator_id, operator_type,
-                      action: opened|next|row_emitted|closed,
-                      input_rows, output_rows
-ExpressionEvalEvent   operator_id, expression, inputs, result   VERBOSE
-```
 
 ### Milestone 4 — `catalog`
 

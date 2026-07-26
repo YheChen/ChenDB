@@ -182,6 +182,25 @@ export function useParseSql(databaseId: string) {
   });
 }
 
+/**
+ * Run SQL. A mutation, not a query: executing is an action with side effects
+ * (INSERT writes pages), so it must never be re-fetched automatically.
+ */
+export function useRunQuery(databaseId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sql, maxRows }: { sql: string; maxRows?: number }) =>
+      api.runQuery(databaseId, sql, maxRows),
+    onSuccess: (results) => {
+      // Only invalidate storage views when something was actually written.
+      // A read-only SELECT changes nothing and should not cause a refetch storm.
+      if (results.some((result) => result.rows_affected > 0)) {
+        invalidateDatabase(client, databaseId);
+      }
+    },
+  });
+}
+
 export function useSetTraceLevel(databaseId: string) {
   const client = useQueryClient();
   return useMutation({

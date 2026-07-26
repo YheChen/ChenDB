@@ -315,3 +315,76 @@ class ParseErrorEvent(DiagnosticEvent):
     column: int
     expected: str = ""
     found: str = ""
+
+
+# --------------------------------------------------------------------------
+# Execution (Milestone 3)
+# --------------------------------------------------------------------------
+
+#: What an operator just did. ``next`` is a call *into* the operator;
+#: ``row_emitted`` is a row coming *out* of it. Both are needed to show a row
+#: travelling up the tree.
+OperatorAction = Literal["opened", "next", "row_emitted", "exhausted", "closed"]
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorEvent(DiagnosticEvent):
+    """One step in the volcano iterator protocol."""
+
+    category: ClassVar[EventCategory] = EventCategory.OPERATOR
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    operator_id: str
+    operator_type: str
+    action: OperatorAction
+    input_rows: int
+    output_rows: int
+    row: str = ""
+    """The row involved, rendered for display. Empty unless ``row_emitted``."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExpressionEvalEvent(DiagnosticEvent):
+    """One expression evaluated against one row.
+
+    ``VERBOSE`` because a filter over a large table evaluates its predicate once
+    per row, and the whole point of trace levels is to keep that off by default.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.OPERATOR
+    level: ClassVar[TraceLevel] = TraceLevel.VERBOSE
+
+    operator_id: str
+    node_id: int
+    expression: str
+    result: str
+
+
+@dataclass(frozen=True, slots=True)
+class QueryExecutedEvent(DiagnosticEvent):
+    """A statement finished."""
+
+    category: ClassVar[EventCategory] = EventCategory.OPERATOR
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    statement_kind: str
+    rows_returned: int
+    rows_affected: int
+    duration_ns: int
+    cancelled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionStateEvent(DiagnosticEvent):
+    """A stepped execution changed state.
+
+    Reported so the visualizer's controls reflect what the engine is actually
+    doing rather than what the client last asked for.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.OPERATOR
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    execution_id: str
+    state: str
+    reason: str = ""

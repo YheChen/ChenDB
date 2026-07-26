@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Path, Request, status
 
 from engine.errors import ChenDBError, SchemaError
 from engine.server.config import ServerConfig
+from engine.server.executions import ExecutionNotFound
 from engine.server.workspace import (
     DatabaseAlreadyExists,
     DatabaseNotFound,
@@ -31,6 +32,7 @@ __all__ = [
 _STATUS_MAP: dict[type[Exception], int] = {
     InvalidDatabaseId: status.HTTP_400_BAD_REQUEST,
     DatabaseNotFound: status.HTTP_404_NOT_FOUND,
+    ExecutionNotFound: status.HTTP_404_NOT_FOUND,
     DatabaseAlreadyExists: status.HTTP_409_CONFLICT,
     SchemaError: status.HTTP_409_CONFLICT,
 }

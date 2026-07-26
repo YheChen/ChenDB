@@ -447,6 +447,216 @@
         "title": "EventsResponse",
         "type": "object"
       },
+      "ExecutionDetail": {
+        "description": "A stepped execution's current state, including where it is paused.",
+        "properties": {
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "number"
+          },
+          "current_row": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The row at the checkpoint, when paused on one",
+            "title": "Current Row"
+          },
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "execution_id": {
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "idle_seconds": {
+            "title": "Idle Seconds",
+            "type": "number"
+          },
+          "pause_detail": {
+            "description": "The row or page involved, rendered for display",
+            "title": "Pause Detail",
+            "type": "string"
+          },
+          "pause_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "operator_open, operator_next, row_emitted, operator_close or page_read",
+            "title": "Pause Kind"
+          },
+          "pause_operator_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which operator is at the checkpoint",
+            "title": "Pause Operator Id"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Available once the operators have been built"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryResultModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null until the execution has finished"
+          },
+          "rows_so_far": {
+            "description": "Rows emitted from the root up to this point",
+            "title": "Rows So Far",
+            "type": "integer"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "running",
+              "paused",
+              "finished",
+              "cancelled",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "statement_kind": {
+            "title": "Statement Kind",
+            "type": "string"
+          },
+          "steps_taken": {
+            "title": "Steps Taken",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "execution_id",
+          "database_id",
+          "sql",
+          "statement_kind",
+          "state",
+          "steps_taken",
+          "pause_kind",
+          "pause_operator_id",
+          "pause_detail",
+          "plan",
+          "current_row",
+          "rows_so_far",
+          "result",
+          "error",
+          "age_seconds",
+          "idle_seconds"
+        ],
+        "title": "ExecutionDetail",
+        "type": "object"
+      },
+      "ExecutionListResponse": {
+        "properties": {
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionSummary"
+            },
+            "title": "Executions",
+            "type": "array"
+          },
+          "max_executions": {
+            "title": "Max Executions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executions",
+          "max_executions"
+        ],
+        "title": "ExecutionListResponse",
+        "type": "object"
+      },
+      "ExecutionSummary": {
+        "properties": {
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "number"
+          },
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "execution_id": {
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "idle_seconds": {
+            "title": "Idle Seconds",
+            "type": "number"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "running",
+              "paused",
+              "finished",
+              "cancelled",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "statement_kind": {
+            "title": "Statement Kind",
+            "type": "string"
+          },
+          "steps_taken": {
+            "title": "Steps Taken",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "execution_id",
+          "database_id",
+          "statement_kind",
+          "state",
+          "steps_taken",
+          "age_seconds",
+          "idle_seconds"
+        ],
+        "title": "ExecutionSummary",
+        "type": "object"
+      },
       "FieldLayoutModel": {
         "properties": {
           "index": {
@@ -643,6 +853,79 @@
           "duration_ns"
         ],
         "title": "InsertRecordsResponse",
+        "type": "object"
+      },
+      "OperatorNodeModel": {
+        "description": "One node of the physical plan, with what it actually did.",
+        "properties": {
+          "children": {
+            "description": "operator_ids of inputs, left to right",
+            "items": {
+              "type": "string"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "detail": {
+            "description": "Predicate, table or projection list",
+            "title": "Detail",
+            "type": "string"
+          },
+          "duration_ns": {
+            "description": "Time spent inside this operator's own work",
+            "title": "Duration Ns",
+            "type": "integer"
+          },
+          "input_rows": {
+            "description": "Rows it consumed from its children",
+            "title": "Input Rows",
+            "type": "integer"
+          },
+          "next_calls": {
+            "description": "Times this operator was asked for a row",
+            "title": "Next Calls",
+            "type": "integer"
+          },
+          "operator_id": {
+            "title": "Operator Id",
+            "type": "string"
+          },
+          "operator_type": {
+            "description": "SeqScan, Filter or Project",
+            "title": "Operator Type",
+            "type": "string"
+          },
+          "output_columns": {
+            "items": {
+              "$ref": "#/components/schemas/ResultColumnModel"
+            },
+            "title": "Output Columns",
+            "type": "array"
+          },
+          "output_rows": {
+            "description": "Rows it produced",
+            "title": "Output Rows",
+            "type": "integer"
+          },
+          "rows_rejected": {
+            "description": "Filter only: rows whose predicate was not TRUE; 0 elsewhere",
+            "title": "Rows Rejected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operator_id",
+          "operator_type",
+          "detail",
+          "children",
+          "output_columns",
+          "next_calls",
+          "input_rows",
+          "output_rows",
+          "rows_rejected",
+          "duration_ns"
+        ],
+        "title": "OperatorNodeModel",
         "type": "object"
       },
       "PageDetailModel": {
@@ -1023,6 +1306,170 @@
         "title": "ParseResponse",
         "type": "object"
       },
+      "PlanModel": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorNodeModel"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "root_id": {
+            "title": "Root Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodes",
+          "root_id"
+        ],
+        "title": "PlanModel",
+        "type": "object"
+      },
+      "QueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "max_rows": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override the row ceiling",
+            "title": "Max Rows"
+          },
+          "sql": {
+            "description": "One or more statements, separated by semicolons",
+            "maxLength": 100000,
+            "title": "Sql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "title": "QueryRequest",
+        "type": "object"
+      },
+      "QueryResultModel": {
+        "description": "The outcome of one statement.",
+        "properties": {
+          "cancelled": {
+            "title": "Cancelled",
+            "type": "boolean"
+          },
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ResultColumnModel"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "duration_ns": {
+            "title": "Duration Ns",
+            "type": "integer"
+          },
+          "message": {
+            "description": "Summary for statements that return no rows",
+            "title": "Message",
+            "type": "string"
+          },
+          "pages_read": {
+            "title": "Pages Read",
+            "type": "integer"
+          },
+          "pages_written": {
+            "title": "Pages Written",
+            "type": "integer"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanModel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null for statements with no operator tree"
+          },
+          "record_ids": {
+            "description": "Where each row lives; empty when the projection computes values",
+            "items": {
+              "$ref": "#/components/schemas/RecordIdModel"
+            },
+            "title": "Record Ids",
+            "type": "array"
+          },
+          "returns_rows": {
+            "title": "Returns Rows",
+            "type": "boolean"
+          },
+          "rows": {
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_affected": {
+            "description": "Rows written, for INSERT",
+            "title": "Rows Affected",
+            "type": "integer"
+          },
+          "rows_rejected": {
+            "description": "Rows a filter dropped",
+            "title": "Rows Rejected",
+            "type": "integer"
+          },
+          "rows_returned": {
+            "title": "Rows Returned",
+            "type": "integer"
+          },
+          "rows_scanned": {
+            "description": "Rows the scan produced before filtering",
+            "title": "Rows Scanned",
+            "type": "integer"
+          },
+          "statement_kind": {
+            "description": "SelectStatement, InsertStatement or CreateTableStatement",
+            "title": "Statement Kind",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "True when the row ceiling cut the result short",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "statement_kind",
+          "returns_rows",
+          "message",
+          "columns",
+          "rows",
+          "record_ids",
+          "plan",
+          "rows_returned",
+          "rows_affected",
+          "rows_scanned",
+          "rows_rejected",
+          "pages_read",
+          "pages_written",
+          "duration_ns",
+          "truncated",
+          "cancelled"
+        ],
+        "title": "QueryResultModel",
+        "type": "object"
+      },
       "RecordIdModel": {
         "description": "PostgreSQL calls this a ctid: the physical address of a row.",
         "properties": {
@@ -1147,6 +1594,63 @@
           "duration_ns"
         ],
         "title": "RecordsResponse",
+        "type": "object"
+      },
+      "ResultColumnModel": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SQL type, or null when an expression's type is not statically known",
+            "title": "Type"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "ResultColumnModel",
+        "type": "object"
+      },
+      "ResumeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "default": "step",
+            "enum": [
+              "step",
+              "continue",
+              "until_row",
+              "until_page_read",
+              "until_operator"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "operator_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required by until_operator; ignored otherwise",
+            "title": "Operator Id"
+          }
+        },
+        "title": "ResumeRequest",
         "type": "object"
       },
       "RowModel": {
@@ -1365,6 +1869,22 @@
           "text"
         ],
         "title": "StatementModel",
+        "type": "object"
+      },
+      "StepRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sql": {
+            "description": "Exactly one statement. Stepping a script is refused.",
+            "maxLength": 100000,
+            "title": "Sql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sql"
+        ],
+        "title": "StepRequest",
         "type": "object"
       },
       "TableResponse": {
@@ -1648,7 +2168,7 @@
   "info": {
     "description": "HTTP and WebSocket access to a running ChenDB engine, for the Visual Database\nExplorer.\n\nEverything served here is real engine state read from a real database file.\nEndpoints for features that do not exist yet are absent rather than stubbed:\ncheck `features` on `/health` to see what this build supports.",
     "title": "ChenDB Engine API",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2083,6 +2603,121 @@
         ]
       }
     },
+    "/api/v1/databases/{database_id}/query": {
+      "post": {
+        "description": "Execute every statement in ``sql``, returning one result each.\n\nA list rather than a single object because a script is a normal thing to\nsend: ``CREATE TABLE \u2026; INSERT \u2026; SELECT \u2026`` is one request and three results.\n\nUnlike ``/parse``, a failure here *is* a failed request \u2014 422 with the source\nposition attached \u2014 because there is no useful partial answer to return.",
+        "operationId": "run_query_api_v1_databases__database_id__query_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QueryResultModel"
+                  },
+                  "title": "Response Run Query Api V1 Databases  Database Id  Query Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run SQL and return the results",
+        "tags": [
+          "query"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/query/step": {
+      "post": {
+        "operationId": "start_stepped_query_api_v1_databases__database_id__query_step_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start a stepped execution, paused at its first checkpoint",
+        "tags": [
+          "query"
+        ]
+      }
+    },
     "/api/v1/databases/{database_id}/records": {
       "get": {
         "description": "Return a window of the heap scan.\n\nThere is no index and no ``LIMIT`` pushdown until later milestones, so\n``offset`` is honoured by discarding rows the scan already produced. The\nresponse reports ``rows_scanned`` and ``pages_read`` precisely so that cost\nis visible rather than hidden.",
@@ -2461,6 +3096,275 @@
         "summary": "Set the trace level",
         "tags": [
           "diagnostics"
+        ]
+      }
+    },
+    "/api/v1/executions": {
+      "get": {
+        "operationId": "list_executions_api_v1_executions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "database_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Database Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List stepped executions",
+        "tags": [
+          "query"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}": {
+      "get": {
+        "operationId": "get_execution_api_v1_executions__execution_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Current state of an execution, without advancing it",
+        "tags": [
+          "query"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/cancel": {
+      "post": {
+        "operationId": "cancel_execution_api_v1_executions__execution_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel an execution and wait for it to release its lock",
+        "tags": [
+          "query"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/continue": {
+      "post": {
+        "operationId": "continue_execution_api_v1_executions__execution_id__continue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run to completion without pausing",
+        "tags": [
+          "query"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/next": {
+      "post": {
+        "operationId": "step_execution_api_v1_executions__execution_id__next_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Advance to the next checkpoint",
+        "tags": [
+          "query"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/resume": {
+      "post": {
+        "operationId": "resume_execution_api_v1_executions__execution_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume with an explicit mode: step, continue, until_row, until_page_read, until_operator",
+        "tags": [
+          "query"
         ]
       }
     },
