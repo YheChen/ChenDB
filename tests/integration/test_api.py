@@ -47,12 +47,13 @@ def seeded(client: TestClient) -> TestClient:
 
 def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 1
+    assert body["milestone"] == 2
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
     assert body["features"]["page_inspector"] is True
-    assert body["features"]["sql"] is False
+    assert body["features"]["sql"] is True
+    assert body["features"]["execution"] is False
     assert body["features"]["mvcc"] is False
 
 

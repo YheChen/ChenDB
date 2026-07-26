@@ -102,6 +102,16 @@
   }
 }
 
+/*
+ * The source-span highlight Monaco paints when an AST node or token is
+ * selected. Deliberately a background wash rather than a border: a border
+ * would shift glyph positions and make the range look one character wider.
+ */
+.chendb-span-highlight {
+  background: color-mix(in oklch, var(--accent) 28%, transparent);
+  border-radius: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

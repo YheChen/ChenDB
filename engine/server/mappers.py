@@ -21,6 +21,10 @@ from typing import Any
 
 from engine.database import Database
 from engine.diagnostics import SinkStats, TraceLevel, TraceRecord
+from engine.errors import SqlError
+from engine.parser.analyze import ParseOutcome
+from engine.parser.ast import Node, walk
+from engine.parser.tokens import Token
 from engine.serialization.record import FieldLayout, RecordLayout
 from engine.serialization.schema import Column, Schema
 from engine.server.schemas.database import (
@@ -41,21 +45,33 @@ from engine.server.schemas.pages import (
     RecordLayoutModel,
     SlotDetailModel,
 )
+from engine.server.schemas.sql import (
+    AstNodeModel,
+    AstTreeModel,
+    ParseResponse,
+    SqlErrorModel,
+    StatementModel,
+    TokenModel,
+)
 from engine.storage.constants import INVALID_PAGE_ID
 from engine.storage.heap import RecordId
 from engine.storage.inspect import HeaderField, PageDetail, PageSummary, SlotDetail
 from engine.storage.pager import PagerStats
 
 __all__ = [
+    "ast_node_to_api",
     "column_to_api",
     "database_detail_to_api",
     "page_detail_to_api",
     "page_summary_to_api",
     "pager_stats_to_api",
+    "parse_outcome_to_api",
     "record_id_to_api",
     "row_to_api",
     "schema_to_api",
+    "sql_error_to_api",
     "table_to_api",
+    "token_to_api",
     "trace_record_to_api",
     "trace_stats_to_api",
 ]
@@ -281,4 +297,105 @@ def trace_stats_to_api(stats: SinkStats, level: TraceLevel) -> TraceStatsModel:
         total_recorded=stats.total_recorded,
         dropped=stats.dropped,
         level=level.name,  # type: ignore[arg-type]
+    )
+
+
+# -- SQL front end (Milestone 2) -------------------------------------------
+
+
+def token_to_api(index: int, token: Token) -> TokenModel:
+    return TokenModel(
+        index=index,
+        type=token.type.value,
+        lexeme=token.lexeme,
+        start=token.span.start,
+        end=token.span.end,
+        line=token.span.line,
+        column=token.span.column,
+        keyword=token.keyword.value if token.keyword else None,
+        value=token.value,
+    )
+
+
+def _node_label(node: Node) -> str:
+    """A short label for a tree row.
+
+    Falls back to the node type when there is nothing shorter to show, so a row
+    is never blank.
+    """
+    attributes = node.attributes()
+    for key in ("operator", "name", "value", "alias", "kind"):
+        value = attributes.get(key)
+        if value is not None and value != "":
+            return str(value)
+    if "negated" in attributes:
+        return "IS NOT NULL" if attributes["negated"] else "IS NULL"
+    return ""
+
+
+def ast_node_to_api(node: Node, sql: str) -> AstNodeModel:
+    return AstNodeModel(
+        node_id=node.node_id,
+        node_type=node.node_type,
+        start=node.span.start,
+        end=node.span.end,
+        line=node.span.line,
+        column=node.span.column,
+        text=node.text_in(sql),
+        children=[child.node_id for child in node.children()],
+        attributes=node.attributes(),
+        label=_node_label(node),
+    )
+
+
+def sql_error_to_api(error: SqlError) -> SqlErrorModel:
+    expected = getattr(error, "expected", ())
+    return SqlErrorModel(
+        kind=type(error).__name__,
+        message=error.message,
+        start=error.start,
+        end=max(error.end, error.start + 1),
+        line=error.line,
+        column=error.column,
+        expected=list(expected),
+        found=getattr(error, "found", ""),
+    )
+
+
+def parse_outcome_to_api(outcome: ParseOutcome) -> ParseResponse:
+    """Flatten the whole outcome into one response.
+
+    Node ids are unique across the script because the parser numbers them from a
+    single counter, so several statements can share one flat node list.
+    """
+    nodes: list[AstNodeModel] = []
+    for statement in outcome.statements:
+        nodes.extend(ast_node_to_api(node, outcome.sql) for node in walk(statement))
+    nodes.sort(key=lambda node: node.node_id)
+
+    return ParseResponse(
+        sql=outcome.sql,
+        ok=outcome.ok,
+        tokens=[
+            token_to_api(index, token) for index, token in enumerate(outcome.tokens)
+        ],
+        ast=AstTreeModel(
+            nodes=nodes,
+            root_ids=[statement.node_id for statement in outcome.statements],
+        ),
+        statements=[
+            StatementModel(
+                root_id=statement.node_id,
+                kind=statement.node_type,
+                start=statement.span.start,
+                end=statement.span.end,
+                text=statement.text_in(outcome.sql),
+            )
+            for statement in outcome.statements
+        ],
+        error=sql_error_to_api(outcome.error) if outcome.error else None,
+        lexed_ok=outcome.lexed_ok,
+        token_count=len(outcome.tokens),
+        node_count=outcome.node_count,
+        duration_ns=outcome.duration_ns,
     )

@@ -171,6 +171,17 @@ export function useDeleteRecord(databaseId: string) {
   });
 }
 
+/**
+ * Parse SQL. A mutation rather than a query: parsing is an explicit action the
+ * user takes (⌘↵), not state to keep in sync. Nothing here invalidates any
+ * cache — Milestone 2 parsing has no side effects on the database.
+ */
+export function useParseSql(databaseId: string) {
+  return useMutation({
+    mutationFn: (sql: string) => api.parseSql(databaseId, sql),
+  });
+}
+
 export function useSetTraceLevel(databaseId: string) {
   const client = useQueryClient();
   return useMutation({

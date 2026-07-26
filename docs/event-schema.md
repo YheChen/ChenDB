@@ -91,9 +91,10 @@ lock, which is what lets an HTTP response describe one consistent instant.
 
 ---
 
-## Milestone 1 events
+## Implemented events
 
-Eleven types, in three categories. These are the only events that exist today.
+Sixteen types across four categories. These are the only events that exist
+today.
 
 ### `lifecycle`
 
@@ -126,6 +127,21 @@ the wire format does not change when those milestones land.
 | `RecordReadEvent` | VERBOSE | `page_id`, `slot_id`, `length` |
 | `HeapScanEvent` | SUMMARY | `action`, `first_page_id`, `pages_scanned`, `rows_emitted`, `duration_ns` |
 
+### `parser` — added in Milestone 2
+
+| Event | Level | Fields |
+|---|---|---|
+| `TokenizedEvent` | OPERATOR | `source_length`, `token_count`, `duration_ns` |
+| `TokenEvent` | VERBOSE | `index`, `token_type`, `lexeme`, `start`, `end`, `keyword` |
+| `AstNodeCreatedEvent` | VERBOSE | `node_id`, `node_type`, `start`, `end`, `child_count` |
+| `ParsedEvent` | OPERATOR | `statement_count`, `node_count`, `duration_ns` |
+| `ParseErrorEvent` | OPERATOR | `message`, `start`, `end`, `line`, `column`, `expected`, `found` |
+
+`AstNodeCreatedEvent` fires as each rule *completes*, so the event order shows
+recursive descent building the tree bottom-up: leaves first, root last.
+`ParseErrorEvent` is `OPERATOR` rather than `VERBOSE` because a failed parse is a
+headline event and the editor needs its position to place a marker.
+
 `RecordReadEvent` is `VERBOSE` because a scan would otherwise emit one event
 per row — exactly the flood trace levels exist to prevent.
 
@@ -136,15 +152,6 @@ per row — exactly the flood trace levels exist to prevent.
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 2 — `parser`
-
-```
-TokenizedEvent        token_count, duration_ns
-TokenEvent            index, kind, lexeme, start, end          VERBOSE
-AstNodeCreatedEvent   node_id, node_type, parent_id, start, end
-ParseErrorEvent       message, position, expected
-```
 
 ### Milestone 3 — `operator`
 

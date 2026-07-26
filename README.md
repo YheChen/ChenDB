@@ -10,7 +10,9 @@ file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M1     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M2     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
+├──────────────────────────────────────────────────────────────────────────┤
+│  [ Storage ]  [ SQL ]                                                    │
 ├──────────────────────┬───────────────────────┬───────────────────────────┤
 │  SCHEMA              │  DISK MAP             │  PAGE INSPECTOR           │
 │  users · 16 rows     │  0  META    meta      │  HEAP page 3  checksum ok │
@@ -29,8 +31,8 @@ file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Milestone 1 of 10 is complete.** Nothing is stubbed ahead of time: a feature
-absent from the engine is absent from the API and hidden in the UI. See
+**Milestones 1–2 of 10 are complete.** Nothing is stubbed ahead of time: a
+feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
 ---
@@ -48,7 +50,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 0.1.0 — Milestone 1 (storage engine)
+ChenDB 0.2.0 — Milestone 2 (storage engine + SQL parser)
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
 created table users with 3 column(s)
 chendb> .insert 1 | ada@example.com | 36
@@ -103,19 +105,41 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Records** | INTEGER / FLOAT / BOOLEAN / TEXT · null bitmap · schema-driven encode and decode |
 | **Heap** | linked page chain · O(1) append · lazy scan · tombstone deletes |
 | **Persistence** | survives process death; `SIGKILL` tests prove it |
-| **Diagnostics** | 5 trace levels · 11 event types · bounded retention · provably result-neutral |
+| **Diagnostics** | 5 trace levels · 16 event types · bounded retention · provably result-neutral |
+| **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
-| **Visualizer** | disk map · page inspector (layout / header / slots / hex) · live event timeline |
+| **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
 
-Not yet built: SQL, query execution, indexes, a buffer pool, transactions,
-WAL, MVCC. Those are Milestones 2 through 10.
+Not yet built: query **execution**, a persistent catalog, indexes, a buffer
+pool, transactions, WAL, MVCC. Those are Milestones 3 through 10. Parsing is not
+executing, so there is a `POST /parse` and deliberately no `POST /query`.
 
 ---
 
-## The bit worth looking at
+## Two bits worth looking at
 
-Select a slot in the page inspector and the Hex tab highlights exactly the
-bytes it points at:
+**The AST knows where it came from.** Click any node and the editor highlights
+the exact SQL that produced it:
+
+```
+SELECT email, age * 2 AS doubled FROM users WHERE age >= 18 AND email IS NOT NULL
+
+SelectStatement                    SELECT email, age * 2 AS doubled FROM users …
+└─ SelectItem doubled              age * 2 AS doubled
+   └─ BinaryOp        *            age * 2
+      └─ ColumnRef    age          age
+      └─ Literal      2            2
+└─ BinaryOp           AND          age >= 18 AND email IS NOT NULL
+   └─ BinaryOp        >=           age >= 18
+   └─ IsNullTest      IS NOT NULL  email IS NOT NULL
+```
+
+`AND` sits above `>=` because precedence is encoded in the *shape* of the
+grammar rules, not a table. And `IS NOT NULL` is its own node, never an
+equality against `NULL` — those mean different things in three-valued logic.
+
+**The page inspector shows real bytes.** Select a slot and the Hex tab
+highlights exactly the range it points at:
 
 ```
 00000300  b9 c1 5b ce 00 00 00 00  00 00 00 00 02 00 05 00   ← header
@@ -164,8 +188,8 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 282 tests
-npm --prefix visualizer test            # 42 tests
+.venv/bin/python -m pytest              # 470 tests
+npm --prefix visualizer test            # 53 tests
 ```
 
 Two are worth singling out.
@@ -191,6 +215,7 @@ change the system observed.
 | `npm --prefix visualizer test` | frontend component tests |
 | `python benchmarks/trace_overhead.py` | measure diagnostics overhead |
 | `python examples/milestone1_storage.py` | narrated walkthrough of the storage engine |
+| `python examples/milestone2_parser.py` | narrated walkthrough of the SQL front end |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
 
@@ -204,7 +229,8 @@ change the system observed.
 | [Storage format](docs/storage-format.md) | every byte on disk, and why |
 | [Event schema](docs/event-schema.md) | the diagnostics contract |
 | [API contract](docs/api-contract.md) | HTTP, WebSocket, security boundaries |
-| [Milestone 1](docs/milestone-01-storage-engine.md) | what shipped, measured, and what it cannot do |
+| [Milestone 1](docs/milestone-01-storage-engine.md) | storage: what shipped, measured, and what it cannot do |
+| [Milestone 2](docs/milestone-02-sql-parser.md) | the SQL front end, the grammar, and a bug worth recording |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

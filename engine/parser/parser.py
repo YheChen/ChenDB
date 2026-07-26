@@ -1,0 +1,777 @@
+"""Recursive-descent parser.
+
+One method per grammar rule.  The call stack *is* the parse tree, which is the
+whole appeal: the grammar below can be read straight off the method names.
+
+    script         := statement { ';' statement } [ ';' ]
+    statement      := create_table | insert | select
+
+    create_table   := CREATE TABLE [ IF NOT EXISTS ] ident
+                      '(' column_def { ',' column_def } ')'
+    column_def     := ident type_name { constraint }
+    constraint     := NOT NULL | NULL | PRIMARY KEY | UNIQUE
+
+    insert         := INSERT INTO ident [ '(' ident { ',' ident } ')' ]
+                      VALUES row { ',' row }
+    row            := '(' expr { ',' expr } ')'
+
+    select         := SELECT select_list FROM ident [ WHERE expr ]
+    select_list    := select_item { ',' select_item }
+    select_item    := '*' | expr [ [ AS ] ident ]
+
+    expr           := or_expr
+    or_expr        := and_expr { OR and_expr }
+    and_expr       := not_expr { AND not_expr }
+    not_expr       := NOT not_expr | comparison
+    comparison     := additive [ ( '=' | '<>' | '<' | '<=' | '>' | '>=' ) additive
+                               | IS [ NOT ] NULL ]
+    additive       := multiplicative { ( '+' | '-' ) multiplicative }
+    multiplicative := unary { ( '*' | '/' | '%' ) unary }
+    unary          := ( '-' | '+' ) unary | primary
+    primary        := literal | column_ref | '(' expr ')'
+    column_ref     := ident [ '.' ident ]
+
+Precedence is encoded in the *shape* of the rules: ``or_expr`` calls
+``and_expr`` calls ``not_expr`` and so on, so the operator parsed at the
+shallowest level binds loosest.  ``a OR b AND c`` therefore parses as
+``a OR (b AND c)`` without any precedence table.  Left associativity comes from
+the ``while`` loops: ``1 - 2 - 3`` becomes ``(1 - 2) - 3``.
+
+Why recursive descent
+---------------------
+It is the technique used by essentially every hand-written production parser,
+including SQLite, Clang, TypeScript and Go, because errors can be reported at
+the exact point of failure with the rule name for context. Table-driven
+LALR parsers (PostgreSQL's ``gram.y``, via Bison) handle larger grammars and
+resolve ambiguity mechanically, but produce famously unhelpful messages —
+"syntax error at or near" is the limit of what a shift-reduce conflict can tell
+you.
+
+Complexity: O(n) in tokens. Each token is consumed once; there is no
+backtracking, only one token of lookahead. Depth is bounded by expression
+nesting, so a pathological ``((((...))))`` could exhaust the Python stack —
+:data:`MAX_EXPRESSION_DEPTH` turns that into a clean error instead of a crash.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Final, NoReturn
+
+from engine.diagnostics.events import AstNodeCreatedEvent, ParsedEvent, ParseErrorEvent
+from engine.diagnostics.tracer import NULL_TRACER, Tracer
+from engine.errors import ParseError, UnsupportedSqlError
+from engine.parser.ast import (
+    BinaryOp,
+    BinaryOperator,
+    ColumnConstraint,
+    ColumnDefinition,
+    ColumnRef,
+    CreateTableStatement,
+    Expression,
+    InsertStatement,
+    IsNullTest,
+    Literal,
+    Node,
+    SelectItem,
+    SelectStatement,
+    Star,
+    Statement,
+    TableRef,
+    UnaryOp,
+    UnaryOperator,
+    ValuesRow,
+)
+from engine.parser.lexer import tokenize
+from engine.parser.tokens import (
+    TYPE_KEYWORDS,
+    Keyword,
+    SourceSpan,
+    Token,
+    TokenType,
+)
+from engine.serialization.types import DataType
+
+__all__ = ["MAX_EXPRESSION_DEPTH", "Parser", "parse", "parse_statement"]
+
+#: Guard against stack exhaustion from deeply nested parentheses. CPython's
+#: default recursion limit would otherwise turn a hostile query into a crash.
+MAX_EXPRESSION_DEPTH: Final = 100
+
+#: Comparison tokens mapped to their AST operator.
+_COMPARISON_OPERATORS: Final[dict[TokenType, BinaryOperator]] = {
+    TokenType.EQ: BinaryOperator.EQ,
+    TokenType.NEQ: BinaryOperator.NEQ,
+    TokenType.LT: BinaryOperator.LT,
+    TokenType.LTE: BinaryOperator.LTE,
+    TokenType.GT: BinaryOperator.GT,
+    TokenType.GTE: BinaryOperator.GTE,
+}
+
+_ADDITIVE_OPERATORS: Final[dict[TokenType, BinaryOperator]] = {
+    TokenType.PLUS: BinaryOperator.ADD,
+    TokenType.MINUS: BinaryOperator.SUBTRACT,
+}
+
+_MULTIPLICATIVE_OPERATORS: Final[dict[TokenType, BinaryOperator]] = {
+    TokenType.STAR: BinaryOperator.MULTIPLY,
+    TokenType.SLASH: BinaryOperator.DIVIDE,
+    TokenType.PERCENT: BinaryOperator.MODULO,
+}
+
+#: SQL type keywords mapped to the engine's types. Several spellings share one
+#: physical type, exactly as in SQLite.
+_TYPE_BY_KEYWORD: Final[dict[Keyword, DataType]] = {
+    Keyword.INTEGER: DataType.INTEGER,
+    Keyword.INT: DataType.INTEGER,
+    Keyword.BIGINT: DataType.INTEGER,
+    Keyword.FLOAT: DataType.FLOAT,
+    Keyword.REAL: DataType.FLOAT,
+    Keyword.DOUBLE: DataType.FLOAT,
+    Keyword.BOOLEAN: DataType.BOOLEAN,
+    Keyword.BOOL: DataType.BOOLEAN,
+    Keyword.TEXT: DataType.TEXT,
+    Keyword.VARCHAR: DataType.TEXT,
+}
+
+#: Statement keywords that are valid SQL but not implemented yet, with the
+#: milestone that will add them. Recognising them lets the parser explain
+#: itself instead of reporting a generic syntax error.
+_NOT_YET: Final[dict[Keyword, str]] = {
+    Keyword.UPDATE: "UPDATE is not implemented yet",
+    Keyword.DELETE: "DELETE is not implemented yet",
+    Keyword.DROP: "DROP is not implemented yet",
+    Keyword.EXPLAIN: "EXPLAIN arrives with the query planner in Milestone 6",
+    Keyword.BEGIN: "transactions arrive in Milestone 8",
+    Keyword.COMMIT: "transactions arrive in Milestone 8",
+    Keyword.ROLLBACK: "transactions arrive in Milestone 8",
+}
+
+
+class Parser:
+    """Turns a token stream into statements. Single use."""
+
+    __slots__ = ("_depth", "_next_node_id", "_pos", "_source", "_tokens", "_tracer")
+
+    def __init__(
+        self,
+        tokens: list[Token],
+        source: str = "",
+        *,
+        tracer: Tracer | None = None,
+    ) -> None:
+        self._tokens = tokens
+        self._source = source
+        self._pos = 0
+        self._next_node_id = 0
+        self._depth = 0
+        self._tracer = tracer if tracer is not None else NULL_TRACER
+
+    # -- token access ------------------------------------------------------
+
+    @property
+    def _current(self) -> Token:
+        return self._tokens[self._pos]
+
+    def _at_end(self) -> bool:
+        return self._current.type is TokenType.EOF
+
+    def _check(self, token_type: TokenType) -> bool:
+        return self._current.type is token_type
+
+    def _check_keyword(self, *keywords: Keyword) -> bool:
+        return self._current.is_keyword(*keywords)
+
+    def _advance(self) -> Token:
+        token = self._current
+        if not self._at_end():
+            self._pos += 1
+        return token
+
+    def _match(self, token_type: TokenType) -> Token | None:
+        """Consume and return the token if it matches, else return ``None``."""
+        return self._advance() if self._check(token_type) else None
+
+    def _match_keyword(self, *keywords: Keyword) -> Token | None:
+        return self._advance() if self._check_keyword(*keywords) else None
+
+    def _expect(self, token_type: TokenType, description: str) -> Token:
+        if not self._check(token_type):
+            self._fail(f"expected {description}", expected=(description,))
+        return self._advance()
+
+    def _expect_keyword(self, keyword: Keyword) -> Token:
+        if not self._check_keyword(keyword):
+            self._fail(f"expected {keyword.value}", expected=(keyword.value,))
+        return self._advance()
+
+    def _fail(self, message: str, *, expected: tuple[str, ...] = ()) -> NoReturn:
+        token = self._current
+        full = f"{message}, found {token.description}"
+        if self._tracer.operator:
+            self._tracer.emit(
+                ParseErrorEvent(
+                    message=full,
+                    start=token.span.start,
+                    end=token.span.end,
+                    line=token.span.line,
+                    column=token.span.column,
+                    expected=", ".join(expected),
+                    found=token.description,
+                )
+            )
+        raise ParseError(
+            full,
+            start=token.span.start,
+            end=token.span.end,
+            line=token.span.line,
+            column=token.span.column,
+            expected=expected,
+            found=token.description,
+        )
+
+    def _unsupported(self, message: str) -> NoReturn:
+        token = self._current
+        raise UnsupportedSqlError(
+            message,
+            start=token.span.start,
+            end=token.span.end,
+            line=token.span.line,
+            column=token.span.column,
+            found=token.description,
+        )
+
+    # -- node construction -------------------------------------------------
+
+    def _node[T: Node](self, factory: type[T], span: SourceSpan, **fields: object) -> T:
+        """Build a node, assign its id, and report it."""
+        node_id = self._next_node_id
+        self._next_node_id += 1
+        node = factory(node_id=node_id, span=span, **fields)  # type: ignore[arg-type]
+        if self._tracer.verbose:
+            self._tracer.emit(
+                AstNodeCreatedEvent(
+                    node_id=node_id,
+                    node_type=node.node_type,
+                    start=span.start,
+                    end=span.end,
+                    child_count=len(node.children()),
+                )
+            )
+        return node
+
+    def _identifier(self, what: str) -> Token:
+        """Consume an identifier, with a clear error when a keyword appears.
+
+        Reserved words are the most common source of confusing parse errors, so
+        the message names the fix rather than just the problem.
+        """
+        if self._check(TokenType.KEYWORD):
+            keyword = self._current.keyword
+            self._fail(
+                f"expected {what}, but {keyword.value if keyword else '?'} is a "
+                f'reserved word; quote it as "{self._current.lexeme}" to use it '
+                f"as a name",
+                expected=(what,),
+            )
+        token = self._expect(TokenType.IDENTIFIER, what)
+        return token
+
+    @staticmethod
+    def _identifier_name(token: Token) -> str:
+        """The name a token denotes. Quoted identifiers keep their exact case."""
+        return token.value if token.value is not None else token.lexeme
+
+    # -- entry points ------------------------------------------------------
+
+    def parse_script(self) -> list[Statement]:
+        """Parse every statement in the input.
+
+        A trailing semicolon is optional, and consecutive semicolons are
+        tolerated — both are what people actually type.
+        """
+        started = time.perf_counter_ns()
+        statements: list[Statement] = []
+
+        while not self._at_end():
+            if self._match(TokenType.SEMICOLON):
+                continue
+            statements.append(self.parse_statement())
+            if not self._at_end() and not self._check(TokenType.SEMICOLON):
+                self._fail(
+                    "expected ';' between statements", expected=(";", "end of input")
+                )
+
+        if self._tracer.operator:
+            self._tracer.emit(
+                ParsedEvent(
+                    statement_count=len(statements),
+                    node_count=self._next_node_id,
+                    duration_ns=time.perf_counter_ns() - started,
+                )
+            )
+        return statements
+
+    def parse_statement(self) -> Statement:
+        """Dispatch on the leading keyword."""
+        if self._check_keyword(Keyword.SELECT):
+            return self._select_statement()
+        if self._check_keyword(Keyword.INSERT):
+            return self._insert_statement()
+        if self._check_keyword(Keyword.CREATE):
+            return self._create_table_statement()
+
+        keyword = self._current.keyword
+        if keyword is not None and keyword in _NOT_YET:
+            self._unsupported(_NOT_YET[keyword])
+        self._fail(
+            "expected a statement",
+            expected=("SELECT", "INSERT", "CREATE TABLE"),
+        )
+
+    # -- CREATE TABLE ------------------------------------------------------
+
+    def _create_table_statement(self) -> CreateTableStatement:
+        start = self._expect_keyword(Keyword.CREATE).span
+        if self._check_keyword(Keyword.INDEX):
+            self._unsupported("CREATE INDEX arrives with B+ trees in Milestone 5")
+        self._expect_keyword(Keyword.TABLE)
+
+        if_not_exists = False
+        if self._match_keyword(Keyword.IF):
+            self._expect_keyword(Keyword.NOT)
+            self._expect_keyword(Keyword.EXISTS)
+            if_not_exists = True
+
+        table = self._table_ref()
+        self._expect(TokenType.LPAREN, "'(' before the column list")
+
+        columns: list[ColumnDefinition] = []
+        while True:
+            columns.append(self._column_definition())
+            if not self._match(TokenType.COMMA):
+                break
+        end = self._expect(TokenType.RPAREN, "')' after the column list").span
+
+        return self._node(
+            CreateTableStatement,
+            start.union(end),
+            table=table,
+            columns=tuple(columns),
+            if_not_exists=if_not_exists,
+        )
+
+    def _column_definition(self) -> ColumnDefinition:
+        name_token = self._identifier("a column name")
+        span = name_token.span
+
+        if not self._check(TokenType.KEYWORD) or self._current.keyword not in TYPE_KEYWORDS:
+            self._fail(
+                "expected a column type",
+                expected=tuple(sorted({t.value for t in TYPE_KEYWORDS})),
+            )
+        type_token = self._advance()
+        span = span.union(type_token.span)
+        data_type = _TYPE_BY_KEYWORD[type_token.keyword]  # type: ignore[index]
+
+        # VARCHAR(n) parses but the length is ignored: TEXT is variable-width
+        # already, so a declared maximum would be a constraint, not a layout.
+        if type_token.is_keyword(Keyword.VARCHAR) and self._match(TokenType.LPAREN):
+            self._expect(TokenType.INT_LITERAL, "a length")
+            span = span.union(self._expect(TokenType.RPAREN, "')'").span)
+
+        constraints: list[ColumnConstraint] = []
+        while True:
+            constraint, constraint_span = self._column_constraint()
+            if constraint is None:
+                break
+            if constraint in constraints:
+                self._fail(f"duplicate constraint {constraint.value}")
+            constraints.append(constraint)
+            span = span.union(constraint_span)
+
+        if (
+            ColumnConstraint.NULL in constraints
+            and ColumnConstraint.NOT_NULL in constraints
+        ):
+            self._fail("a column cannot be both NULL and NOT NULL")
+
+        return self._node(
+            ColumnDefinition,
+            span,
+            name=self._identifier_name(name_token),
+            data_type=data_type,
+            constraints=tuple(constraints),
+        )
+
+    def _column_constraint(self) -> tuple[ColumnConstraint | None, SourceSpan]:
+        token = self._current
+        if self._match_keyword(Keyword.NOT):
+            end = self._expect_keyword(Keyword.NULL).span
+            return ColumnConstraint.NOT_NULL, token.span.union(end)
+        if self._match_keyword(Keyword.NULL):
+            return ColumnConstraint.NULL, token.span
+        if self._match_keyword(Keyword.PRIMARY):
+            end = self._expect_keyword(Keyword.KEY).span
+            return ColumnConstraint.PRIMARY_KEY, token.span.union(end)
+        if self._match_keyword(Keyword.UNIQUE):
+            self._unsupported("UNIQUE needs an index, which arrives in Milestone 5")
+        if self._check_keyword(Keyword.DEFAULT):
+            self._unsupported("DEFAULT values are not implemented yet")
+        return None, token.span
+
+    # -- INSERT ------------------------------------------------------------
+
+    def _insert_statement(self) -> InsertStatement:
+        start = self._expect_keyword(Keyword.INSERT).span
+        self._expect_keyword(Keyword.INTO)
+        table = self._table_ref()
+
+        columns: tuple[str, ...] | None = None
+        if self._match(TokenType.LPAREN):
+            names: list[str] = []
+            while True:
+                names.append(self._identifier_name(self._identifier("a column name")))
+                if not self._match(TokenType.COMMA):
+                    break
+            self._expect(TokenType.RPAREN, "')' after the column list")
+            columns = tuple(names)
+
+        if self._check_keyword(Keyword.SELECT):
+            self._unsupported("INSERT ... SELECT needs the executor, in Milestone 3")
+        self._expect_keyword(Keyword.VALUES)
+
+        rows: list[ValuesRow] = []
+        end = start
+        while True:
+            open_paren = self._expect(TokenType.LPAREN, "'(' before a row of values")
+            values: list[Expression] = []
+            while True:
+                values.append(self._expression())
+                if not self._match(TokenType.COMMA):
+                    break
+            end = self._expect(TokenType.RPAREN, "')' after a row of values").span
+            rows.append(
+                self._node(
+                    ValuesRow, open_paren.span.union(end), values=tuple(values)
+                )
+            )
+            if not self._match(TokenType.COMMA):
+                break
+
+        # Caught here rather than at execution: it is a shape error in the
+        # statement itself, and the message can point at the source.
+        if columns is not None:
+            for row in rows:
+                if row.width != len(columns):
+                    self._fail(
+                        f"row has {row.width} values but {len(columns)} columns "
+                        f"were named"
+                    )
+        widths = {row.width for row in rows}
+        if len(widths) > 1:
+            self._fail(
+                f"every row must have the same number of values; found "
+                f"{sorted(widths)}"
+            )
+
+        return self._node(
+            InsertStatement,
+            start.union(end),
+            table=table,
+            columns=columns,
+            rows=tuple(rows),
+        )
+
+    # -- SELECT ------------------------------------------------------------
+
+    def _select_statement(self) -> SelectStatement:
+        start = self._expect_keyword(Keyword.SELECT).span
+        if self._check_keyword(Keyword.DISTINCT):
+            self._unsupported("SELECT DISTINCT is not implemented yet")
+
+        projections: list[SelectItem] = []
+        while True:
+            projections.append(self._select_item())
+            if not self._match(TokenType.COMMA):
+                break
+
+        self._expect_keyword(Keyword.FROM)
+        table = self._table_ref()
+        end = table.span
+
+        where: Expression | None = None
+        if self._match_keyword(Keyword.WHERE):
+            where = self._expression()
+            end = where.span
+
+        if self._check_keyword(Keyword.GROUP):
+            self._unsupported("GROUP BY is not implemented yet")
+        if self._check_keyword(Keyword.ORDER):
+            self._unsupported("ORDER BY is not implemented yet")
+        if self._check_keyword(Keyword.LIMIT):
+            self._unsupported("LIMIT is not implemented yet")
+
+        return self._node(
+            SelectStatement,
+            start.union(end),
+            projections=tuple(projections),
+            table=table,
+            where=where,
+        )
+
+    def _select_item(self) -> SelectItem:
+        if self._check(TokenType.STAR):
+            star_token = self._advance()
+            star = self._node(Star, star_token.span)
+            return self._node(SelectItem, star_token.span, expression=star, alias=None)
+
+        expression = self._expression()
+        span = expression.span
+        alias: str | None = None
+
+        if self._match_keyword(Keyword.AS):
+            alias_token = self._identifier("an alias")
+            alias = self._identifier_name(alias_token)
+            span = span.union(alias_token.span)
+        elif self._check(TokenType.IDENTIFIER):
+            # `SELECT age years` — the alias without AS. Accepted because
+            # every dialect does, though AS is clearer.
+            alias_token = self._advance()
+            alias = self._identifier_name(alias_token)
+            span = span.union(alias_token.span)
+
+        return self._node(SelectItem, span, expression=expression, alias=alias)
+
+    def _table_ref(self) -> TableRef:
+        token = self._identifier("a table name")
+        return self._node(TableRef, token.span, name=self._identifier_name(token))
+
+    # -- expressions -------------------------------------------------------
+
+    def _expression(self) -> Expression:
+        self._depth += 1
+        if self._depth > MAX_EXPRESSION_DEPTH:
+            self._depth -= 1
+            self._fail(
+                f"expression nested deeper than {MAX_EXPRESSION_DEPTH} levels"
+            )
+        try:
+            return self._or_expression()
+        finally:
+            self._depth -= 1
+
+    def _or_expression(self) -> Expression:
+        left = self._and_expression()
+        while self._check_keyword(Keyword.OR):
+            self._advance()
+            right = self._and_expression()
+            left = self._node(
+                BinaryOp,
+                left.span.union(right.span),
+                operator=BinaryOperator.OR,
+                left=left,
+                right=right,
+            )
+        return left
+
+    def _and_expression(self) -> Expression:
+        left = self._not_expression()
+        while self._check_keyword(Keyword.AND):
+            self._advance()
+            right = self._not_expression()
+            left = self._node(
+                BinaryOp,
+                left.span.union(right.span),
+                operator=BinaryOperator.AND,
+                left=left,
+                right=right,
+            )
+        return left
+
+    def _not_expression(self) -> Expression:
+        if self._check_keyword(Keyword.NOT):
+            token = self._advance()
+            operand = self._not_expression()
+            return self._node(
+                UnaryOp,
+                token.span.union(operand.span),
+                operator=UnaryOperator.NOT,
+                operand=operand,
+            )
+        return self._comparison()
+
+    def _comparison(self) -> Expression:
+        left = self._additive()
+
+        operator = _COMPARISON_OPERATORS.get(self._current.type)
+        if operator is not None:
+            self._advance()
+            right = self._additive()
+            return self._node(
+                BinaryOp,
+                left.span.union(right.span),
+                operator=operator,
+                left=left,
+                right=right,
+            )
+
+        if self._check_keyword(Keyword.IS):
+            self._advance()
+            negated = self._match_keyword(Keyword.NOT) is not None
+            null_token = self._expect_keyword(Keyword.NULL)
+            return self._node(
+                IsNullTest,
+                left.span.union(null_token.span),
+                operand=left,
+                negated=negated,
+            )
+
+        for keyword, message in (
+            (Keyword.IN, "IN is not implemented yet"),
+            (Keyword.LIKE, "LIKE is not implemented yet"),
+            (Keyword.BETWEEN, "BETWEEN is not implemented yet"),
+        ):
+            if self._check_keyword(keyword):
+                self._unsupported(message)
+
+        return left
+
+    def _additive(self) -> Expression:
+        left = self._multiplicative()
+        while (operator := _ADDITIVE_OPERATORS.get(self._current.type)) is not None:
+            self._advance()
+            right = self._multiplicative()
+            left = self._node(
+                BinaryOp,
+                left.span.union(right.span),
+                operator=operator,
+                left=left,
+                right=right,
+            )
+        return left
+
+    def _multiplicative(self) -> Expression:
+        left = self._unary()
+        while (
+            operator := _MULTIPLICATIVE_OPERATORS.get(self._current.type)
+        ) is not None:
+            self._advance()
+            right = self._unary()
+            left = self._node(
+                BinaryOp,
+                left.span.union(right.span),
+                operator=operator,
+                left=left,
+                right=right,
+            )
+        return left
+
+    def _unary(self) -> Expression:
+        if self._check(TokenType.MINUS) or self._check(TokenType.PLUS):
+            token = self._advance()
+            operand = self._unary()
+            operator = (
+                UnaryOperator.NEGATE
+                if token.type is TokenType.MINUS
+                else UnaryOperator.PLUS
+            )
+            return self._node(
+                UnaryOp,
+                token.span.union(operand.span),
+                operator=operator,
+                operand=operand,
+            )
+        return self._primary()
+
+    def _primary(self) -> Expression:
+        token = self._current
+
+        if self._match(TokenType.LPAREN):
+            inner = self._expression()
+            end = self._expect(TokenType.RPAREN, "')'").span
+            # The parenthesised node's span covers the brackets, so selecting it
+            # in the UI highlights `(a + b)` rather than `a + b`.
+            return _with_span(inner, token.span.union(end))
+
+        if self._check(TokenType.INT_LITERAL):
+            self._advance()
+            return self._node(
+                Literal, token.span, value=token.value, data_type=DataType.INTEGER
+            )
+        if self._check(TokenType.FLOAT_LITERAL):
+            self._advance()
+            return self._node(
+                Literal, token.span, value=token.value, data_type=DataType.FLOAT
+            )
+        if self._check(TokenType.STRING_LITERAL):
+            self._advance()
+            return self._node(
+                Literal, token.span, value=token.value, data_type=DataType.TEXT
+            )
+
+        if self._check_keyword(Keyword.TRUE, Keyword.FALSE):
+            self._advance()
+            return self._node(
+                Literal,
+                token.span,
+                value=token.is_keyword(Keyword.TRUE),
+                data_type=DataType.BOOLEAN,
+            )
+        if self._check_keyword(Keyword.NULL):
+            self._advance()
+            # NULL has no type until it is bound to a column, in Milestone 4.
+            return self._node(Literal, token.span, value=None, data_type=None)
+
+        if self._check(TokenType.IDENTIFIER):
+            return self._column_reference()
+
+        if self._check(TokenType.STAR):
+            self._fail(
+                "'*' is only valid in a projection, not inside an expression",
+                expected=("a column name", "a literal"),
+            )
+
+        self._fail(
+            "expected a value",
+            expected=("a column name", "a literal", "'('"),
+        )
+
+    def _column_reference(self) -> ColumnRef:
+        first = self._identifier("a column name")
+        span = first.span
+        table: str | None = None
+        name = self._identifier_name(first)
+
+        if self._match(TokenType.DOT):
+            second = self._identifier("a column name after '.'")
+            table = name
+            name = self._identifier_name(second)
+            span = span.union(second.span)
+
+        return self._node(ColumnRef, span, name=name, table=table)
+
+
+def _with_span[T: Node](node: T, span: SourceSpan) -> T:
+    """A copy of ``node`` with a wider span. Nodes are frozen, so this replaces."""
+    import dataclasses
+
+    return dataclasses.replace(node, span=span)
+
+
+def parse(source: str, *, tracer: Tracer | None = None) -> list[Statement]:
+    """Tokenize and parse ``source`` into statements."""
+    tokens = tokenize(source, tracer=tracer)
+    return Parser(tokens, source, tracer=tracer).parse_script()
+
+
+def parse_statement(source: str, *, tracer: Tracer | None = None) -> Statement:
+    """Parse exactly one statement, rejecting anything after it."""
+    statements = parse(source, tracer=tracer)
+    if len(statements) != 1:
+        raise ParseError(
+            f"expected exactly one statement, found {len(statements)}",
+            start=0,
+            end=len(source),
+        )
+    return statements[0]
