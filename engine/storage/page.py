@@ -448,6 +448,91 @@ class Page:
         self.free_end = new_free_end
         return slot_id
 
+    # -- ordered slot operations (index pages only) ------------------------
+    #
+    # A heap addresses records by slot id, so a slot id must never change
+    # meaning: the two methods below shift the slot directory and therefore
+    # *renumber* every slot after the one they touch.  That is exactly what a
+    # B+ tree node wants — its entries must sit in key order, and nothing
+    # outside the node holds a reference to slot 4 in particular — and exactly
+    # what a heap must never do, because every ``RecordId`` in the database
+    # would silently start pointing at the wrong row.
+    #
+    # PostgreSQL draws the same line: ``PageIndexTupleDelete`` compacts the line
+    # pointer array and is used only on index pages, while heap pages get
+    # ``ItemIdSetDead``, which leaves the pointer in place.
+
+    def insert_at(self, index: int, payload: bytes) -> bool:
+        """Insert ``payload`` so it occupies slot ``index``, shifting the rest up.
+
+        Returns ``False`` if it does not fit without compacting, mirroring
+        :meth:`insert`.  **Renumbers slots** — see the note above.
+        """
+        length = len(payload)
+        if length > self.max_payload_size:
+            raise RecordTooLargeError(
+                f"index entry of {length} bytes exceeds the {self.max_payload_size}-byte "
+                f"limit for a {self._page_size}-byte page"
+            )
+        slot_count = self.slot_count
+        if not 0 <= index <= slot_count:
+            raise CorruptPageError(
+                f"page {self.page_id}: slot index {index} outside [0, {slot_count}]"
+            )
+        # Always grows the directory: an ordered page has no tombstones to reuse
+        # because delete_at removes the entry outright.
+        if length + SLOT_SIZE > self.free_space:
+            return False
+
+        new_free_end = self.free_end - length
+        self._buf[new_free_end : new_free_end + length] = payload
+
+        directory_start = self._slot_offset(index)
+        directory_end = self._slot_offset(slot_count)
+        # One memmove of the tail, then overwrite the vacated entry.
+        self._buf[directory_start + SLOT_SIZE : directory_end + SLOT_SIZE] = self._buf[
+            directory_start:directory_end
+        ]
+        self.slot_count = slot_count + 1
+        self.free_start = self.free_start + SLOT_SIZE
+        self._write_slot(index, new_free_end, length)
+        self.free_end = new_free_end
+        return True
+
+    def delete_at(self, index: int) -> bool:
+        """Remove slot ``index`` entirely, shifting later slots down.
+
+        The payload bytes stay where they are until :meth:`compact` runs; only
+        the directory shrinks.  **Renumbers slots** — see the note above.
+        """
+        slot_count = self.slot_count
+        if not 0 <= index < slot_count:
+            return False
+        directory_start = self._slot_offset(index)
+        directory_end = self._slot_offset(slot_count)
+        self._buf[directory_start : directory_end - SLOT_SIZE] = self._buf[
+            directory_start + SLOT_SIZE : directory_end
+        ]
+        new_free_start = self.free_start - SLOT_SIZE
+        self._buf[new_free_start : self.free_start] = bytes(SLOT_SIZE)
+        self.slot_count = slot_count - 1
+        self.free_start = new_free_start
+        return True
+
+    def clear_records(self) -> None:
+        """Drop every slot and every payload, keeping the page's type and links.
+
+        Used when a node is rebuilt from a new entry list after a split. Zeroing
+        rather than reusing means a hexdump of a split node never shows half of
+        the pre-split contents, which would be baffling in the page inspector.
+        """
+        self._buf[PAGE_HEADER_SIZE : self._page_size] = bytes(
+            self._page_size - PAGE_HEADER_SIZE
+        )
+        self.slot_count = 0
+        self.free_start = PAGE_HEADER_SIZE
+        self.free_end = self._page_size
+
     def read(self, slot_id: int) -> bytes | None:
         """Return the payload in ``slot_id``, or ``None`` if the slot is dead."""
         if not 0 <= slot_id < self.slot_count:

@@ -34,7 +34,9 @@
     "example": ".venv/bin/python examples/milestone1_storage.py",
     "regen_api_types": ".venv/bin/python scripts/generate_api_types.py && rm -rf .openapi-tmp",
     "make": "make help lists everything",
-    "browser_verify": "Use mcp__Claude_Browser__preview_start with {name: 'visualizer'} (.claude/launch.json defines it), then read_page/computer. Start the Python server separately with Bash first."
+    "browser_verify": "Use mcp__Claude_Browser__preview_start with {name: 'visualizer'} (.claude/launch.json defines it), then read_page/computer. Start the Python server separately with Bash first.",
+    "bench_index": ".venv/bin/python benchmarks/index_vs_scan.py",
+    "example_m5": ".venv/bin/python examples/milestone5_indexes.py"
   },
   "status": {
     "milestone_1": {
@@ -46,7 +48,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 5 \u2014 B+ tree indexes and tree visualizer. NOT STARTED. See milestone_5_plan below.",
+    "next": "Milestone 6 \u2014 binder, logical + physical plans, cost model, EXPLAIN. NOT STARTED. See milestone_6_plan below.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -54,6 +56,10 @@
     "milestone_4": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/catalog/{system,catalog}.py; FILE FORMAT v2 (meta page holds catalog_tables_* / catalog_columns_* / next_table_id); Database API is table-scoped; /catalog + /tables endpoints; visualizer Catalog + Table detail panels."
+    },
+    "milestone_5": {
+      "state": "COMPLETE and MERGED to master",
+      "shipped": "engine/index/{key,node,bplustree}.py; FILE FORMAT v3 (chendb_indexes system table, id 3; meta page gains catalog_indexes_*; next_table_id renamed next_object_id and now serves both tables and indexes); Page.insert_at / delete_at / clear_records for ordered slot directories; CREATE [UNIQUE] INDEX in the parser and executor; IndexScan operator + rule-based access-path choice in choose_access_path(); index maintenance on Database.insert_many and delete; 6 index events; StepKind.INDEX_OPERATION + ResumeMode.UNTIL_INDEX_OPERATION; /indexes endpoints incl. a traced search; visualizer Indexes workspace (hand-drawn SVG B+ tree, traced descent, node -> page inspector); benchmarks/index_vs_scan.py; examples/milestone5_indexes.py; docs/milestone-05-btree-index.md. ALSO fixed the CLI (python -m engine), broken since M4 when the Database row API became table-scoped, and added tests/integration/test_cli.py."
     }
   },
   "architecture_invariants": {
@@ -80,7 +86,14 @@
     "volcano_model": "Explicit open()/next()/close() rather than Python generators, because it is the real volcano interface, operators must be inspectable while suspended, and pausing between calls must be trivial. Cost is a method call per row per operator; vectorised execution (batches of ~2048) is the big idea deliberately given up.",
     "step_mode": "StepController blocks the engine thread on a threading.Condition at checkpoints. Cancellation RAISES inside the engine thread at the next checkpoint so operators unwind through close(). 'Run until page read' works by registering the controller as a diagnostics SINK \u2014 storage knows nothing about stepping. A paused execution holds its database lock; cancel() deliberately needs no lock. ExecutionStore.reap() cancels idle executions on every store operation (no background timer).",
     "catalog_bootstrap": "The system tables' own schemas are COMPILED IN (engine/catalog/system.py), not stored \u2014 otherwise decoding chendb_tables would require reading chendb_tables. Unlike PostgreSQL, chendb_tables holds NO row about itself: that would be two sources of truth for where the catalog lives. System descriptors are synthesised from the compiled schemas plus the meta pointers. Table ids 1-2 are system, users start at 100, 3-99 reserved for future system tables.",
-    "catalog_cache": "Lookups cached in memory per open database; a miss is O(tables)+O(columns) page reads. Coherence by single writer: every mutation goes through Catalog and updates the cache in the same call. CRITICAL: when a table's heap extends, its chendb_tables row must be rewritten \u2014 a stale last_page makes a reopened database append into the MIDDLE of the chain, silently."
+    "catalog_cache": "Lookups cached in memory per open database; a miss is O(tables)+O(columns) page reads. Coherence by single writer: every mutation goes through Catalog and updates the cache in the same call. CRITICAL: when a table's heap extends, its chendb_tables row must be rewritten \u2014 a stale last_page makes a reopened database append into the MIDDLE of the chain, silently.",
+    "index_key_encoding": "M5 index keys use an ORDER-PRESERVING encoding (big-endian, sign-flipped) so a comparison is one memcmp, not two struct.unpack calls. It is a SECOND encoding, separate from serialization/types.py, which stays little-endian for records. Every key carries a 1-byte tag: 0x00 minus-infinity, 0x01 NULL, 0x02 value. The tag is what orders NULL (below every value, SQLite-style) and what gives internal nodes a sentinel first separator, removing the need for a 'leftmost child' header field.",
+    "index_entry_sort_key": "B+ tree entries sort by (key, record_id), not key alone, so every entry is unique. That makes duplicates splittable anywhere and makes deleting one row's entry a descent instead of a scan. PostgreSQL 12 did the same. They compare as a PAIR, not as concatenated bytes \u2014 concatenating reintroduces the prefix problem and would need an escape-and-terminate layer, which is also why M5 indexes ONE column.",
+    "no_node_merging": "The tree never merges on delete: an entry is removed, the leaf is left underfull, an emptied leaf stays linked. Deliberate \u2014 merging needs sibling+parent locking that only breaks under load. Space is reused in place by later inserts (test_space_from_deletions_is_reused_in_place) but never returned to the file.",
+    "split_point": "plan_split() balances by BYTES then clamps to the range where both halves fit. By count breaks on variable-width TEXT keys. The clamp range is provably non-empty: a node overflows once, so total <= capacity + one entry, and one entry always fits on a page alone.",
+    "rule_based_access_path": "Access-path choice is RULE-based in M5 and knowingly wrong above ~5% selectivity \u2014 benchmarks/index_vs_scan.py shows the index 3.8x SLOWER at 70% selectivity, because it does one random heap read per matching row. That is the evidence M6's cost model is built to act on; do NOT 'fix' it with a hand-tuned threshold.",
+    "null_and_range_bounds": "A range bounded only from above must anchor its low end at SMALLEST_VALUE_KEY (b'\\x02'), or it sweeps up the NULL keys \u2014 and no comparison is ever true for NULL. See _bounds_for() in engine/executor/engine.py.",
+    "btree_view_is_hand_drawn": "The B+ tree view is hand-drawn SVG, not d3-hierarchy and not React Flow. d3's tidy-tree assumes uniform node widths and only draws tree edges; a B+ tree node is a variable-width row of cells and the leaf chain is not a tree edge. Placing boxes directly is less code than bending d3 to it, and adds no dependency."
   },
   "gotchas": [
     "The visualizer needs BOTH resolve.alias in vite.config.ts AND paths in tsconfig.json for '@/*'. tsc passing does not mean Rollup will resolve it.",
@@ -99,29 +112,37 @@
     "Column `position` is stored in chendb_columns and is load-bearing: a heap scan returns PHYSICAL order, not column order, and they diverge once a deleted slot is reused. _load_schema sorts by position and rejects non-contiguous positions as corruption.",
     "File format v2: version-1 files are rejected on open, deliberately. Delete old *.chendb files after pulling M4.",
     "GET /databases/{db} now scans the catalog, so it CAUSES page reads. Do not use it to measure page reads across an operation without calibrating against two back-to-back probes.",
-    "Milestone 5 will need FORMAT VERSION 3 (meta page gains catalog_indexes_first/last). Bump FORMAT_VERSION in engine/storage/constants.py, extend META_HEADER_FORMAT in engine/storage/meta.py, and update _meta_header_fields in engine/storage/inspect.py \u2014 those three plus the MetaPage dataclass are the whole change surface."
+    "Milestone 5 will need FORMAT VERSION 3 (meta page gains catalog_indexes_first/last). Bump FORMAT_VERSION in engine/storage/constants.py, extend META_HEADER_FORMAT in engine/storage/meta.py, and update _meta_header_fields in engine/storage/inspect.py \u2014 those three plus the MetaPage dataclass are the whole change surface.",
+    "An event dataclass field named `level` or `category` SILENTLY COLLIDES with DiagnosticEvent's ClassVars: re-annotating a ClassVar as an instance field makes dataclass build a broken __init__ ('non-default argument follows default argument'). Index events use `tree_level` for this reason.",
+    "Page.insert_at / delete_at RENUMBER slots. Correct for index pages (nothing outside holds an index slot id), catastrophic for heaps (every RecordId would move). Never call them from heap.py. PostgreSQL draws the same line with PageIndexTupleDelete.",
+    "Database.insert_many / delete now walk every index on the table, so an insert emits catalog lookups and a chendb_indexes heap scan before the first RecordInsertedEvent. Tests counting the first N events off the WS must filter by event_type \u2014 see drain_events(of_type=...) in tests/integration/test_websocket.py.",
+    "Database.delete has to READ the row before deleting it, because an index entry is keyed on the value. That is why a delete costs a read even when the caller knows the address, and why PostgreSQL defers index cleanup to VACUUM instead.",
+    "create_index populates the tree BEFORE inserting the chendb_indexes row, so root splits during the build are already reflected in the root_page written. The on_root_changed callback is attached only afterwards, for later splits.",
+    "The CLI (python -m engine) had NO tests and was broken from M4 through M5 \u2014 db.table and db.schema became a method and a removed attribute. tests/integration/test_cli.py now covers every command. Keep it that way: it is one of the three promised usage modes.",
+    "examples/milestone1_storage.py was also broken by M4's table-scoped API and is fixed. Nothing runs the examples in CI; check them by hand after an API change: for f in examples/milestone*.py; do .venv/bin/python \"$f\" >/dev/null || echo FAIL $f; done"
   ],
   "test_layout": {
-    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog",
-    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api",
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree",
+    "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "619 Python tests, 62 frontend tests",
-    "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256."
+    "counts_at_handover": "790 Python tests, 76 frontend tests",
+    "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
+    "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly."
   },
-  "milestone_5_plan": {
-    "goal": "Disk-backed B+ tree: point lookup, insert, node split, range scan, linked leaves. Plus CREATE INDEX, an index system table, and the real-tree visualizer.",
+  "milestone_6_plan": {
+    "goal": "A real planner: bind to a logical plan, enumerate physical alternatives, cost them with statistics, pick one, and show the rejected ones. Plus EXPLAIN.",
     "engine_files_to_create": [
-      "engine/index/node.py \u2014 BTreeNode over a Page. PageType.BTREE_INTERNAL=4 / BTREE_LEAF=5 already exist in storage/constants.py. Reuse the slotted page: each slot is one (key, payload) entry, so splits reuse Page.compact/insert. Leaf payload = RecordId (page_id:u32, slot_id:u16). Internal payload = child page id (u32). Leaf header needs next_leaf_id \u2014 put it in the page header's existing next_page_id field (heaps and leaves never share a page).",
-      "engine/index/key.py \u2014 order-preserving key encoding. THIS IS THE DESIGN CRUX: storage/types.py encodes integers LITTLE-endian, which does NOT sort by memcmp. Either (a) encode index keys BIG-endian with a sign flip so memcmp ordering works (what RocksDB/FoundationDB do \u2014 see the note already in types.py), or (b) decode both keys and compare Python values. (a) is faster and is the better teaching point; (b) is less code. Pick one and document the tradeoff.",
-      "engine/index/bplustree.py \u2014 BPlusTree: search(key), insert(key, RecordId), range_scan(low, high), delete later. Root page id stored in the catalog. Split promotes the middle key; root split allocates a new root and grows the tree by one level.",
-      "engine/catalog/system.py \u2014 add INDEXES_TABLE (id 3, already inside the reserved 3..99 gap): index_id, table_id, name, column_position, root_page, unique. Add to SYSTEM_TABLE_NAMES; meta page needs catalog_indexes_first/last \u2192 FORMAT VERSION 3."
+      "engine/planner/logical.py \u2014 logical operators (Scan, Filter, Project) built by the binder, independent of how they will run. engine/executor/binder.py already produces BoundSelect; M6 should make it produce a logical plan and leave binder.py doing only name resolution.",
+      "engine/optimizer/cost.py \u2014 the cost model. It needs statistics that do not exist yet: row counts (heap.count() is O(pages), so cache it), distinct values per column, ideally a histogram. Decide where they live \u2014 a chendb_stats system table would be FORMAT VERSION 4; an in-memory per-open-database cache would not.",
+      "engine/optimizer/rules.py \u2014 rewrite rules. Two exist informally and should move here: dropping an identity projection (build_select_plan) and folding comparisons into an index range (choose_access_path).",
+      "engine/planner/physical.py \u2014 enumerate alternatives and pick the cheapest. choose_access_path() in engine/executor/engine.py is the seed: it already returns an AccessPath with the index condition split from the residual filter, which is exactly what EXPLAIN prints as 'Index Cond' vs 'Filter'."
     ],
-    "events_to_add": "IndexSearchEvent, IndexDescentEvent (VERBOSE), NodeSplitEvent, NodeMergeEvent, RangeScanEvent \u2014 signatures already specified in docs/event-schema.md under 'Planned events'. Category EventCategory.INDEX already exists.",
-    "executor": "Add IndexScan operator (engine/executor/operators.py). build_select_plan currently always picks SeqScan \u2014 M5 should pick IndexScan when the WHERE is an equality or range on an indexed column. Keep the choice RULE-based; the COST model is M6. Add StepKind.INDEX_OPERATION + ResumeMode.UNTIL_INDEX_OPERATION to controller.py (_STOPS_AT is the only place to touch \u2014 the spec's 'run until next index operation' becomes one line).",
-    "api": "GET /databases/{db}/indexes, GET /databases/{db}/indexes/{name} returning the tree as a FLAT node list + root_id (same pattern as the AST and the plan, for the same reasons). Flip features.indexes in engine/server/app.py; MILESTONE = 5; version 0.5.0 in engine/__init__.py AND pyproject.toml.",
-    "visualizer": "New 'Index' workspace tab gated on features.indexes. Must show multi-key nodes and leaf sibling links \u2014 the spec explicitly forbids a generic binary-tree component. D3 is allowed here for the tree layout (first justified use). Also an educational sandbox mode alongside the real-index mode.",
-    "tests": "tests/unit/test_bplustree.py \u2014 key ordering (esp. negative integers and TEXT), leaf splits, internal splits, ROOT split growing the tree, range scans crossing leaf links, duplicate keys, and a stress test inserting enough rows to reach depth 3. Use TINY_PAGE_SIZE=256 so splits happen after a handful of keys.",
-    "gotcha_to_expect": "The heap's on_pages_changed callback pattern is the model for keeping an index's root_page in the catalog when a root split changes it \u2014 see Catalog._page_updater."
+    "the_number_to_beat": "benchmarks/index_vs_scan.py, 20k rows, 4 KiB pages: the index wins at <=5% selectivity (0.7 ms vs 57.9 ms at 0.1%) and loses above ~20% (225 ms vs 60 ms at 70%). M6 succeeds when the last two rows of that table come out as SeqScan. Add an assertion for that once the cost model exists.",
+    "events_to_add": "LogicalPlanEvent, PhysicalPlanEvent, PlanAlternativeEvent, CostEstimateEvent \u2014 signatures already in docs/event-schema.md under 'Planned events'. EventCategory.PLANNER exists. Remember the `level` field-name trap.",
+    "sql": "EXPLAIN is currently in parser._NOT_YET pointing at Milestone 6. Add ExplainStatement to ast.py and a branch in parse_statement; the executor should return the plan as a QueryResult with rows rather than a special response shape.",
+    "api": "Flip features.planner in engine/server/app.py; MILESTONE = 6; version 0.6.0 in engine/__init__.py AND pyproject.toml. PlanModel already carries per-operator actual stats; M6 adds estimated_rows / estimated_cost alongside them so the UI can show estimated-vs-actual, the single most useful planner view.",
+    "visualizer": "A Plan workspace gated on features.planner: the chosen plan beside the rejected alternatives with their costs, and estimated-vs-actual per operator. React Flow is justified if the plan becomes a DAG (it is a tree today, and features/execution/PlanTree.tsx already renders trees well).",
+    "gotcha_to_expect": "Statistics go stale. Whatever M6 caches, decide explicitly when it is invalidated \u2014 PostgreSQL's answer is that reltuples is an ESTIMATE refreshed by ANALYZE, and being honest that it is an estimate beats pretending to keep it exact on every insert."
   }
 }

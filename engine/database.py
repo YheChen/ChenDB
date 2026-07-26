@@ -50,10 +50,11 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from engine.catalog.catalog import Catalog, TableInfo
+from engine.catalog.catalog import Catalog, IndexInfo, TableInfo
 from engine.diagnostics.events import DatabaseClosedEvent, DatabaseOpenedEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
-from engine.errors import CatalogError, ChenDBError
+from engine.errors import CatalogError, ChenDBError, RecordNotFoundError
+from engine.index.bplustree import BPlusTree
 from engine.serialization.record import (
     RecordLayout,
     Row,
@@ -173,26 +174,83 @@ class Database:
         self._ensure_open()
         return self._catalog.heap_for(name)
 
+    # -- indexes -----------------------------------------------------------
+
+    def create_index(
+        self, name: str, table: str, column: str, *, unique: bool = False
+    ) -> IndexInfo:
+        """Build a B+ tree over one column, populated from the existing rows."""
+        self._ensure_open()
+        index = self._catalog.create_index(name, table, column, unique=unique)
+        self.sync()
+        return index
+
+    def index(self, name: str) -> IndexInfo | None:
+        self._ensure_open()
+        return self._catalog.get_index(name)
+
+    def indexes(self, table: str | None = None) -> list[IndexInfo]:
+        """Every index, optionally narrowed to one table."""
+        self._ensure_open()
+        return self._catalog.list_indexes(table)
+
+    def tree_for(self, name: str) -> BPlusTree:
+        """The B+ tree behind an index. For the executor and the tree view."""
+        self._ensure_open()
+        return self._catalog.tree_for(name)
+
+    def lookup(self, index_name: str, value: Any) -> list[Row]:
+        """Every row whose indexed column equals ``value``.
+
+        Two steps, and the second is the one that costs: the tree gives record
+        ids, then each row is fetched from the heap by address. Those fetches are
+        scattered across the file, so an index that matches many rows can be
+        *slower* than a sequential scan — the reason a real planner refuses an
+        index once its estimated selectivity gets too high.
+        """
+        index = self._catalog.require_index(index_name)
+        info = self.require_table(index.table_name)
+        heap = self._catalog.heap_for(info.name)
+        tree = self._catalog.tree_for(index.name)
+        return [
+            decode_record(info.schema, heap.get(record_id))
+            for record_id in tree.search(index.encode(value))
+        ]
+
     # -- rows --------------------------------------------------------------
 
     def insert(self, table: str, values: Sequence[Any]) -> RecordId:
-        """Encode ``values`` and append them to ``table``."""
-        info = self.require_table(table)
-        return self._catalog.heap_for(info.name).insert(
-            encode_record(info.schema, values)
-        )
+        """Encode ``values`` and append them to ``table``, updating its indexes."""
+        return self.insert_many(table, (values,))[0]
 
     def insert_many(
         self, table: str, rows: Sequence[Sequence[Any]]
     ) -> list[RecordId]:
-        """Insert several rows. Still one page write per row in Milestone 4.
+        """Insert several rows. Still one page write per row in Milestone 5.
 
         A real bulk loader fills a page in memory and writes it once; that becomes
         possible when the buffer pool lands in Milestone 7.
+
+        Every index on the table is updated in the same call.  That is the cost
+        indexes impose on writes and the reason they are not free: an insert into
+        a table with three indexes is four B+ tree descents plus the heap write.
+        Not atomic — a unique violation on the second index leaves the first one
+        updated and the row in the heap — which is one more thing Milestone 9's
+        write-ahead log is for.
         """
         info = self.require_table(table)
         heap = self._catalog.heap_for(info.name)
-        return [heap.insert(encode_record(info.schema, row)) for row in rows]
+        indexes = self._catalog.list_indexes(info.name)
+
+        record_ids: list[RecordId] = []
+        for row in rows:
+            record_id = heap.insert(encode_record(info.schema, row))
+            record_ids.append(record_id)
+            for index in indexes:
+                self._catalog.tree_for(index.name).insert(
+                    index.encode(row[index.column_position]), record_id
+                )
+        return record_ids
 
     def get(self, table: str, record_id: RecordId) -> Row:
         """Fetch and decode one row by its physical address."""
@@ -224,9 +282,28 @@ class Database:
         return [row for _, row in self.scan(table)]
 
     def delete(self, table: str, record_id: RecordId) -> bool:
-        """Tombstone one row. Returns ``False`` if it was already gone."""
+        """Tombstone one row and remove it from every index.
+
+        The row has to be read before it is deleted: an index entry is keyed on
+        the *value*, so removing it needs to know what that value was. This is
+        why a delete costs a read even when the caller already knows the address,
+        and why PostgreSQL instead leaves index entries pointing at dead tuples
+        and cleans them up later in ``VACUUM``.
+        """
         info = self.require_table(table)
-        return self._catalog.heap_for(info.name).delete(record_id)
+        heap = self._catalog.heap_for(info.name)
+        indexes = self._catalog.list_indexes(info.name)
+
+        if indexes:
+            try:
+                values = decode_record(info.schema, heap.get(record_id))
+            except RecordNotFoundError:
+                return False
+            for index in indexes:
+                self._catalog.tree_for(index.name).delete(
+                    index.encode(values[index.column_position]), record_id
+                )
+        return heap.delete(record_id)
 
     def count(self, table: str) -> int:
         """Live row count. O(pages) — there is no cached count."""
@@ -272,10 +349,10 @@ class Database:
         return frozenset(self._catalog.heap_for(info.name).page_ids())
 
     def page_owners(self) -> dict[int, str]:
-        """Which table each page belongs to, for the disk map.
+        """Which table or index each page belongs to, for the disk map.
 
-        Walks every table's chain, so it costs O(pages) reads. Only the inspector
-        calls it.
+        Walks every heap chain and every tree, so it costs O(pages) reads. Only
+        the inspector calls it.
         """
         self._ensure_open()
         owners: dict[int, str] = {}
@@ -286,6 +363,7 @@ class Database:
                 continue
             for page_id in heap.page_ids():
                 owners[page_id] = info.name
+        owners.update(self._catalog.index_page_ids())
         return owners
 
     def page_summaries(self) -> list[PageSummary]:

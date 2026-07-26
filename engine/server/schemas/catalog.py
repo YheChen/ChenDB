@@ -64,12 +64,16 @@ class CatalogStatsModel(ApiModel):
     hit_rate: float
     scans: int
     tables_created: int
+    indexes_created: int
 
 
 class CatalogResponse(ApiModel):
     tables: list[TableSummary]
     system_tables: list[TableSummary]
-    next_table_id: int = Field(description="Id the next created table will receive")
+    next_object_id: int = Field(
+        description="Id the next created table or index will receive; one "
+        "sequence serves both, as PostgreSQL's OID counter does"
+    )
     stats: CatalogStatsModel
 
 

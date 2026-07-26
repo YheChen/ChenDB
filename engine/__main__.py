@@ -22,6 +22,8 @@ from engine import __version__
 from engine.database import Database
 from engine.diagnostics import RingBufferSink, TraceLevel, Tracer
 from engine.errors import ChenDBError
+from engine.executor.engine import execute_script
+from engine.executor.operators import describe_plan
 from engine.serialization.schema import Column, Schema
 from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE
@@ -35,19 +37,26 @@ _DEFAULT_SCAN_LIMIT = 50
 _DEFAULT_EVENT_LIMIT = 20
 _DEFAULT_HEX_BYTES = 256
 
-_BANNER = f"""ChenDB {__version__} — Milestone 1 (storage engine)
-Type .help for commands, .quit to exit."""
+_BANNER = f"""ChenDB {__version__} — Milestone 5 \
+(storage + parser + execution + catalog + indexes)
+Type .help for commands, .quit to exit. Anything not starting with '.' is SQL."""
 
 _HELP = """\
+  <sql>;                         run SQL — SELECT, INSERT, CREATE TABLE/INDEX
   .help                          show this message
   .info                          database file and meta-page summary
-  .schema                        the table's columns
-  .create TABLE col:TYPE[!][*]   define the table  (! = NOT NULL, * = PRIMARY KEY)
+  .tables                        every table, with row and page counts
+  .use TABLE                     make TABLE the target of .schema/.scan/…
+  .schema [TABLE]                a table's columns
+  .create TABLE col:TYPE[!][*]   define a table  (! = NOT NULL, * = PRIMARY KEY)
                                  TYPE is INTEGER, FLOAT, BOOLEAN or TEXT
   .insert v1 | v2 | v3           insert one row  (NULL for a null value)
   .scan [limit]                  print rows
   .count                         live row count
   .delete PAGE SLOT              tombstone the record at (page, slot)
+  .indexes                       every index, with height and size
+  .tree NAME                     one B+ tree, level by level
+  .find NAME VALUE               trace a point lookup through an index
   .pages                         one line per page in the file
   .page ID                       decoded header, slot directory and records
   .map ID                        ASCII map of a page's regions
@@ -66,6 +75,25 @@ class Shell:
     def __init__(self, db: Database, sink: RingBufferSink) -> None:
         self.db = db
         self.sink = sink
+        self._table: str | None = None
+
+    # -- the current table -------------------------------------------------
+    #
+    # A database holds many tables from Milestone 4 on, but a REPL where every
+    # command repeats the table name is tedious. One "current table", defaulting
+    # to the only one when there is only one, keeps the short commands short.
+
+    @property
+    def table(self) -> str:
+        if self._table is not None and self.db.table(self._table) is not None:
+            return self._table
+        names = self.db.table_names()
+        if not names:
+            raise ValueError("no tables yet; use .create or CREATE TABLE")
+        if len(names) > 1 and self._table is None:
+            raise ValueError(f"pick one with .use: {', '.join(names)}")
+        self._table = names[0]
+        return self._table
 
     # -- dispatch ----------------------------------------------------------
 
@@ -75,10 +103,7 @@ class Shell:
         if not line or line.startswith("--"):
             return True
         if not line.startswith("."):
-            print(
-                "Milestone 1 has no SQL parser yet — that is Milestone 2.\n"
-                "Use dot-commands; .help lists them."
-            )
+            self._run_sql(line)
             return True
 
         command, _, rest = line.partition(" ")
@@ -94,6 +119,40 @@ class Shell:
             print(f"bad arguments: {exc}")
         return command not in (".quit", ".exit")
 
+    # -- SQL ---------------------------------------------------------------
+
+    def _run_sql(self, sql: str) -> None:
+        """Run one or more statements and print whatever each produced."""
+        try:
+            results = execute_script(sql, self.db, tracer=self.db.tracer)
+        except ChenDBError as exc:
+            print(f"error: {exc}")
+            return
+        for result in results:
+            if result.message:
+                print(result.message)
+            if not result.returns_rows:
+                continue
+            names = [column.name for column in result.columns]
+            widths = [max(len(name), 12) for name in names]
+            print("  ".join(name.ljust(w) for name, w in zip(names, widths, strict=True)))
+            print("-" * (sum(widths) + 2 * (len(widths) - 1)))
+            for row in result.rows:
+                print(
+                    "  ".join(
+                        _render_value(value).ljust(w)
+                        for value, w in zip(row, widths, strict=True)
+                    )
+                )
+            plan = describe_plan(result.plan) if result.plan else ""
+            print(
+                f"({result.stats.rows_returned} row(s), "
+                f"{result.stats.pages_read} page(s) read, "
+                f"{result.stats.duration_ns / 1e6:.2f} ms)"
+            )
+            if plan:
+                print(plan)
+
     # -- commands ----------------------------------------------------------
 
     def _cmd_help(self, _: str) -> None:
@@ -107,25 +166,52 @@ class Shell:
 
     def _cmd_info(self, _: str) -> None:
         meta = self.db.pager.meta
-        table = self.db.table
         print(f"path         {self.db.path}")
         print(f"page size    {meta.page_size} bytes")
         print(f"pages        {meta.page_count}")
         print(f"file size    {meta.page_count * meta.page_size} bytes")
         print(f"format       version {meta.format_version}")
         print(f"free list    {_page_ref(meta.free_list_head)}")
-        print(f"schema page  {_page_ref(meta.schema_page_id)}")
         print(
-            f"heap pages   {_page_ref(meta.heap_first_page)}"
-            f" .. {_page_ref(meta.heap_last_page)}"
+            f"chendb_tables   {_page_ref(meta.catalog_tables_first)}"
+            f" .. {_page_ref(meta.catalog_tables_last)}"
         )
-        print(f"table        {table.name if table else '(none)'}")
+        print(
+            f"chendb_columns  {_page_ref(meta.catalog_columns_first)}"
+            f" .. {_page_ref(meta.catalog_columns_last)}"
+        )
+        print(
+            f"chendb_indexes  {_page_ref(meta.catalog_indexes_first)}"
+            f" .. {_page_ref(meta.catalog_indexes_last)}"
+        )
+        print(f"next object id  {meta.next_object_id}")
+        print(f"tables       {', '.join(self.db.table_names()) or '(none)'}")
+        print(f"indexes      {', '.join(i.name for i in self.db.indexes()) or '(none)'}")
 
-    def _cmd_schema(self, _: str) -> None:
-        table = self.db.table
-        if table is None:
-            print("no table yet; use .create")
+    def _cmd_tables(self, _: str) -> None:
+        names = self.db.table_names()
+        if not names:
+            print("no tables yet; use .create or CREATE TABLE")
             return
+        print(f"{'table':<20} {'cols':>5} {'rows':>8} {'pages':>6}  indexes")
+        for name in names:
+            info = self.db.require_table(name)
+            heap = self.db.heap_for(name)
+            indexes = ", ".join(i.name for i in self.db.indexes(name)) or "-"
+            marker = "*" if name == self._table else " "
+            print(
+                f"{marker}{info.name:<19} {len(info.schema):>5} {heap.count():>8} "
+                f"{heap.page_count():>6}  {indexes}"
+            )
+
+    def _cmd_use(self, rest: str) -> None:
+        name = rest.strip()
+        info = self.db.require_table(name)
+        self._table = info.name
+        print(f"current table is {info.name}")
+
+    def _cmd_schema(self, rest: str) -> None:
+        table = self.db.require_table(rest.strip() or self.table)
         print(f"TABLE {table.name}")
         for index, column in enumerate(table.schema):
             flags = "".join(
@@ -138,6 +224,9 @@ class Shell:
         print(f"  null bitmap: {table.schema.null_bitmap_size} byte(s)")
         fixed = table.schema.fixed_row_size
         print(f"  row size:    {fixed} bytes (fixed)" if fixed else "  row size:    variable")
+        for info in self.db.indexes(table.name):
+            kind = "UNIQUE INDEX" if info.unique else "INDEX"
+            print(f"  {kind} {info.name} ({info.column_name})")
 
     def _cmd_create(self, rest: str) -> None:
         parts = shlex.split(rest)
@@ -146,26 +235,29 @@ class Shell:
         name, specs = parts[0], parts[1:]
         schema = Schema(tuple(_parse_column_spec(spec) for spec in specs))
         descriptor = self.db.create_table(name, schema)
+        self._table = descriptor.name
         print(f"created table {descriptor.name} with {len(schema)} column(s)")
 
     def _cmd_insert(self, rest: str) -> None:
-        schema = self.db.schema
+        table = self.table
+        schema = self.db.schema_of(table)
         raw_values = [part.strip() for part in rest.split("|")]
         values = [
             _parse_value(text, column.data_type)
             for text, column in zip(raw_values, schema, strict=True)
         ]
-        record_id = self.db.insert(values)
+        record_id = self.db.insert(table, values)
         print(f"inserted at {record_id}")
 
     def _cmd_scan(self, rest: str) -> None:
         limit = int(rest) if rest else _DEFAULT_SCAN_LIMIT
-        schema = self.db.schema
+        table = self.table
+        schema = self.db.schema_of(table)
         header = ["rid".ljust(9)] + [name.ljust(16) for name in schema.column_names]
         print("  ".join(header))
         print("-" * (len("  ".join(header))))
         shown = 0
-        for record_id, row in self.db.scan():
+        for record_id, row in self.db.scan(table):
             if shown >= limit:
                 print(f"... stopped at {limit} rows; .scan N for more")
                 break
@@ -177,12 +269,68 @@ class Shell:
         print(f"({shown} row(s))")
 
     def _cmd_count(self, _: str) -> None:
-        print(self.db.count())
+        print(self.db.count(self.table))
 
     def _cmd_delete(self, rest: str) -> None:
         page_id, slot_id = (int(part) for part in rest.split())
-        deleted = self.db.delete(RecordId(page_id, slot_id))
+        deleted = self.db.delete(self.table, RecordId(page_id, slot_id))
         print("deleted" if deleted else "no live record there")
+
+    # -- indexes -----------------------------------------------------------
+
+    def _cmd_indexes(self, _: str) -> None:
+        indexes = self.db.indexes()
+        if not indexes:
+            print("no indexes; try CREATE INDEX ix ON t (c)")
+            return
+        print(
+            f"{'index':<22} {'on':<22} {'type':<8} {'h':>2} {'entries':>9} "
+            f"{'pages':>6}  unique"
+        )
+        for info in indexes:
+            tree = self.db.tree_for(info.name)
+            print(
+                f"{info.name:<22} {info.table_name + '.' + info.column_name:<22} "
+                f"{info.data_type.sql_name:<8} {tree.height:>2} {tree.count():>9} "
+                f"{len(tree.page_ids()):>6}  {'yes' if info.unique else '-'}"
+            )
+
+    def _cmd_tree(self, rest: str) -> None:
+        """Print the tree level by level. The leaf chain is shown as arrows."""
+        snapshot = self.db.tree_for(rest.strip()).snapshot()
+        print(f"root page {snapshot.root_page_id}, height {snapshot.height}")
+        if snapshot.truncated:
+            print(f"(showing the first {len(snapshot.nodes)} nodes)")
+        by_level: dict[int, list] = {}
+        for node in snapshot.nodes:
+            by_level.setdefault(node.level, []).append(node)
+        for level in sorted(by_level, reverse=True):
+            kind = "leaves" if level == 0 else f"level {level}"
+            print(f"\n{kind}:")
+            for node in by_level[level]:
+                keys = " ".join(node.keys[:8])
+                more = f" +{len(node.keys) - 8}" if len(node.keys) > 8 else ""
+                arrow = f"  -> p{node.next_leaf_id}" if node.next_leaf_id else ""
+                print(f"  p{node.page_id:<5} [{keys}{more}]{arrow}")
+
+    def _cmd_find(self, rest: str) -> None:
+        """Trace one point lookup: the path taken, and what it found."""
+        name, _, raw = rest.strip().partition(" ")
+        info = self.db.index(name)
+        if info is None:
+            known = ", ".join(i.name for i in self.db.indexes()) or "none"
+            raise ValueError(f"no index named {name!r}; this database has {known}")
+        value = _parse_value(raw.strip(), info.data_type)
+        tree = self.db.tree_for(info.name)
+        key = info.encode(value)
+        before = self.db.stats.page_reads
+        matches = tree.search(key)
+        print(f"path    {' -> '.join(f'p{page}' for page in tree.descent_path(key))}")
+        print(f"height  {tree.height}")
+        print(f"pages   {self.db.stats.page_reads - before} read")
+        print(f"found   {len(matches)} row(s): "
+              f"{' '.join(str(rid) for rid in matches[:12])}"
+              f"{' …' if len(matches) > 12 else ''}")
 
     def _cmd_pages(self, _: str) -> None:
         print(
@@ -327,7 +475,7 @@ def _page_ref(page_id: int) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m engine",
-        description="ChenDB interactive storage explorer (Milestone 1).",
+        description="ChenDB interactive storage and index explorer.",
     )
     parser.add_argument(
         "path",

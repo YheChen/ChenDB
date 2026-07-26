@@ -29,11 +29,17 @@ __all__ = [
     "DiagnosticEvent",
     "FileSyncEvent",
     "HeapScanEvent",
+    "IndexCreatedEvent",
+    "IndexDescentEvent",
+    "IndexSearchEvent",
+    "NodeMergeEvent",
+    "NodeSplitEvent",
     "PageAllocatedEvent",
     "PageCompactedEvent",
     "PageFreedEvent",
     "PageReadEvent",
     "PageWriteEvent",
+    "RangeScanEvent",
     "RecordDeletedEvent",
     "RecordInsertedEvent",
     "RecordReadEvent",
@@ -424,3 +430,131 @@ class TableCreatedEvent(DiagnosticEvent):
     table_id: int
     column_count: int
     first_page: int
+
+
+@dataclass(frozen=True, slots=True)
+class IndexCreatedEvent(DiagnosticEvent):
+    """An index was added to the catalog and populated from the table."""
+
+    category: ClassVar[EventCategory] = EventCategory.CATALOG
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    index_name: str
+    index_id: int
+    table_name: str
+    column_name: str
+    unique: bool
+    rows_indexed: int
+    root_page: int
+
+
+# --------------------------------------------------------------------------
+# Index (Milestone 5)
+# --------------------------------------------------------------------------
+#
+# Keys arrive here already rendered as strings. The alternative — carrying the
+# raw encoded bytes and the column type so a consumer could decode them — would
+# make every consumer of the event bus depend on engine.index.key, which is
+# exactly the coupling the "events are plain data" rule exists to prevent.
+
+
+@dataclass(frozen=True, slots=True)
+class IndexSearchEvent(DiagnosticEvent):
+    """A point lookup finished.
+
+    ``pages_visited`` against ``depth`` is the interesting pair: they are equal
+    for a clean descent, and larger when the search had to step right through
+    duplicates spanning several leaves.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.INDEX
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    index_name: str
+    key: str
+    found: bool
+    matches: int
+    pages_visited: int
+    depth: int
+    duration_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class IndexDescentEvent(DiagnosticEvent):
+    """One step down the tree, from a node to the child it chose.
+
+    ``VERBOSE`` because a descent emits one per level of every search, and the
+    aggregate is already reported by :class:`IndexSearchEvent`. Turning it on is
+    how the visualizer animates the path from root to leaf.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.INDEX
+    level: ClassVar[TraceLevel] = TraceLevel.VERBOSE
+
+    index_name: str
+    page_id: int
+    tree_level: int
+    """Distance from the root: 0 at the root, increasing downward.
+
+    Named ``tree_level`` and not ``level``: :class:`DiagnosticEvent` already
+    declares ``level`` as the *trace* level, and re-annotating a ``ClassVar`` as
+    an instance field makes ``dataclass`` build a broken ``__init__``.
+    """
+    child_page_id: int
+    separator: str
+
+
+@dataclass(frozen=True, slots=True)
+class NodeSplitEvent(DiagnosticEvent):
+    """A node overflowed and was cut in two.
+
+    ``is_root_split`` marks the only kind that changes the tree's height, and is
+    therefore the only kind that has to write a new root page id back to the
+    catalog.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.INDEX
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    index_name: str
+    page_id: int
+    new_page_id: int
+    tree_level: int
+    promoted_key: str
+    is_root_split: bool
+
+
+@dataclass(frozen=True, slots=True)
+class NodeMergeEvent(DiagnosticEvent):
+    """Two underfull nodes were combined.
+
+    Declared so the schema is complete and the visualizer can render it, but
+    never emitted: ChenDB does not merge on delete. See
+    :mod:`engine.index.bplustree` for why that is a deliberate choice.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.INDEX
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    index_name: str
+    page_id: int
+    sibling_page_id: int
+    tree_level: int
+
+
+@dataclass(frozen=True, slots=True)
+class RangeScanEvent(DiagnosticEvent):
+    """An ordered walk of the leaf chain finished.
+
+    Empty ``low`` or ``high`` means unbounded on that side.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.INDEX
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    index_name: str
+    low: str
+    high: str
+    leaves_visited: int
+    rows_emitted: int
+    duration_ns: int

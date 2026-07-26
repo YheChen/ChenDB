@@ -9,26 +9,26 @@ engine** rather than read from disk.  PostgreSQL generates them from
 ``pg_class.h`` and friends at build time; SQLite hardcodes the shape of
 ``sqlite_schema`` in ``prepare.c``.  ChenDB declares them here.
 
-    ┌─────────────────────────────────────────────────────────────┐
-    │ meta page (page 0)                                          │
-    │   catalog_tables_first  ──┐   catalog_columns_first  ──┐     │
-    └───────────────────────────┼───────────────────────────┼─────┘
-                                ▼                           ▼
-                     ┌──────────────────┐        ┌────────────────────┐
-                     │ chendb_tables    │        │ chendb_columns     │
-                     │  table_id        │        │  table_id          │
-                     │  name            │        │  position          │
-                     │  first_page ─────┼──▶     │  name              │
-                     │  last_page       │        │  type_id           │
-                     └──────────────────┘        │  nullable          │
-                              │                  │  primary_key       │
-                              ▼                  └────────────────────┘
-                     a user table's heap
+    ┌──────────────────────────────────────────────────────────────────────┐
+    │ meta page (page 0)                                                   │
+    │  catalog_tables_first ─┐  catalog_columns_first ─┐  catalog_indexes_first ─┐
+    └────────────────────────┼──────────────────────────┼──────────────────┼─────┘
+                             ▼                          ▼                  ▼
+                  ┌──────────────────┐     ┌────────────────────┐  ┌─────────────────┐
+                  │ chendb_tables    │     │ chendb_columns     │  │ chendb_indexes  │
+                  │  table_id        │     │  table_id          │  │  index_id       │
+                  │  name            │     │  position          │  │  table_id       │
+                  │  first_page ─────┼─▶   │  name              │  │  name           │
+                  │  last_page       │     │  type_id           │  │  column_position│
+                  └──────────────────┘     │  nullable          │  │  root_page ─────┼─▶
+                           │               │  primary_key       │  │  is_unique      │
+                           ▼               └────────────────────┘  └─────────────────┘
+                  a user table's heap                                 a B+ tree root
 
-The meta page holds only the two pointers needed to *start* reading. Everything
-else — including where every user table's heap begins — is a row in
-``chendb_tables``, which is the whole point: adding a table is an insert, not a
-file-format change.
+The meta page holds only the pointers needed to *start* reading. Everything
+else — including where every user table's heap begins and where every index's
+tree is rooted — is a row in a system table, which is the whole point: adding a
+table or an index is an insert, not a file-format change.
 
 One deliberate difference from PostgreSQL: ``chendb_tables`` does **not** contain
 rows describing itself. PostgreSQL's ``pg_class`` does have a row for
@@ -49,7 +49,10 @@ __all__ = [
     "COLUMNS_TABLE_ID",
     "COLUMNS_TABLE_NAME",
     "COLUMNS_TABLE_SCHEMA",
-    "FIRST_USER_TABLE_ID",
+    "FIRST_USER_OBJECT_ID",
+    "INDEXES_TABLE_ID",
+    "INDEXES_TABLE_NAME",
+    "INDEXES_TABLE_SCHEMA",
     "SYSTEM_TABLE_NAMES",
     "SYSTEM_TABLE_PREFIX",
     "TABLES_TABLE_ID",
@@ -63,18 +66,22 @@ SYSTEM_TABLE_PREFIX: Final = "chendb_"
 
 TABLES_TABLE_NAME: Final = "chendb_tables"
 COLUMNS_TABLE_NAME: Final = "chendb_columns"
+INDEXES_TABLE_NAME: Final = "chendb_indexes"
 
 #: Fixed ids, like PostgreSQL's hardcoded OIDs for the bootstrap catalogs.
+#: Milestone 4 left 3..99 reserved precisely so this could be added without
+#: renumbering anything already written to disk — and it was.
 TABLES_TABLE_ID: Final = 1
 COLUMNS_TABLE_ID: Final = 2
+INDEXES_TABLE_ID: Final = 3
 
-#: User tables start well above the reserved range, leaving room for future
-#: system tables (indexes in Milestone 5, sequences, constraints) without
-#: renumbering anything already written to disk.
-FIRST_USER_TABLE_ID: Final = 100
+#: Where the shared table/index id sequence starts.  One counter for both kinds
+#: of object, as PostgreSQL does with OIDs: an id then identifies a catalog
+#: object outright, rather than only within its own kind.
+FIRST_USER_OBJECT_ID: Final = 100
 
 SYSTEM_TABLE_NAMES: Final[frozenset[str]] = frozenset(
-    {TABLES_TABLE_NAME, COLUMNS_TABLE_NAME}
+    {TABLES_TABLE_NAME, COLUMNS_TABLE_NAME, INDEXES_TABLE_NAME}
 )
 
 
@@ -97,6 +104,21 @@ COLUMNS_TABLE_SCHEMA: Final[Schema] = Schema.of(
     Column("type_id", DataType.INTEGER, nullable=False),
     Column("nullable", DataType.BOOLEAN, nullable=False),
     Column("primary_key", DataType.BOOLEAN, nullable=False),
+)
+
+
+#: One row per index.  ``root_page`` is the mutable one: a root split allocates
+#: a new root page, and this row has to follow or the index becomes unreachable
+#: on the next open.  ``column_position`` rather than a column name, because
+#: position is what the record layout is keyed on — the same link
+#: ``chendb_columns`` uses.
+INDEXES_TABLE_SCHEMA: Final[Schema] = Schema.of(
+    Column("index_id", DataType.INTEGER, nullable=False, primary_key=True),
+    Column("table_id", DataType.INTEGER, nullable=False),
+    Column("name", DataType.TEXT, nullable=False),
+    Column("column_position", DataType.INTEGER, nullable=False),
+    Column("root_page", DataType.INTEGER, nullable=False),
+    Column("is_unique", DataType.BOOLEAN, nullable=False),
 )
 
 

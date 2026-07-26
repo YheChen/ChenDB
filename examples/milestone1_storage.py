@@ -64,24 +64,26 @@ def main() -> int:
         db.create_table("users", SCHEMA)
         print(f"   {len(SCHEMA)} columns, null bitmap {SCHEMA.null_bitmap_size} byte(s).")
         print(f"   Fixed row size: {SCHEMA.fixed_row_size or 'variable (TEXT column)'}")
-        print(f"   The file now holds {db.page_count} pages: meta, schema, heap.")
-        print("   The schema is persisted as JSON, so a reopened database can")
-        print("   still decode its rows. Milestone 4 replaces that with a catalog.")
+        print(f"   The file now holds {db.page_count} pages: the meta page, the")
+        print("   three catalog heaps, and this table's first heap page.")
+        print("   Milestone 1 kept the schema in a JSON page; since Milestone 4 it")
+        print("   is rows in chendb_tables and chendb_columns, so a reopened")
+        print("   database rebuilds it from the catalog like any other table.")
 
         # ------------------------------------------------------------------
         heading(3, "Insert rows and watch the heap chain grow")
         for row in ROWS:
-            record_id = db.insert(row)
+            record_id = db.insert("users", row)
             page_count = db.page_count
             print(f"   {row[1]!s:<22} → {record_id}   file: {page_count} pages")
         print()
-        print(f"   {len(ROWS)} rows over {len(db.heap_page_ids())} heap page(s).")
+        print(f"   {len(ROWS)} rows over {len(db.heap_page_ids("users"))} heap page(s).")
         print("   Pages are threaded by next_page_id; the meta page remembers")
         print("   the last one, so appending is O(1) instead of walking the chain.")
 
         # ------------------------------------------------------------------
         heading(4, "Look inside a heap page")
-        heap_page_id = min(db.heap_page_ids())
+        heap_page_id = min(db.heap_page_ids("users"))
         detail = db.page_detail(heap_page_id)
         print(render_page_map(detail))
         print()
@@ -113,8 +115,8 @@ def main() -> int:
 
         # ------------------------------------------------------------------
         heading(5, "Delete a row — a tombstone, not an erasure")
-        victim = next(rid for rid, _ in db.scan())
-        db.delete(victim)
+        victim = next(rid for rid, _ in db.scan("users"))
+        db.delete("users", victim)
         after = db.page_detail(victim.page_id)
         print(f"   Deleted {victim}.")
         print(f"   Slot {victim.slot_id} is now a tombstone, but slot_count is still")
@@ -129,14 +131,15 @@ def main() -> int:
         print(f"   Closed. On disk: {path.stat().st_size} bytes.")
 
         reopened = Database.open(path, tracer=tracer)
-        print(f"   Reopened. Table {reopened.table.name!r} came back from the file.")
-        print(f"   Columns: {', '.join(reopened.schema.column_names)}")
+        info = reopened.require_table("users")
+        print(f"   Reopened. Table {info.name!r} came back from the file.")
+        print(f"   Columns: {', '.join(info.schema.column_names)}")
         print()
-        for record_id, row in reopened.scan():
+        for record_id, row in reopened.scan("users"):
             rendered = ", ".join("NULL" if v is None else str(v) for v in row)
             print(f"   {record_id}  {rendered}")
         print()
-        print(f"   {reopened.count()} rows survived the restart.")
+        print(f"   {reopened.count('users')} rows survived the restart.")
 
         # ------------------------------------------------------------------
         heading(7, "The whole file, page by page")

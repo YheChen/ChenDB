@@ -43,15 +43,16 @@ over the batch. That is the single biggest performance idea this design gives up
 
 Complexity
 ----------
-=================  ==============================================
+=================  ==================================================
 Operator           Cost for *n* input rows
-=================  ==============================================
+=================  ==================================================
 ``SeqScan``        O(pages) reads, O(n) rows
+``IndexScan``      O(log n) descent + one heap read per matching row
 ``Filter``         O(n) predicate evaluations, no extra I/O
 ``Project``        O(n * projections) evaluations
-=================  ==============================================
+=================  ==================================================
 
-All three are streaming and use O(1) memory. A blocking operator — sort, hash
+All four are streaming and use O(1) memory. A blocking operator — sort, hash
 aggregate, hash join — would need O(n), and none exist yet.
 """
 
@@ -65,9 +66,12 @@ from typing import Any
 
 from engine.diagnostics.events import OperatorEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
+from engine.errors import RecordNotFoundError
 from engine.executor.binder import ResultColumn
 from engine.executor.controller import NULL_CONTROLLER, StepController, StepKind
 from engine.executor.expression import describe_expression, evaluate, is_true
+from engine.index.bplustree import BPlusTree
+from engine.index.key import SMALLEST_VALUE_KEY, describe_key
 from engine.parser.ast import Expression
 from engine.serialization.record import Row, decode_record
 from engine.serialization.schema import Schema
@@ -76,9 +80,11 @@ from engine.storage.heap import HeapFile, RecordId
 __all__ = [
     "ExecutionContext",
     "Filter",
+    "IndexScan",
     "Operator",
     "OperatorStats",
     "Project",
+    "ScanOperator",
     "SeqScan",
     "describe_plan",
 ]
@@ -257,18 +263,17 @@ class Operator(ABC):
         return f"<{self.operator_type} {self.operator_id} {self.detail}>"
 
 
-class SeqScan(Operator):
-    """Reads every live row of a heap, in physical order.
+class ScanOperator(Operator):
+    """A leaf that reads rows of one table from storage.
 
-    The only operator that touches storage. It decodes each record with the
-    table's schema, so everything above it deals in Python values.
-
-    Physical order is not insertion order after a delete — a tombstoned slot can
-    be reused — which is exactly why ``SELECT`` without ``ORDER BY`` guarantees
-    nothing about ordering.
+    Two of them exist — :class:`SeqScan` and :class:`IndexScan` — and they are
+    interchangeable: same output columns, same row shape, same ``last_record_id``
+    for the row inspector.  That interchangeability *is* the access path
+    abstraction, and it is what lets the planner swap one for the other without
+    anything above the leaf noticing.
     """
 
-    __slots__ = ("_heap", "_last_record_id", "_rows", "_schema", "_table_name")
+    __slots__ = ("_heap", "_last_record_id", "_schema", "_table_name")
 
     def __init__(
         self,
@@ -283,7 +288,6 @@ class SeqScan(Operator):
         self._heap = heap
         self._schema = schema
         self._table_name = table_name
-        self._rows: Iterator[tuple[RecordId, bytes]] | None = None
         self._last_record_id: RecordId | None = None
 
     @property
@@ -297,21 +301,53 @@ class SeqScan(Operator):
         )
 
     @property
-    def detail(self) -> str:
-        return f"table={self._table_name}"
+    def table_name(self) -> str:
+        return self._table_name
 
     @property
     def last_record_id(self) -> RecordId | None:
         """Where the row most recently emitted came from. For the row inspector."""
         return self._last_record_id
 
+    def _on_close(self) -> None:
+        self._last_record_id = None
+
+
+class SeqScan(ScanOperator):
+    """Reads every live row of a heap, in physical order.
+
+    Physical order is not insertion order after a delete — a tombstoned slot can
+    be reused — which is exactly why ``SELECT`` without ``ORDER BY`` guarantees
+    nothing about ordering.
+    """
+
+    __slots__ = ("_rows",)
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        heap: HeapFile,
+        schema: Schema,
+        table_name: str,
+    ) -> None:
+        super().__init__(
+            operator_id, context, heap=heap, schema=schema, table_name=table_name
+        )
+        self._rows: Iterator[tuple[RecordId, bytes]] | None = None
+
+    @property
+    def detail(self) -> str:
+        return f"table={self._table_name}"
+
     def _on_open(self) -> None:
         # A generator, so the first next() reads one page rather than the table.
         self._rows = self._heap.scan()
 
     def _on_close(self) -> None:
+        super()._on_close()
         self._rows = None
-        self._last_record_id = None
 
     def _produce(self) -> Row | None:
         assert self._rows is not None
@@ -322,6 +358,139 @@ class SeqScan(Operator):
         self.stats.input_rows += 1
         self._last_record_id = record_id
         return decode_record(self._schema, payload)
+
+
+class IndexScan(ScanOperator):
+    """Reads rows through a B+ tree instead of walking the heap.
+
+    Two costs, and only the first one is the win::
+
+        tree.range_scan(low, high)  →  (key, record_id)   O(log n) + matches
+        heap.get(record_id)         →  the row            one page read *each*
+
+    The descent is cheap.  The fetches are not: record ids come out in *key*
+    order, which is unrelated to where the rows physically sit, so each one is a
+    random page read.  A query matching most of a table therefore does more I/O
+    through the index than a sequential scan would — the crossover is somewhere
+    around a few percent selectivity on real hardware, and it is exactly what a
+    cost model exists to estimate.  Milestone 5 chooses by rule and can get this
+    wrong; Milestone 6 is where it starts choosing by cost.
+
+    Rows come out in index order, which is a genuine bonus: an ``ORDER BY`` on
+    the indexed column needs no sort. Nothing exploits that yet.
+    """
+
+    __slots__ = (
+        "_entries",
+        "_high",
+        "_include_high",
+        "_include_low",
+        "_index_name",
+        "_low",
+        "_rows_fetched",
+        "_tree",
+    )
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        heap: HeapFile,
+        schema: Schema,
+        table_name: str,
+        tree: BPlusTree,
+        low: bytes | None,
+        high: bytes | None,
+        include_low: bool = True,
+        include_high: bool = True,
+    ) -> None:
+        super().__init__(
+            operator_id, context, heap=heap, schema=schema, table_name=table_name
+        )
+        self._tree = tree
+        self._index_name = tree.name
+        self._low = low
+        self._high = high
+        self._include_low = include_low
+        self._include_high = include_high
+        self._entries: Iterator[tuple[bytes, RecordId]] | None = None
+        self._rows_fetched = 0
+
+    @property
+    def detail(self) -> str:
+        return f"index={self._index_name} {self.condition}"
+
+    @property
+    def condition(self) -> str:
+        """The index condition, rendered the way ``EXPLAIN`` would show it."""
+        data_type = self._tree.data_type
+        if (
+            self._low is not None
+            and self._low == self._high
+            and self._include_low
+            and self._include_high
+        ):
+            return f"key = {describe_key(self._low, data_type)}"
+
+        parts: list[str] = []
+        if self._low == SMALLEST_VALUE_KEY and self._include_low:
+            # Not a value the user wrote: it is the sentinel that keeps NULL keys
+            # out of a range bounded only from above. Say what it means.
+            parts.append("key IS NOT NULL")
+        elif self._low is not None:
+            operator = ">=" if self._include_low else ">"
+            parts.append(f"key {operator} {describe_key(self._low, data_type)}")
+        if self._high is not None:
+            operator = "<=" if self._include_high else "<"
+            parts.append(f"key {operator} {describe_key(self._high, data_type)}")
+        return " AND ".join(parts) if parts else "full index scan"
+
+    @property
+    def rows_fetched(self) -> int:
+        """Heap fetches performed — one per matching index entry."""
+        return self._rows_fetched
+
+    def _on_open(self) -> None:
+        self._entries = self._tree.range_scan(
+            self._low,
+            self._high,
+            include_low=self._include_low,
+            include_high=self._include_high,
+        )
+
+    def _on_close(self) -> None:
+        super()._on_close()
+        # Closing the generator runs its finally blocks, so an abandoned scan
+        # does not leave the index's range-scan event unemitted.
+        if self._entries is not None:
+            self._entries.close()
+        self._entries = None
+
+    def _produce(self) -> Row | None:
+        assert self._entries is not None
+        while True:
+            try:
+                _, record_id = next(self._entries)
+            except StopIteration:
+                return None
+            self.stats.input_rows += 1
+            self.context.controller.checkpoint(
+                StepKind.INDEX_OPERATION,
+                operator_id=self.operator_id,
+                detail=f"{self._index_name}: fetch {record_id}",
+            )
+            try:
+                payload = self._heap.get(record_id)
+            except RecordNotFoundError:
+                # The index points at a tombstoned row. Cannot happen while
+                # Database.delete maintains both, but an index rebuilt from a
+                # crashed write could disagree — skipping is the same recovery
+                # PostgreSQL performs when it finds a dead tuple through an index.
+                continue
+            self._rows_fetched += 1
+            self._last_record_id = record_id
+            return decode_record(self._schema, payload)
 
 
 class Filter(Operator):

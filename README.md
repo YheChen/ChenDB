@@ -4,34 +4,40 @@ A relational database engine written from scratch in Python, and a web app that
 shows you what it is doing while it does it.
 
 The engine is real: a file of fixed-size pages, slotted heap pages, binary
-record encoding, checksums, and a page allocator with a free list. The
+record encoding, checksums, a page allocator with a free list, a SQL front end,
+a volcano executor, a persistent catalog and disk-backed B+ tree indexes. The
 visualizer is not a mock — every byte it renders was read back from the actual
 file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M4     database: demo (1.8 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M5     database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  [ Storage ]  [ SQL ]  [ Execution ]                                     │
-├──────────────────────┬───────────────────────┬───────────────────────────┤
-│  SCHEMA              │  DISK MAP             │  PAGE INSPECTOR           │
-│  users · 16 rows     │  0  META    meta      │  HEAP page 3  checksum ok │
-│  # column   type     │  1  SCHEMA  schema    │  ┌────┬──┬─────────┬────┐ │
-│  0 id       INTEGER  │  2  SCHEMA  schema    │  │hdr │sl│  free   │recs│ │
-│  1 email    TEXT     │  3  HEAP    users ███ │  └────┴──┴─────────┴────┘ │
-│  2 age      INTEGER  │  4  HEAP    users ███ │  slot 0  offset 227 len 29│
-├──────────────────────┤  5  HEAP    users ███ │    id=1  email=ada@…      │
-│  ROWS                │  6  HEAP    users █   │    null bitmap 0x04 = 0010│
-│  (3,0) 1 ada@…   36  │                       │                           │
-│  (3,1) 2 alan@…  NULL│                       │                           │
-├──────────────────────┴───────────────────────┴───────────────────────────┤
+│  [ Storage ]  [ SQL ]  [ Execution ]  [ Indexes ]                        │
+├──────────────────┬───────────────────────────────────────────────────────┤
+│  INDEXES         │  POINT LOOKUP   [ 42            ]  Search             │
+│  users_age       │  found yes   matches 13   pages read 4   height 3     │
+│   users.age      │  path: p82 → p81 → p67                                │
+│   h3 · 600 · 33p ├───────────────────────────────────────────────────────┤
+│  users_email     │  B+ TREE   height 3 · 33 nodes                        │
+│   users.email    │                    ┌────┬────┐  p82                   │
+│  users_pk unique │                    │ -∞ │ 37 │                        │
+│   users.id       │                 ┌──┴────┴──┬─┘                        │
+│                  │        ┌────┬───▼┬────┐ ┌──▼─┬────┬────┐              │
+│                  │        │ -∞ │ 19 │ 35 │ │ -∞ │ 38 │ 61 │              │
+│                  │        └────┴────┴────┘ └────┴────┴────┘              │
+│                  │   ┌──────┐╌╌▶┌──────┐╌╌▶┌──────┐╌╌▶┌──────┐           │
+│                  │   │18 18…│   │19 19…│   │21 21…│   │40 40…│  ← leaves │
+│                  │   └──────┘   └──────┘   └──────┘   └──────┘           │
+├──────────────────┴───────────────────────────────────────────────────────┤
 │  EVENT TIMELINE                                            live  ▮▮  ⨯    │
-│  #156  storage  PageRead    page_id=3 file_offset=768 source=disk 208 ns  │
-│  #148  record   HeapScan    action=finished rows_emitted=16 pages=4       │
+│  #15500 index    IndexSearch  index_name=users_age key=42 found=true      │
+│                               matches=13 pages_visited=4 depth=3  392 µs  │
+│  #15499 storage  PageRead     page_id=67 file_offset=34304 disk 333 ns    │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Milestones 1–4 of 10 are complete.** Nothing is stubbed ahead of time: a
+**Milestones 1–5 of 10 are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -50,16 +56,33 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 0.4.0 — Milestone 4 (storage + parser + execution + catalog)
+ChenDB 0.5.0 — Milestone 5 (storage + parser + execution + catalog + indexes)
+Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
+
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
 created table users with 3 column(s)
-chendb> .insert 1 | ada@example.com | 36
-inserted at (2,0)
-chendb> .page 2
+chendb> INSERT INTO users VALUES (1,'ada@example.com',36),(2,'alan@example.com',NULL);
+inserted 2 row(s) into users
+chendb> CREATE INDEX users_age ON users (age);
+created index users_age on users(age); 2 entries, height 1
+chendb> SELECT email FROM users WHERE age = 36
+email
+------------
+ada@example.com
+(1 row(s), 2 page(s) read, 0.09 ms)
+Project  email
+  └─ IndexScan  index=users_age key = 36
+chendb> .tree users_age
+root page 5, height 1
+
+leaves:
+  p5     [NULL 36]
 ```
 
-`.help` lists the commands. The engine imports with zero third-party packages
-installed — a constraint enforced by a test, not a promise.
+`.help` lists the commands: `.tables`, `.schema`, `.indexes`, `.tree`, `.find`,
+`.page`, `.hex`, `.events` and the rest. The engine imports with zero
+third-party packages installed — a constraint enforced by a test, not a
+promise.
 
 ### Embedded
 
@@ -71,7 +94,9 @@ with Database.open("shop.chendb") as db:
         Column("id", DataType.INTEGER, nullable=False, primary_key=True),
         Column("email", DataType.TEXT, nullable=False),
     ))
-    db.insert((1, "ada@example.com"))
+    db.insert("users", (1, "ada@example.com"))
+    db.create_index("users_email", "users", "email", unique=True)
+    print(db.lookup("users_email", "ada@example.com"))
 
     for record_id, row in db.scan():
         print(record_id, row)          # (2,0) (1, 'ada@example.com')
@@ -239,6 +264,9 @@ change the system observed.
 | `python examples/milestone1_storage.py` | narrated walkthrough of the storage engine |
 | `python examples/milestone2_parser.py` | narrated walkthrough of the SQL front end |
 | `python examples/milestone3_execution.py` | narrated walkthrough of the executor |
+| `python examples/milestone4_catalog.py` | narrated walkthrough of the catalog |
+| `python examples/milestone5_indexes.py` | narrated walkthrough of the B+ tree |
+| `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
 
@@ -256,6 +284,7 @@ change the system observed.
 | [Milestone 2](docs/milestone-02-sql-parser.md) | the SQL front end, the grammar, and a bug worth recording |
 | [Milestone 3](docs/milestone-03-execution-engine.md) | the volcano model, three-valued logic, and step mode |
 | [Milestone 4](docs/milestone-04-catalog.md) | the catalog bootstrap problem, and format version 2 |
+| [Milestone 5](docs/milestone-05-btree-index.md) | order-preserving keys, the B+ tree, and when an index loses |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

@@ -243,15 +243,15 @@ def test_meta_page_roundtrip():
         catalog_tables_last=2,
         catalog_columns_first=3,
         catalog_columns_last=4,
-        next_table_id=100,
+        next_object_id=100,
         lsn=12345,
         flags=1,
     )
     assert MetaPage.from_bytes(meta.to_bytes()) == meta
 
 
-def test_meta_header_is_68_bytes_and_the_rest_is_reserved():
-    assert META_HEADER_SIZE == 68
+def test_meta_header_is_76_bytes_and_the_rest_is_reserved():
+    assert META_HEADER_SIZE == 76
     raw = MetaPage(page_size=PAGE_SIZE).to_bytes()
     assert len(raw) == PAGE_SIZE
     assert raw[META_HEADER_SIZE:] == bytes(PAGE_SIZE - META_HEADER_SIZE)
@@ -270,4 +270,14 @@ def test_a_version_1_file_is_rejected_with_an_explanation():
     raw = bytearray(MetaPage(page_size=PAGE_SIZE).to_bytes())
     raw[16:20] = (1).to_bytes(4, "little")
     with pytest.raises(CorruptDatabaseError, match="Milestone 4"):
+        MetaPage.from_bytes(bytes(raw), verify_checksum=False)
+
+
+def test_a_version_2_file_is_rejected_with_an_explanation():
+    # Version 2 predates chendb_indexes, so its meta page is 8 bytes shorter and
+    # has no index pointers to read. Same reasoning as version 1: refuse, and
+    # say which milestone moved the goalposts.
+    raw = bytearray(MetaPage(page_size=PAGE_SIZE).to_bytes())
+    raw[16:20] = (2).to_bytes(4, "little")
+    with pytest.raises(CorruptDatabaseError, match="Milestone 5"):
         MetaPage.from_bytes(bytes(raw), verify_checksum=False)

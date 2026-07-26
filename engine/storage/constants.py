@@ -39,7 +39,12 @@ INVALID_PAGE_ID = 0xFFFFFFFF
 META_PAGE_ID = 0
 
 #: Bumped whenever the layout of any on-disk structure changes.
-FORMAT_VERSION = 2
+#:
+#: 1 — Milestone 1: one table per file, a JSON schema page.
+#: 2 — Milestone 4: system tables, many tables per file.
+#: 3 — Milestone 5: a third system table for indexes, and a single object-id
+#:     counter shared by tables and indexes.
+FORMAT_VERSION = 3
 
 #: Written at file offset 0 so ``head -c 16`` identifies a ChenDB file.
 MAGIC = b"ChenDB Format 1\x00"
@@ -71,10 +76,10 @@ class PageType(IntEnum):
     """
 
     BTREE_INTERNAL = 4
-    """Reserved for Milestone 5."""
+    """A B+ tree routing node: separators and child page ids, no values."""
 
     BTREE_LEAF = 5
-    """Reserved for Milestone 5."""
+    """A B+ tree leaf: keys and record ids, linked to the next leaf."""
 
     OVERFLOW = 6
     """Reserved: spill page for records larger than one page."""

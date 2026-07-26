@@ -71,7 +71,7 @@ class QueryResultModel(ApiModel):
     """The outcome of one statement."""
 
     statement_kind: str = Field(
-        description="SelectStatement, InsertStatement or CreateTableStatement"
+        description="SelectStatement, InsertStatement, CreateTableStatement or CreateIndexStatement"
     )
     returns_rows: bool
     message: str = Field(description="Summary for statements that return no rows")

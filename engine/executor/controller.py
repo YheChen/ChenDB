@@ -44,7 +44,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
-from engine.diagnostics.events import PageReadEvent
+from engine.diagnostics.events import (
+    IndexSearchEvent,
+    NodeSplitEvent,
+    PageReadEvent,
+    RangeScanEvent,
+)
 from engine.errors import QueryCancelledError
 
 if TYPE_CHECKING:
@@ -88,6 +93,9 @@ class StepKind(StrEnum):
     ROW_EMITTED = "row_emitted"
     OPERATOR_CLOSE = "operator_close"
     PAGE_READ = "page_read"
+    INDEX_OPERATION = "index_operation"
+    """A B+ tree descent, search or split finished, or a row was fetched
+    through an index."""
 
 
 class ResumeMode(StrEnum):
@@ -108,6 +116,9 @@ class ResumeMode(StrEnum):
     UNTIL_OPERATOR = "until_operator"
     """Run until a specific operator is asked for its next row (step into)."""
 
+    UNTIL_INDEX_OPERATION = "until_index_operation"
+    """Run until the next B+ tree operation."""
+
 
 #: Which checkpoint kinds each mode stops at. ``CONTINUE`` stops at none.
 _STOPS_AT: Final[dict[ResumeMode, frozenset[StepKind]]] = {
@@ -116,7 +127,13 @@ _STOPS_AT: Final[dict[ResumeMode, frozenset[StepKind]]] = {
     ResumeMode.UNTIL_ROW: frozenset({StepKind.ROW_EMITTED}),
     ResumeMode.UNTIL_PAGE_READ: frozenset({StepKind.PAGE_READ}),
     ResumeMode.UNTIL_OPERATOR: frozenset({StepKind.OPERATOR_NEXT}),
+    ResumeMode.UNTIL_INDEX_OPERATION: frozenset({StepKind.INDEX_OPERATION}),
 }
+
+#: Diagnostic events that become an ``INDEX_OPERATION`` checkpoint.  Adding a
+#: "run until X" mode is this line plus one in ``_STOPS_AT`` — the payoff for
+#: Milestone 1 building a general event bus rather than a logging call.
+_INDEX_EVENTS: Final = (IndexSearchEvent, NodeSplitEvent, RangeScanEvent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,18 +263,23 @@ class StepController:
     # -- diagnostics sink --------------------------------------------------
 
     def record(self, item: TraceRecord) -> None:
-        """Turn a page read into a checkpoint, for ``UNTIL_PAGE_READ``.
+        """Turn selected events into checkpoints, on the engine thread.
 
-        Registered on the database's fanout sink, so this runs on the engine
-        thread inside the pager. Keeping it here rather than putting a hook in
-        the pager means storage code stays unaware that stepping exists.
+        Registered on the database's fanout sink, so this runs inside whichever
+        component emitted the event. Keeping it here rather than hooking the
+        pager and the B+ tree means neither of them has to know that stepping
+        exists — and a future "run until X" mode costs one line here.
         """
-        if not self._stepping or not isinstance(item.event, PageReadEvent):
+        if not self._stepping:
             return
-        self.checkpoint(
-            StepKind.PAGE_READ,
-            detail=f"page {item.event.page_id} at offset {item.event.file_offset}",
-        )
+        event = item.event
+        if isinstance(event, PageReadEvent):
+            self.checkpoint(
+                StepKind.PAGE_READ,
+                detail=f"page {event.page_id} at offset {event.file_offset}",
+            )
+        elif isinstance(event, _INDEX_EVENTS):
+            self.checkpoint(StepKind.INDEX_OPERATION, detail=_describe_index(event))
 
     # -- driver thread -----------------------------------------------------
 
@@ -323,3 +345,26 @@ class _NullController(StepController):
 
 #: Shared no-op controller for queries that are not being stepped.
 NULL_CONTROLLER: Final[StepController] = _NullController()
+
+
+def _describe_index(event: IndexSearchEvent | NodeSplitEvent | RangeScanEvent) -> str:
+    """A one-line pause reason for a B+ tree event."""
+    match event:
+        case IndexSearchEvent():
+            return (
+                f"{event.index_name}: search {event.key} → "
+                f"{event.matches} match(es) in {event.pages_visited} page(s)"
+            )
+        case NodeSplitEvent():
+            kind = "root split" if event.is_root_split else "split"
+            return (
+                f"{event.index_name}: {kind} page {event.page_id} → "
+                f"{event.new_page_id}, promoted {event.promoted_key}"
+            )
+        case RangeScanEvent():
+            low = event.low or "-∞"
+            high = event.high or "+∞"
+            return (
+                f"{event.index_name}: range [{low}, {high}] → "
+                f"{event.rows_emitted} row(s) over {event.leaves_visited} leaf/leaves"
+            )

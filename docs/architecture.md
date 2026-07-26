@@ -64,8 +64,17 @@ engine/
 │   ├── sink.py            Null / RingBuffer / Callback / Fanout
 │   └── tracer.py          the emit path, with fast-path flags
 │
-└── parser/ planner/ optimizer/ executor/ index/
-    catalog/ transaction/ concurrency/ wal/     ← Milestones 2–10
+├── index/
+│   ├── key.py             order-preserving key encoding — memcmp means <
+│   ├── node.py            one slotted page read as a B+ tree node
+│   └── bplustree.py       search, insert, split, range scan, delete
+│
+├── catalog/
+│   ├── system.py          the system tables' own schemas, compiled in
+│   └── catalog.py         Catalog — tables and indexes, with a cache
+│
+└── parser/ planner/ optimizer/ executor/
+    transaction/ concurrency/ wal/              ← Milestones 2–10
 ```
 
 Each layer knows only the one beneath it:

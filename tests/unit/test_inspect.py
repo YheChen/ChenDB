@@ -6,7 +6,7 @@ from pathlib import Path
 
 from engine.database import Database
 from engine.serialization.schema import Schema
-from engine.storage.constants import META_PAGE_ID, PageType
+from engine.storage.constants import FORMAT_VERSION, META_PAGE_ID, PageType
 from engine.storage.inspect import hexdump, render_page_map
 from engine.storage.page import PAGE_HEADER_SIZE, SLOT_SIZE
 
@@ -50,7 +50,7 @@ def test_meta_page_detail_decodes_its_own_header(db: Database):
 
     assert fields["magic"].value.startswith("ChenDB")
     assert fields["page_size"].value == PAGE_SIZE
-    assert fields["format_version"].value == 2
+    assert fields["format_version"].value == FORMAT_VERSION
     # The catalog's bootstrap pointers are the reason the meta page exists.
     assert fields["catalog_tables_first"].value > 0
     assert fields["catalog_columns_first"].value > 0

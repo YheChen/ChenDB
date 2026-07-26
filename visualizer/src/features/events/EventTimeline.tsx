@@ -27,17 +27,36 @@ const CONNECTION_LABEL: Record<ConnectionState, { text: string; tone: string }> 
   error: { text: "error", tone: "bg-red-500/15 text-red-600" },
 };
 
-/** Fields worth surfacing inline, in the order they read best. */
+/** Fields worth surfacing inline, in the order they read best.
+ *
+ * A whitelist rather than every field, because an event carries whatever its
+ * emitter knew and most of it is noise on one line. New event types add their
+ * distinguishing fields here; anything omitted is still in the expanded view.
+ */
 const SUMMARY_KEYS = [
+  "index_name",
+  "key",
+  "low",
+  "high",
+  "promoted_key",
   "page_id",
+  "new_page_id",
+  "sibling_page_id",
+  "child_page_id",
   "slot_id",
   "file_offset",
   "length",
   "page_type",
   "action",
   "source",
+  "found",
+  "matches",
   "rows_emitted",
   "pages_scanned",
+  "pages_visited",
+  "leaves_visited",
+  "depth",
+  "is_root_split",
   "reclaimed_bytes",
   "duration_ns",
 ];

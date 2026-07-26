@@ -17,6 +17,10 @@ import { api, type TraceLevelName } from "@/lib/api";
 import type {
   CatalogResponse,
   ColumnSpec,
+  CreateIndexRequest,
+  IndexDetail,
+  IndexListResponse,
+  IndexSearchResponse,
   DatabaseDetail,
   DatabaseListResponse,
   HealthResponse,
@@ -35,6 +39,11 @@ export const queryKeys = {
   table: (id: string, table: string) => ["table", id, table] as const,
   records: (id: string, table: string, offset: number, limit: number) =>
     ["records", id, table, offset, limit] as const,
+  indexes: (id: string, table?: string) => ["indexes", id, table ?? "*"] as const,
+  index: (id: string, name: string, maxNodes: number) =>
+    ["index", id, name, maxNodes] as const,
+  indexSearch: (id: string, name: string, value: string) =>
+    ["indexSearch", id, name, value] as const,
   pages: (id: string) => ["pages", id] as const,
   page: (id: string, pageId: number) => ["page", id, pageId] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -50,6 +59,10 @@ function invalidateDatabase(
     queryKeys.catalog(databaseId),
     queryKeys.tables(databaseId),
     queryKeys.pages(databaseId),
+    queryKeys.indexes(databaseId),
+    ["indexes", databaseId],
+    ["index", databaseId],
+    ["indexSearch", databaseId],
     ["table", databaseId],
     ["records", databaseId],
     ["page", databaseId],
@@ -138,6 +151,48 @@ export function usePage(
   });
 }
 
+export function useIndexes(
+  id: string | null,
+  table?: string,
+): UseQueryResult<IndexListResponse> {
+  return useQuery({
+    queryKey: queryKeys.indexes(id ?? "", table),
+    queryFn: () => api.listIndexes(id!, table),
+    enabled: Boolean(id),
+  });
+}
+
+export function useIndex(
+  id: string | null,
+  name: string | null,
+  maxNodes = 512,
+): UseQueryResult<IndexDetail> {
+  return useQuery({
+    queryKey: queryKeys.index(id ?? "", name ?? "", maxNodes),
+    queryFn: () => api.getIndex(id!, name!, maxNodes),
+    enabled: Boolean(id && name),
+    // A dropped index is an expected state, not a transient failure.
+    retry: false,
+  });
+}
+
+/**
+ * Trace one point lookup. Only enabled once a value is typed, so opening the
+ * panel does not run a search nobody asked for.
+ */
+export function useIndexSearch(
+  id: string | null,
+  name: string | null,
+  value: string,
+): UseQueryResult<IndexSearchResponse> {
+  return useQuery({
+    queryKey: queryKeys.indexSearch(id ?? "", name ?? "", value),
+    queryFn: () => api.searchIndex(id!, name!, value),
+    enabled: Boolean(id && name && value !== ""),
+    retry: false,
+  });
+}
+
 // -- writes ----------------------------------------------------------------
 
 export function useCreateDatabase() {
@@ -192,6 +247,16 @@ export function useDeleteRecord(databaseId: string, table: string) {
  * user takes (⌘↵), not state to keep in sync. Nothing here invalidates any
  * cache — Milestone 2 parsing has no side effects on the database.
  */
+export function useCreateIndex(databaseId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: CreateIndexRequest) => api.createIndex(databaseId, payload),
+    // Building an index allocates pages and writes the catalog, so the storage
+    // views are stale too — not just the index list.
+    onSuccess: () => invalidateDatabase(client, databaseId),
+  });
+}
+
 export function useParseSql(databaseId: string) {
   return useMutation({
     mutationFn: (sql: string) => api.parseSql(databaseId, sql),

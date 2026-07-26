@@ -19,13 +19,14 @@ import dataclasses
 from collections.abc import Sequence
 from typing import Any
 
-from engine.catalog.catalog import CatalogStats, TableInfo
+from engine.catalog.catalog import CatalogStats, IndexInfo, TableInfo
 from engine.database import Database
 from engine.diagnostics import SinkStats, TraceLevel, TraceRecord
 from engine.errors import SqlError
 from engine.executor.binder import ResultColumn
 from engine.executor.engine import QueryResult
 from engine.executor.operators import Operator
+from engine.index.bplustree import IndexStats, TreeSnapshot
 from engine.parser.analyze import ParseOutcome
 from engine.parser.ast import Node, walk
 from engine.parser.tokens import Token
@@ -47,6 +48,13 @@ from engine.server.schemas.database import (
     SchemaModel,
 )
 from engine.server.schemas.events import TraceRecordModel, TraceStatsModel
+from engine.server.schemas.indexes import (
+    IndexDetail,
+    IndexStatsModel,
+    IndexSummary,
+    TreeNodeModel,
+    TreeSnapshotModel,
+)
 from engine.server.schemas.pages import (
     FieldLayoutModel,
     HeaderFieldModel,
@@ -560,4 +568,74 @@ def catalog_stats_to_api(stats: CatalogStats) -> CatalogStatsModel:
         hit_rate=round(stats.hit_rate, 4),
         scans=stats.scans,
         tables_created=stats.tables_created,
+        indexes_created=stats.indexes_created,
+    )
+
+
+# --------------------------------------------------------------------------
+# Indexes
+# --------------------------------------------------------------------------
+
+
+def index_summary_to_api(
+    info: IndexInfo, *, height: int, entry_count: int, page_count: int
+) -> IndexSummary:
+    """The counts are passed in because computing them costs page reads.
+
+    Keeping the I/O in the router means every mapper stays a pure function that
+    can run outside the engine lock — the rule the whole module is built on.
+    """
+    return IndexSummary(
+        index_id=info.index_id,
+        name=info.name,
+        table_name=info.table_name,
+        column_name=info.column_name,
+        column_position=info.column_position,
+        data_type=info.data_type.sql_name,
+        unique=info.unique,
+        root_page=info.root_page,
+        height=height,
+        entry_count=entry_count,
+        page_count=page_count,
+    )
+
+
+def tree_snapshot_to_api(snapshot: TreeSnapshot) -> TreeSnapshotModel:
+    return TreeSnapshotModel(
+        root_page_id=snapshot.root_page_id,
+        height=snapshot.height,
+        nodes=[
+            TreeNodeModel(
+                page_id=node.page_id,
+                level=node.level,
+                is_leaf=node.is_leaf,
+                keys=list(node.keys),
+                children=list(node.children),
+                record_ids=list(node.record_ids),
+                next_leaf_id=node.next_leaf_id,
+                free_bytes=node.free_bytes,
+                entry_count=node.entry_count,
+            )
+            for node in snapshot.nodes
+        ],
+        truncated=snapshot.truncated,
+    )
+
+
+def index_stats_to_api(stats: IndexStats) -> IndexStatsModel:
+    return IndexStatsModel(**stats.as_dict())
+
+
+def index_detail_to_api(
+    info: IndexInfo, snapshot: TreeSnapshot, stats: IndexStats, *, entry_count: int
+) -> IndexDetail:
+    return IndexDetail(
+        index=index_summary_to_api(
+            info,
+            height=snapshot.height,
+            entry_count=entry_count,
+            page_count=len(snapshot.nodes),
+        ),
+        tree=tree_snapshot_to_api(snapshot),
+        stats=index_stats_to_api(stats),
     )

@@ -30,29 +30,53 @@ SQLite does the same with its 100-byte header at the start of page 1;
 PostgreSQL instead keeps cluster metadata in a separate `pg_control` file.
 
 ```
- off  size  field             notes
- ───  ────  ────────────────  ──────────────────────────────────────────
-   0    16  magic             b"ChenDB Format 1\x00"
-  16     4  format_version    u32 — bumped on any layout change
-  20     4  page_size         u32 — fixed at creation
-  24     4  page_count        u32 — pages allocated, including this one
-  28     4  free_list_head    u32 — head of the recycled-page chain
-  32     4  heap_first_page   u32 ┐ Milestone 1 scaffolding. Milestone 4
-  36     4  heap_last_page    u32 ├ replaces all three with one pointer
-  40     4  schema_page_id    u32 ┘ to a real system catalog.
-  44     8  lsn               u64 — reserved for the WAL (Milestone 9)
-  52     4  flags             u32 — reserved
-  56     4  checksum          u32 — CRC32 over bytes [0, 56)
- ───────────────────────────────────────────────────────────────────────
-  60 bytes; the rest of the page is reserved and zero-filled.
+ off  size  field                   notes
+ ───  ────  ──────────────────────  ────────────────────────────────────
+   0    16  magic                   b"ChenDB Format 1\x00"
+  16     4  format_version          u32 — bumped on any layout change
+  20     4  page_size               u32 — fixed at creation
+  24     4  page_count              u32 — pages allocated, this one included
+  28     4  free_list_head          u32 — head of the recycled-page chain
+  32     4  catalog_tables_first    u32 ┐ chendb_tables heap
+  36     4  catalog_tables_last     u32 ┘ …and its tail, so append is O(1)
+  40     4  catalog_columns_first   u32 ┐ chendb_columns heap
+  44     4  catalog_columns_last    u32 ┘
+  48     4  catalog_indexes_first   u32 ┐ chendb_indexes heap      (v3)
+  52     4  catalog_indexes_last    u32 ┘
+  56     4  next_object_id          u32 — shared table/index counter (v3)
+  60     8  lsn                     u64 — reserved for the WAL (Milestone 9)
+  68     4  flags                   u32 — reserved
+  72     4  checksum                u32 — CRC32 over bytes [0, 72)
+ ─────────────────────────────────────────────────────────────────────────
+  76 bytes; the rest of the page is reserved and zero-filled.
 ```
 
 `0xFFFFFFFF` is the null page pointer. Zero cannot serve as the sentinel
 because page 0 is a real page.
 
-`heap_last_page` exists purely for speed: without it, appending a row means
+Only these six pointers are needed to *start* reading. Everything else — where
+each table's heap begins, where each index's tree is rooted — is a row in a
+system table. That is what the catalog buys: creating a table or an index is an
+insert, not a file-format change. Milestone 5 still had to bump the version,
+but only because it added a new *system* table, which by definition cannot
+bootstrap itself.
+
+`catalog_tables_last` exists purely for speed: without it, appending a row means
 walking the whole chain, making a bulk load O(n²) in pages. With it, insert is
 O(1).
+
+### Version history
+
+| version | milestone | what changed |
+|---|---|---|
+| 1 | 1 | One table per file: `heap_first_page`, `heap_last_page`, `schema_page_id` |
+| 2 | 4 | Those three replaced by the two catalog heaps plus `next_table_id` |
+| 3 | 5 | `catalog_indexes_*` added; `next_table_id` → `next_object_id` |
+
+There is no in-place upgrade. Every bump so far moved where the catalog lives,
+so reading an old file would mean carrying a reader per layout — worth it for a
+shipped database, not for a teaching one. An old file is rejected with a message
+naming the milestone that changed it.
 
 ---
 
@@ -291,6 +315,97 @@ page instead of refusing to open it.
 
 ---
 
+## B+ tree pages
+
+Milestone 5 adds two page types, `BTREE_INTERNAL` (4) and `BTREE_LEAF` (5).
+Neither is a new kind of storage: both are ordinary slotted pages whose slots
+hold index entries instead of table rows, so checksums, splits, the free list,
+the disk map and the page inspector all work on them unchanged.
+
+```
+ leaf page                              internal page
+ ┌──────────────────────────────┐       ┌──────────────────────────────┐
+ │ header (24 B)                │       │ header (24 B)                │
+ │   page_type = 5              │       │   page_type = 4              │
+ │   next_page_id = next leaf ──┼──▶    │   next_page_id = 0xFFFFFFFF  │
+ ├──────────────────────────────┤       ├──────────────────────────────┤
+ │ slot directory, in KEY order │       │ slot directory, in KEY order │
+ ├──────────────────────────────┤       ├──────────────────────────────┤
+ │ key ‖ rid (6 B)              │       │ key ‖ rid (6 B) ‖ child (4 B)│
+ │ …                            │       │ …                            │
+ └──────────────────────────────┘       └──────────────────────────────┘
+```
+
+**Slot order is key order.** That is the one invariant the node layer exists to
+maintain, and it is why `Page` grew `insert_at`/`delete_at`, which shift the slot
+directory. Those two methods *renumber* slots, which is exactly right for an
+index (nothing outside the node holds a slot id) and would be catastrophic for a
+heap (every `RecordId` in the database would start pointing at the wrong row).
+PostgreSQL draws the same line: `PageIndexTupleDelete` compacts the line pointer
+array and is used only on index pages.
+
+The leaf's sibling pointer reuses the header's `next_page_id`, the same field a
+heap uses for its page chain. Safe, because a page belongs to exactly one
+structure. Internal nodes leave it null: only leaves are walked sideways.
+
+### Key encoding
+
+Index keys are **not** the record encoding. `serialization/types.py` writes
+integers little-endian, which does not sort by `memcmp`:
+
+```
+ value   little-endian              index key (big-endian, sign-flipped)
+ ─────   ────────────────────────   ────────────────────────────────────
+     1   01 00 00 00 00 00 00 00    02 80 00 00 00 00 00 00 01
+   256   00 01 00 00 00 00 00 00    02 80 00 00 00 00 00 01 00
+    -1   ff ff ff ff ff ff ff ff    02 7f ff ff ff ff ff ff ff
+```
+
+Byte-comparing the little-endian forms says `1 > 256`. The index encoding is
+big-endian with `+2**63` applied, so unsigned byte order *is* signed value
+order, and a comparison is one `memcmp` rather than two `struct.unpack` calls.
+RocksDB and FoundationDB do the same, for the same reason.
+
+Every key carries a 1-byte tag:
+
+| tag | meaning | where |
+|---|---|---|
+| `0x00` | minus infinity | the first separator of every internal node |
+| `0x01` | `NULL` | anywhere; sorts below all values (SQLite's order) |
+| `0x02` | a value | payload follows |
+
+| type | payload |
+|---|---|
+| INTEGER | 8 bytes big-endian of `value + 2**63` |
+| FLOAT | 8 bytes big-endian IEEE-754, sign bit flipped (negatives: all bits) |
+| BOOLEAN | 1 byte |
+| TEXT | raw UTF-8, no length prefix — byte order is code-point order |
+
+`-0.0` is normalised to `0.0` so a unique index cannot hold both. `NaN` sorts
+above every real number, matching PostgreSQL.
+
+### Why the record id is part of the key
+
+Entries sort by `(key, record_id)`, not by key alone. Every entry in the tree is
+therefore unique, which means a run of duplicates can be split anywhere, and
+deleting one row's entry is a descent rather than a scan of every duplicate.
+PostgreSQL adopted exactly this in version 12 and reported large reductions in
+index bloat on low-cardinality columns.
+
+They compare as a **pair**, not as concatenated bytes: `"ab" ‖ rid` and
+`"abc" ‖ rid` interleave, and the outcome would depend on the numeric record id.
+Splitting the fixed-width 6-byte suffix off by length is exact and needs no
+escaping layer — which is also why Milestone 5 indexes one column and not two.
+
+### Capacity
+
+On a 4 KiB page an INTEGER leaf entry is 1 (tag) + 8 (value) + 6 (rid) = 15
+bytes plus a 4-byte slot, so `(4096 − 24) / 19 ≈ 214` entries. Fanout ≈ 214, and
+three levels address ≈ 9.8 million rows. A balanced *binary* tree over the same
+data is 24 levels deep, so 24 page reads against 3 — the entire argument.
+
+---
+
 ## Durability, honestly
 
 `write_page` hands bytes to the operating system. It does **not** make them
@@ -327,6 +442,11 @@ cooperative shutdown would quietly flush the very buffers under test.
 | `heap.scan`          | O(pages) reads, O(rows) work     | |
 | `heap.count`         | O(pages)                         | no cached count |
 | `encode` / `decode`  | O(row bytes)                     | |
+| `tree.search`        | O(log_f n) reads                 | *f* ≈ 214 at 4 KiB |
+| `tree.insert`        | O(log_f n) reads, O(1) writes    | plus O(1) per split |
+| `tree.delete`        | O(log_f n) reads, 1 write        | never merges |
+| `tree.range_scan`    | O(log_f n) + matching leaves     | one descent, then sideways |
+| `IndexScan`          | the above **plus one heap read per matching row** | the cost that decides whether it was worth it |
 
 Every page read is a real syscall until Milestone 7's buffer pool.
 

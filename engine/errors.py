@@ -18,7 +18,9 @@ The tree mirrors the layering of the engine itself::
     │   ├── SchemaMismatchError
     │   ├── TypeMismatchError
     │   └── NullConstraintViolation
-    └── SchemaError           an invalid schema *definition*
+    ├── SchemaError           an invalid schema *definition*
+    └── IndexingError         index/ — B+ tree structure and constraints
+        └── UniqueViolation
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ __all__ = [
     "ChenDBError",
     "CorruptDatabaseError",
     "CorruptPageError",
+    "IndexingError",
     "NullConstraintViolation",
     "PageNotFoundError",
     "RecordNotFoundError",
@@ -37,6 +40,7 @@ __all__ = [
     "SerializationError",
     "StorageError",
     "TypeMismatchError",
+    "UniqueViolation",
 ]
 
 
@@ -117,6 +121,30 @@ class NullConstraintViolation(SerializationError):
 
 class SchemaError(ChenDBError):
     """A schema definition is itself invalid (no columns, duplicate names, ...)."""
+
+
+# --------------------------------------------------------------------------
+# Indexes
+# --------------------------------------------------------------------------
+
+
+class IndexingError(ChenDBError):
+    """A B+ tree operation cannot be completed.
+
+    Named ``IndexingError`` rather than ``IndexError`` so it never shadows the
+    builtin, which would silently change the meaning of an unrelated
+    ``except IndexError`` somewhere in the engine.
+    """
+
+
+class UniqueViolation(IndexingError):
+    """A key already present was inserted into a unique index.
+
+    A constraint failure rather than a structural one, but it surfaces from the
+    index because the index is the thing that *knows* — which is precisely why
+    PostgreSQL and SQLite both implement ``UNIQUE`` as an index rather than as a
+    check: the enforcement and the lookup are the same data structure.
+    """
 
 
 # --------------------------------------------------------------------------

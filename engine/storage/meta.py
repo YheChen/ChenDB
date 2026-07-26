@@ -7,25 +7,37 @@ identifies the file.  SQLite does the same thing with its 100-byte header at
 the start of page 1; PostgreSQL instead keeps cluster metadata in a separate
 ``pg_control`` file.
 
-Layout (60 bytes, remainder of the page reserved and zero-filled)::
+Layout, format version 3 (76 bytes; the rest of the page is zero-filled)::
 
-    off  size  field             notes
-    ---  ----  ----------------  ------------------------------------------
-      0    16  magic             b"ChenDB Format 1\\x00"
-     16     4  format_version    bumped on any layout change
-     20     4  page_size         bytes per page; fixed at creation
-     24     4  page_count        pages allocated, including this one
-     28     4  free_list_head    head of the recycled-page chain
-     32     4  heap_first_page   M1: the single table's first heap page
-     36     4  heap_last_page    M1: its last page — makes append O(1)
-     40     4  schema_page_id    M1: page holding the JSON table descriptor
-     44     8  lsn               reserved for Milestone 9 (WAL)
-     52     4  flags             reserved
-     56     4  checksum          CRC32 over bytes [0, 56)
+    off  size  field                   notes
+    ---  ----  ----------------------  ------------------------------------
+      0    16  magic                   b"ChenDB Format 1\\x00"
+     16     4  format_version          bumped on any layout change
+     20     4  page_size               bytes per page; fixed at creation
+     24     4  page_count              pages allocated, including this one
+     28     4  free_list_head          head of the recycled-page chain
+     32     4  catalog_tables_first    chendb_tables heap, first page
+     36     4  catalog_tables_last     …and last, so append is O(1)
+     40     4  catalog_columns_first   chendb_columns heap
+     44     4  catalog_columns_last
+     48     4  catalog_indexes_first   chendb_indexes heap        (M5)
+     52     4  catalog_indexes_last
+     56     4  next_object_id          shared id counter          (M5)
+     60     8  lsn                     reserved for Milestone 9 (WAL)
+     68     4  flags                   reserved
+     72     4  checksum                CRC32 over bytes [0, 72)
 
-``heap_first_page``, ``heap_last_page`` and ``schema_page_id`` are Milestone 1
-scaffolding for the one-table-per-file limit.  Milestone 4 replaces all three
-with a single ``catalog_root_page`` pointing at real system tables.
+Only these six pointers are needed to *start* reading; everything else — every
+table's heap, every index's root — is a row in a system table.  That is the
+whole point of the catalog: adding a table or an index is an insert, not a
+file-format change.  Milestone 5 still had to touch the format, but only because
+it added a new *system* table, which is exactly the kind of change that cannot
+bootstrap itself.
+
+``next_object_id`` replaces version 2's ``next_object_id``.  Tables and indexes
+draw ids from one sequence, so an id identifies a catalog object without also
+having to say what kind it is — which is what PostgreSQL's global OID counter
+buys, and why ``pg_class`` and ``pg_index`` can refer to each other by bare id.
 """
 
 from __future__ import annotations
@@ -45,12 +57,27 @@ from engine.storage.constants import (
 
 __all__ = ["META_HEADER_FORMAT", "META_HEADER_SIZE", "MetaPage"]
 
-META_HEADER_FORMAT: Final[str] = "<16s9IQ2I"
-META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 60
+META_HEADER_FORMAT: Final[str] = "<16s11IQ2I"
+META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 76
 
 #: The checksum is the last field, so it covers everything before itself.
 _CHECKSUM_OFFSET: Final = META_HEADER_SIZE - 4
 _CHECKSUM: Final = struct.Struct("<I")
+
+#: What to tell someone holding a file this build cannot read.  There is no
+#: in-place upgrade path: every version so far moved where the catalog lives, so
+#: rewriting a file would mean carrying a reader for each old layout — worth it
+#: for a shipped database, not for a teaching one.
+_UPGRADE_HINTS: Final[dict[int, str]] = {
+    1: (
+        " Version 1 files predate the catalog (Milestone 4) and cannot be "
+        "upgraded in place; recreate the database."
+    ),
+    2: (
+        " Version 2 files predate the index catalog (Milestone 5) and cannot be "
+        "upgraded in place; recreate the database."
+    ),
+}
 
 
 @dataclass(slots=True)
@@ -71,7 +98,9 @@ class MetaPage:
     catalog_tables_last: int = INVALID_PAGE_ID
     catalog_columns_first: int = INVALID_PAGE_ID
     catalog_columns_last: int = INVALID_PAGE_ID
-    next_table_id: int = 0
+    catalog_indexes_first: int = INVALID_PAGE_ID
+    catalog_indexes_last: int = INVALID_PAGE_ID
+    next_object_id: int = 0
     lsn: int = 0
     flags: int = 0
 
@@ -91,7 +120,9 @@ class MetaPage:
             self.catalog_tables_last,
             self.catalog_columns_first,
             self.catalog_columns_last,
-            self.next_table_id,
+            self.catalog_indexes_first,
+            self.catalog_indexes_last,
+            self.next_object_id,
             self.lsn,
             self.flags,
             0,  # checksum placeholder, filled in below
@@ -117,7 +148,9 @@ class MetaPage:
             catalog_tables_last,
             catalog_columns_first,
             catalog_columns_last,
-            next_table_id,
+            catalog_indexes_first,
+            catalog_indexes_last,
+            next_object_id,
             lsn,
             flags,
             stored_checksum,
@@ -128,12 +161,7 @@ class MetaPage:
                 f"bad magic {magic!r}: not a ChenDB database file"
             )
         if format_version != FORMAT_VERSION:
-            hint = (
-                " Version 1 files predate the catalog (Milestone 4) and cannot be "
-                "upgraded in place; recreate the database."
-                if format_version == 1
-                else ""
-            )
+            hint = _UPGRADE_HINTS.get(format_version, "")
             raise CorruptDatabaseError(
                 f"format version {format_version} is not supported "
                 f"(this build understands version {FORMAT_VERSION}).{hint}"
@@ -157,7 +185,9 @@ class MetaPage:
             catalog_tables_last=catalog_tables_last,
             catalog_columns_first=catalog_columns_first,
             catalog_columns_last=catalog_columns_last,
-            next_table_id=next_table_id,
+            catalog_indexes_first=catalog_indexes_first,
+            catalog_indexes_last=catalog_indexes_last,
+            next_object_id=next_object_id,
             lsn=lsn,
             flags=flags,
         )

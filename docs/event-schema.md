@@ -175,22 +175,45 @@ one event per row — exactly the flood trace levels exist to prevent.
 
 ---
 
+## `index` — Milestone 5
+
+```
+IndexCreatedEvent   SUMMARY  index_name, index_id, table_name, column_name,
+                             unique, rows_indexed, root_page      (category: catalog)
+IndexSearchEvent    STORAGE  index_name, key, found, matches,
+                             pages_visited, depth, duration_ns
+IndexDescentEvent   VERBOSE  index_name, page_id, tree_level, child_page_id,
+                             separator
+NodeSplitEvent      STORAGE  index_name, page_id, new_page_id, tree_level,
+                             promoted_key, is_root_split
+NodeMergeEvent      STORAGE  index_name, page_id, sibling_page_id, tree_level
+RangeScanEvent      STORAGE  index_name, low, high, leaves_visited,
+                             rows_emitted, duration_ns
+```
+
+`NodeMergeEvent` is declared but **never emitted**: ChenDB does not merge nodes
+on delete. It exists so the schema is complete and a consumer can render it if a
+later milestone starts merging. Everything else here is emitted by
+`engine/index/bplustree.py`.
+
+Two field names are worth explaining. `tree_level` is called that, and not
+`level`, because `DiagnosticEvent` already declares `level` as the *trace* level;
+re-annotating a `ClassVar` as an instance field makes `dataclass` build a broken
+`__init__`. And `key`, `low`, `high` and `promoted_key` arrive **already rendered
+as strings** — an encoded key is an order-preserving byte string only
+`engine.index.key` can interpret, and carrying the raw bytes plus a column type
+would make every consumer of the bus depend on the index package.
+
+`pages_visited` against `depth` is the interesting pair on a search: equal for a
+clean descent, larger when duplicates span leaves and the search steps right.
+
+---
+
 ## Planned events
 
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 5 — `index`
-
-```
-IndexSearchEvent      index_name, key, found, pages_visited, depth
-IndexDescentEvent     index_name, page_id, level, child_page_id  VERBOSE
-NodeSplitEvent        index_name, page_id, new_page_id, level,
-                      promoted_key, is_root_split
-NodeMergeEvent        index_name, page_id, sibling_page_id, level
-RangeScanEvent        index_name, low, high, leaves_visited, rows_emitted
-```
 
 ### Milestone 6 — `planner`
 

@@ -6,16 +6,26 @@
                                                                     ▼
                                                               QueryResult
 
-Milestone 3 has no cost-based planner: there is exactly one way to execute a
-``SELECT``, because there are no indexes and no join orders to choose between.
-:func:`build_select_plan` is therefore a *rule*-based translation, and the one
-decision it makes — dropping a projection that returns every column unchanged —
-is the seed of the real optimiser in Milestone 6.
+Planning is still *rule*-based, but Milestone 5 gives it something to decide.
+With a B+ tree available there are two ways to read a table, and
+:func:`choose_access_path` picks between them::
 
-``CREATE TABLE`` and ``INSERT`` are not planned at all. They have no operator
-tree; they are direct calls into the storage engine. Modelling a single-row
-insert as an operator pipeline would be structure for its own sake — though
-Milestone 3's ``INSERT ... SELECT`` limitation is exactly what would justify it
+    WHERE age = 30            index on age?  →  IndexScan, key = 30
+    WHERE age >= 20 AND …     index on age?  →  IndexScan, key >= 20
+                                                 + Filter for the rest
+    WHERE name LIKE 'a%'      no index        →  SeqScan + Filter
+
+The rule is "use an index if one covers a comparison", which is the crude
+version.  It never asks *how many rows will match*, and that is the question
+that actually matters: an index scan pays one random heap read per matching row,
+so above a few percent selectivity it loses to a sequential scan that reads each
+page once.  Estimating selectivity, and therefore choosing correctly, is
+Milestone 6.
+
+``CREATE TABLE``, ``CREATE INDEX`` and ``INSERT`` are not planned at all. They
+have no operator tree; they are direct calls into the storage engine. Modelling a
+single-row insert as an operator pipeline would be structure for its own sake —
+though the ``INSERT ... SELECT`` limitation is exactly what would justify it
 later.
 """
 
@@ -26,15 +36,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from engine.catalog.catalog import IndexInfo
 from engine.diagnostics.events import QueryExecutedEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import (
     BindingError,
     CatalogError,
     ExecutionError,
+    IndexingError,
     QueryCancelledError,
 )
 from engine.executor.binder import (
+    BoundColumnRef,
     BoundInsert,
     BoundSelect,
     ResultColumn,
@@ -47,13 +60,21 @@ from engine.executor.expression import evaluate
 from engine.executor.operators import (
     ExecutionContext,
     Filter,
+    IndexScan,
     Operator,
     Project,
+    ScanOperator,
     SeqScan,
 )
+from engine.index.key import SMALLEST_VALUE_KEY
 from engine.parser.ast import (
+    BinaryOp,
+    BinaryOperator,
+    CreateIndexStatement,
     CreateTableStatement,
+    Expression,
     InsertStatement,
+    Literal,
     SelectStatement,
     Statement,
 )
@@ -65,9 +86,11 @@ if TYPE_CHECKING:
     from engine.database import Database
 
 __all__ = [
+    "AccessPath",
     "ExecutionStats",
     "QueryResult",
     "build_select_plan",
+    "choose_access_path",
     "execute_script",
     "execute_statement",
 ]
@@ -135,26 +158,46 @@ def build_select_plan(
 ) -> Operator:
     """Build the operator tree for a bound ``SELECT``.
 
-    Always ``SeqScan`` at the leaf: with no indexes, a full scan is the only
-    access path. Milestone 5 adds an alternative, and Milestone 6 adds the cost
-    model that chooses between them.
+    Two access paths now exist, so this makes its first real choice. The rule is
+    deliberately crude: **use an index whenever one covers a comparison in the
+    ``WHERE`` clause**, otherwise scan. It never asks how many rows will match,
+    which is the question that actually decides whether an index helps — see
+    :class:`~engine.executor.operators.IndexScan` on why a badly chosen index
+    scan is slower than a sequential one. Milestone 6 adds the cost model.
     """
     heap = database.heap_for(bound.table_name)
+    access = choose_access_path(bound, database)
 
-    plan: Operator = SeqScan(
-        "scan_1",
-        context,
-        heap=heap,
-        schema=bound.input_schema,
-        table_name=bound.table_name,
-    )
+    plan: Operator
+    if access is None:
+        plan = SeqScan(
+            "scan_1",
+            context,
+            heap=heap,
+            schema=bound.input_schema,
+            table_name=bound.table_name,
+        )
+        residual = bound.where
+    else:
+        plan = IndexScan(
+            "scan_1",
+            context,
+            heap=heap,
+            schema=bound.input_schema,
+            table_name=bound.table_name,
+            tree=database.tree_for(access.index_name),
+            low=access.low,
+            high=access.high,
+            include_low=access.include_low,
+            include_high=access.include_high,
+        )
+        residual = access.residual
 
-    if bound.where is not None:
-        plan = Filter("filter_1", context, child=plan, predicate=bound.where)
+    if residual is not None:
+        plan = Filter("filter_1", context, child=plan, predicate=residual)
 
-    # Skip a projection that would copy every column unchanged. The one
-    # rule-based rewrite this milestone makes, and a real saving: it removes a
-    # method call and a tuple build per row.
+    # Skip a projection that would copy every column unchanged. A real saving:
+    # it removes a method call and a tuple build per row.
     if not bound.is_identity_projection:
         plan = Project(
             "project_1",
@@ -165,6 +208,196 @@ def build_select_plan(
         )
 
     return plan
+
+
+@dataclass(frozen=True, slots=True)
+class AccessPath:
+    """An index scan the planner decided it can use.
+
+    ``residual`` is what the index could *not* express and still has to be
+    filtered per row. Splitting the predicate this way is what ``EXPLAIN`` shows
+    as "Index Cond" against "Filter" in PostgreSQL, and the distinction matters:
+    an index condition bounds how much is read, a filter only throws away what
+    was already read.
+    """
+
+    index_name: str
+    low: bytes | None
+    high: bytes | None
+    include_low: bool
+    include_high: bool
+    residual: Expression | None
+
+
+def choose_access_path(bound: BoundSelect, database: Database) -> AccessPath | None:
+    """Pick an index for ``bound``'s ``WHERE`` clause, or ``None`` to scan.
+
+    Handles a conjunction of comparisons against one indexed column, so
+    ``age >= 20 AND age <= 30 AND name = 'x'`` becomes a bounded index scan on
+    ``age`` with ``name = 'x'`` left as a residual filter. Anything else — an
+    ``OR``, a comparison between two columns, a non-indexed column — falls
+    through to a sequential scan rather than being half-handled.
+    """
+    if bound.where is None:
+        return None
+
+    conjuncts = _split_conjunction(bound.where)
+    comparisons = [
+        (index, comparison)
+        for index, comparison in enumerate(conjuncts)
+        if _as_column_comparison(comparison) is not None
+    ]
+    if not comparisons:
+        return None
+
+    # Group the usable comparisons by which column they constrain, then take the
+    # first column that has an index. "First" is arbitrary and is precisely the
+    # decision a cost model would make properly.
+    for position in dict.fromkeys(
+        _as_column_comparison(comparison)[0].column_index  # type: ignore[index]
+        for _, comparison in comparisons
+    ):
+        for index_info in database.catalog.indexes_on(bound.table_name, position):
+            bounds = _bounds_for(
+                [entry for entry in comparisons if _column_of(entry[1]) == position],
+                index_info,
+            )
+            if bounds is None:
+                continue
+            low, high, include_low, include_high, consumed = bounds
+            residual = _rebuild_conjunction(
+                [
+                    conjunct
+                    for position_in_list, conjunct in enumerate(conjuncts)
+                    if position_in_list not in consumed
+                ]
+            )
+            return AccessPath(
+                index_name=index_info.name,
+                low=low,
+                high=high,
+                include_low=include_low,
+                include_high=include_high,
+                residual=residual,
+            )
+    return None
+
+
+def _split_conjunction(expression: Expression) -> list[Expression]:
+    """Flatten ``a AND b AND c`` into ``[a, b, c]``. Anything else is one term."""
+    if isinstance(expression, BinaryOp) and expression.operator is BinaryOperator.AND:
+        return _split_conjunction(expression.left) + _split_conjunction(expression.right)
+    return [expression]
+
+
+def _rebuild_conjunction(terms: list[Expression]) -> Expression | None:
+    """Re-join the terms an index could not absorb, left-associatively."""
+    if not terms:
+        return None
+    combined = terms[0]
+    for term in terms[1:]:
+        combined = BinaryOp(
+            node_id=term.node_id,
+            span=combined.span.union(term.span),
+            operator=BinaryOperator.AND,
+            left=combined,
+            right=term,
+        )
+    return combined
+
+
+def _as_column_comparison(
+    expression: Expression,
+) -> tuple[BoundColumnRef, BinaryOperator, Any] | None:
+    """Match ``column <op> literal`` (either way round), or return ``None``.
+
+    A reversed comparison has its operator mirrored — ``18 < age`` constrains
+    ``age`` from below, not above — which is the kind of detail that silently
+    returns wrong rows if it is got wrong.
+    """
+    if not isinstance(expression, BinaryOp) or not expression.operator.is_comparison:
+        return None
+    if expression.operator is BinaryOperator.NEQ:
+        # An index cannot bound `<>`: it excludes one key and admits every
+        # other, so the scan would read the whole tree and the heap fetches
+        # would make it strictly worse than a sequential scan.
+        return None
+
+    left, right = expression.left, expression.right
+    if isinstance(left, BoundColumnRef) and isinstance(right, Literal):
+        return left, expression.operator, right.value
+    if isinstance(right, BoundColumnRef) and isinstance(left, Literal):
+        return right, _MIRRORED[expression.operator], left.value
+    return None
+
+
+_MIRRORED: dict[BinaryOperator, BinaryOperator] = {
+    BinaryOperator.EQ: BinaryOperator.EQ,
+    BinaryOperator.LT: BinaryOperator.GT,
+    BinaryOperator.LTE: BinaryOperator.GTE,
+    BinaryOperator.GT: BinaryOperator.LT,
+    BinaryOperator.GTE: BinaryOperator.LTE,
+}
+
+
+def _column_of(expression: Expression) -> int | None:
+    matched = _as_column_comparison(expression)
+    return matched[0].column_index if matched else None
+
+
+def _bounds_for(
+    candidates: list[tuple[int, Expression]], index_info: IndexInfo
+) -> tuple[bytes | None, bytes | None, bool, bool, set[int]] | None:
+    """Fold comparisons on one column into a single ``[low, high]`` range.
+
+    Returns ``None`` when nothing usable survives — an incomparable literal type,
+    or a comparison against ``NULL``, which three-valued logic makes false for
+    every row and which therefore must not be turned into a range that would
+    match the NULL keys in the tree.
+    """
+    low: bytes | None = None
+    high: bytes | None = None
+    include_low = True
+    include_high = True
+    consumed: set[int] = set()
+
+    for position, comparison in candidates:
+        matched = _as_column_comparison(comparison)
+        assert matched is not None
+        _, operator, value = matched
+        if value is None:
+            continue  # `x = NULL` is never true; let the filter handle it
+        try:
+            key = index_info.encode(value)
+        except IndexingError:
+            continue  # literal of a type this index cannot encode
+
+        match operator:
+            case BinaryOperator.EQ:
+                low = high = key
+                include_low = include_high = True
+            case BinaryOperator.GT | BinaryOperator.GTE:
+                inclusive = operator is BinaryOperator.GTE
+                if low is None or key > low or (key == low and not inclusive):
+                    low, include_low = key, inclusive
+            case BinaryOperator.LT | BinaryOperator.LTE:
+                inclusive = operator is BinaryOperator.LTE
+                if high is None or key < high or (key == high and not inclusive):
+                    high, include_high = key, inclusive
+            case _:  # pragma: no cover - filtered out by _as_column_comparison
+                continue
+        consumed.add(position)
+
+    if not consumed:
+        return None
+
+    # A range with no lower bound would sweep up the NULL keys, which sort below
+    # every value — and no comparison is ever true for NULL. Anchoring at the
+    # smallest possible *value* key excludes them, which is why the key encoding
+    # gives NULL its own tag rather than treating it as a small value.
+    if low is None:
+        low, include_low = SMALLEST_VALUE_KEY, True
+    return low, high, include_low, include_high, consumed
 
 
 # --------------------------------------------------------------------------
@@ -196,6 +429,8 @@ def execute_statement(
     match statement:
         case CreateTableStatement():
             result = _execute_create_table(statement, database)
+        case CreateIndexStatement():
+            result = _execute_create_index(statement, database)
         case InsertStatement():
             result = _execute_insert(statement, database, context)
         case SelectStatement():
@@ -256,6 +491,53 @@ def _execute_create_table(
     return QueryResult(
         statement_kind=statement.node_type,
         message=f"created table {info.name} with {len(schema)} column(s)",
+    )
+
+
+def _execute_create_index(
+    statement: CreateIndexStatement, database: Database
+) -> QueryResult:
+    existing = database.index(statement.index_name)
+    if existing is not None:
+        if statement.if_not_exists:
+            return QueryResult(
+                statement_kind=statement.node_type,
+                message=f"index {statement.index_name!r} already exists, left unchanged",
+            )
+        raise BindingError(
+            f"index {statement.index_name!r} already exists",
+            start=statement.span.start,
+            end=statement.span.end,
+            line=statement.span.line,
+            column=statement.span.column,
+        )
+
+    try:
+        index = database.create_index(
+            statement.index_name,
+            statement.table.name,
+            statement.column,
+            unique=statement.unique,
+        )
+    except (CatalogError, IndexingError) as exc:
+        # Includes a UniqueViolation from a column that already holds duplicates,
+        # which is the one failure a user is most likely to hit.
+        raise BindingError(
+            str(exc),
+            start=statement.span.start,
+            end=statement.span.end,
+            line=statement.span.line,
+            column=statement.span.column,
+        ) from None
+
+    tree = database.tree_for(index.name)
+    kind = "unique index" if index.unique else "index"
+    return QueryResult(
+        statement_kind=statement.node_type,
+        message=(
+            f"created {kind} {index.name} on {index.table_name}({index.column_name}); "
+            f"{tree.count()} entries, height {tree.height}"
+        ),
     )
 
 
@@ -377,8 +659,9 @@ def _walk(operator: Operator) -> list[Operator]:
     return out
 
 
-def _find_scan(plan: Operator) -> SeqScan | None:
+def _find_scan(plan: Operator) -> ScanOperator | None:
+    """The leaf that reads the table, whichever access path was chosen."""
     for operator in _walk(plan):
-        if isinstance(operator, SeqScan):
+        if isinstance(operator, ScanOperator):
             return operator
     return None

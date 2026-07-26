@@ -7,17 +7,20 @@
  *   │ [ Storage ] [ SQL ]                          ← workspaces │
  *   ├──────────────────────────────────────────────────────────┤
  *   │                                                          │
- *   │  Storage: Schema · Rows │ Disk map │ Page inspector       │
- *   │  SQL:     Editor        │ Tokens / AST                    │
+ *   │  Storage:   Schema · Rows │ Disk map │ Page inspector     │
+ *   │  SQL:       Editor        │ Tokens / AST                  │
+ *   │  Execution: Editor        │ Plan · Results · Step controls│
+ *   │  Indexes:   Index list    │ Point lookup · B+ tree        │
  *   │                                                          │
  *   ├──────────────────────────────────────────────────────────┤
  *   │ Event timeline (shared by every workspace)               │
  *   └──────────────────────────────────────────────────────────┘
  *
  * A workspace tab appears only when `/health` says its feature exists. The SQL
- * tab was absent in Milestone 1 and appears in Milestone 2; later milestones add
- * Plan, Index, Buffer pool, Transactions and WAL the same way. Nothing is ever
- * shown greyed out for a feature the engine does not have.
+ * tab was absent in Milestone 1 and appears in Milestone 2, Execution in
+ * Milestone 3, Indexes in Milestone 5; later milestones add Plan, Buffer pool,
+ * Transactions and WAL the same way. Nothing is ever shown greyed out for a
+ * feature the engine does not have.
  */
 
 import { useEffect, useState } from "react";
@@ -30,6 +33,7 @@ import { PageInspector } from "@/features/pages/PageInspector";
 import { PageListPanel } from "@/features/pages/PageListPanel";
 import { RecordsPanel } from "@/features/records/RecordsPanel";
 import { ExecutionWorkspace } from "@/features/execution/ExecutionWorkspace";
+import { IndexWorkspace } from "@/features/indexes/IndexWorkspace";
 import { SqlWorkspace } from "@/features/sql/SqlWorkspace";
 import { useCatalog, useDatabase, useDatabases, useHealth } from "@/hooks/useEngine";
 import { useEventStream } from "@/hooks/useEventStream";
@@ -40,12 +44,13 @@ const DATABASE_KEY = "chendb.database";
 const WORKSPACE_KEY = "chendb.workspace";
 const TABLE_KEY = "chendb.table";
 
-type WorkspaceId = "storage" | "sql" | "execution";
+type WorkspaceId = "storage" | "sql" | "execution" | "indexes";
 
 const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "storage", label: "Storage", feature: "storage" },
   { id: "sql", label: "SQL", feature: "sql" },
   { id: "execution", label: "Execution", feature: "execution" },
+  { id: "indexes", label: "Indexes", feature: "indexes" },
 ];
 
 export function ExplorerPage() {
@@ -90,7 +95,9 @@ export function ExplorerPage() {
   }, [catalog.data, selectedTable]);
 
   // Default to the meta page: it is the most instructive page in the file, and
-  // an empty inspector on arrival teaches nothing.
+  // an empty inspector on arrival teaches nothing. Keyed on the database only,
+  // so switching workspaces — or arriving from a click on a B+ tree node —
+  // keeps whatever page is selected.
   useEffect(() => setSelectedPageId(databaseId ? 0 : null), [databaseId]);
 
   const features = health.data?.features ?? {};
@@ -139,7 +146,18 @@ export function ExplorerPage() {
         label="Resize the workspace against the event timeline"
         className="min-h-0 flex-1"
         first={
-          workspace === "execution" && databaseId ? (
+          workspace === "indexes" && databaseId ? (
+            <IndexWorkspace
+              databaseId={databaseId}
+              onSelectPage={(pageId) => {
+                // Jump to the Storage tab so the click actually shows the page:
+                // the inspector lives there, and a click that silently changed
+                // hidden state would read as broken.
+                setSelectedPageId(pageId);
+                setWorkspace("storage");
+              }}
+            />
+          ) : workspace === "execution" && databaseId ? (
             <ExecutionWorkspace
               databaseId={databaseId}
               theme={theme}
