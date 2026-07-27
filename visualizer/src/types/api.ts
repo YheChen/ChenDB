@@ -107,7 +107,7 @@ export interface CreateDatabaseRequest {
 
 /**
  * Programmatic index creation.
- * 
+ *
  * ``CREATE INDEX`` through ``POST /query`` is the primary path; this stays for
  * clients that would rather not build SQL strings, matching the table endpoint.
  */
@@ -120,7 +120,7 @@ export interface CreateIndexRequest {
 
 /**
  * Programmatic table creation.
- * 
+ *
  * ``CREATE TABLE`` through ``POST /query`` is the primary path from Milestone 3
  * onward; this stays for clients that would rather not build SQL strings.
  */
@@ -160,7 +160,21 @@ export interface DeleteRecordResponse {
   record_id: RecordIdModel;
 }
 
-export type EventCategory = "lifecycle" | "storage" | "record" | "parser" | "operator" | "catalog" | "index" | "planner" | "buffer_pool" | "transaction" | "wal" | "recovery" | "lock" | "mvcc";
+export type EventCategory =
+  | "lifecycle"
+  | "storage"
+  | "record"
+  | "parser"
+  | "operator"
+  | "catalog"
+  | "index"
+  | "planner"
+  | "buffer_pool"
+  | "transaction"
+  | "wal"
+  | "recovery"
+  | "lock"
+  | "mvcc";
 
 export interface EventsResponse {
   events: TraceRecordModel[];
@@ -223,7 +237,7 @@ export interface FieldLayoutModel {
 
 /**
  * One slot of the pool.
- * 
+ *
  * There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
  * lending it, so nothing can be holding one when it is reused and a pin count
  * would always read zero — a number that never prevents anything. See
@@ -278,7 +292,7 @@ export interface IndexListResponse {
 
 /**
  * One traced point lookup.
- * 
+ *
  * ``path`` is what the tree view highlights: the page ids from root to leaf.
  * ``pages_visited`` can exceed its length when duplicates spill across leaves
  * and the search has to step right — which is exactly the case worth seeing.
@@ -339,7 +353,7 @@ export interface InsertRecordsResponse {
 
 /**
  * One node of the physical plan: what it will cost, and what it did.
- * 
+ *
  * Estimated and actual sit side by side because the gap between them is the
  * single most useful thing a plan view can show. A plan that is slow is almost
  * always a plan whose row estimate was wrong, and no amount of staring at the
@@ -449,7 +463,7 @@ export interface ParseRequest {
 
 /**
  * Tokens, AST and error together — all three are partial-result friendly.
- * 
+ *
  * ``tokens`` can be non-empty while ``statements`` is empty and ``error`` is
  * set: that is a half-typed query, the normal state of one being written.
  */
@@ -574,7 +588,8 @@ export interface ResultColumnModel {
 }
 
 export interface ResumeRequest {
-  mode?: "step" | "continue" | "until_row" | "until_page_read" | "until_operator";
+  mode?:
+    "step" | "continue" | "until_row" | "until_page_read" | "until_operator";
   /** Required by until_operator; ignored otherwise */
   operator_id?: null | string;
 }
@@ -701,7 +716,21 @@ export interface TraceRecordModel {
   /** Monotonic per database; also the pagination cursor */
   seq: number;
   timestamp_ns: number;
-  category: "lifecycle" | "storage" | "record" | "parser" | "operator" | "catalog" | "index" | "planner" | "buffer_pool" | "transaction" | "wal" | "recovery" | "lock" | "mvcc";
+  category:
+    | "lifecycle"
+    | "storage"
+    | "record"
+    | "parser"
+    | "operator"
+    | "catalog"
+    | "index"
+    | "planner"
+    | "buffer_pool"
+    | "transaction"
+    | "wal"
+    | "recovery"
+    | "lock"
+    | "mvcc";
   level: "OFF" | "SUMMARY" | "OPERATOR" | "STORAGE" | "VERBOSE";
   /** Event class name, e.g. 'PageReadEvent' */
   event_type: string;
@@ -717,6 +746,48 @@ export interface TraceStatsModel {
   /** Events evicted from the ring buffer before being read */
   dropped: number;
   level: "OFF" | "SUMMARY" | "OPERATOR" | "STORAGE" | "VERBOSE";
+}
+
+export interface TransactionListResponse {
+  /** Null when the database is idle */
+  active: TransactionModel | null;
+  /** Finished transactions, oldest first, capped at the manager's history limit */
+  history: TransactionModel[];
+  history_limit: number;
+  in_transaction: boolean;
+  /** A statement in the open transaction raised. The UI should offer rollback and stop offering anything else. */
+  is_failed: boolean;
+  /** An implicit transaction is invisible to the client: it opens and commits inside one statement. Only an explicit one is something the user can COMMIT or ROLLBACK. */
+  in_explicit_transaction: boolean;
+  /** Held right now, across the whole database */
+  undo_bytes: number;
+}
+
+export interface TransactionModel {
+  transaction_id: number;
+  /** 'failed' is open but doomed: a statement in it raised, so only COMMIT (which rolls back) and ROLLBACK are accepted. */
+  state: "active" | "failed" | "committed" | "aborted";
+  /** True when the engine opened this around a bare statement rather than the client sending BEGIN */
+  implicit: boolean;
+  statements: number;
+  /** Page writes seen, including repeats of the same page */
+  pages_written: number;
+  /** Distinct pages with a before-image. Zero once finished — the undo log is released at commit and at rollback. */
+  pages_held: number;
+  /** Pages written back by a rollback. Zero for anything else. */
+  pages_restored: number;
+  /** pages_held * page_size, while active */
+  undo_bytes: number;
+  duration_ns: number;
+  /** Populated for the active transaction only; finished ones have released their undo log. */
+  records?: UndoRecordModel[];
+}
+
+/** What BEGIN, COMMIT or ROLLBACK did. */
+export interface TransactionResultResponse {
+  action: "begin" | "commit" | "rollback";
+  transaction: TransactionModel;
+  message: string;
 }
 
 /** One B+ tree node, decoded for display. */
@@ -743,4 +814,15 @@ export interface TreeSnapshotModel {
   nodes: TreeNodeModel[];
   /** True when the node budget was hit and the tree is only partly sent */
   truncated: boolean;
+}
+
+/** One before-image: what a page looked like before this transaction. */
+export interface UndoRecordModel {
+  /** Capture order. Rollback replays these in reverse, though with one image per page the order does not actually matter. */
+  sequence: number;
+  page_id: number;
+  /** Always one page */
+  before_image_size: number;
+  /** What was about to write the page — 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason. */
+  reason: string;
 }

@@ -197,6 +197,7 @@ class Keyword(StrEnum):
     BEGIN = "BEGIN"
     COMMIT = "COMMIT"
     ROLLBACK = "ROLLBACK"
+    TRANSACTION = "TRANSACTION"
 
 
 #: Lookup from an upper-cased word to its keyword. Identifiers are matched

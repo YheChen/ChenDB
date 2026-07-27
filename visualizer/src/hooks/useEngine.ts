@@ -29,6 +29,7 @@ import type {
   PageListResponse,
   RecordsResponse,
   TableDetail,
+  TransactionListResponse,
 } from "@/types/api";
 
 export const queryKeys = {
@@ -40,12 +41,14 @@ export const queryKeys = {
   table: (id: string, table: string) => ["table", id, table] as const,
   records: (id: string, table: string, offset: number, limit: number) =>
     ["records", id, table, offset, limit] as const,
-  indexes: (id: string, table?: string) => ["indexes", id, table ?? "*"] as const,
+  indexes: (id: string, table?: string) =>
+    ["indexes", id, table ?? "*"] as const,
   index: (id: string, name: string, maxNodes: number) =>
     ["index", id, name, maxNodes] as const,
   indexSearch: (id: string, name: string, value: string) =>
     ["indexSearch", id, name, value] as const,
   bufferPool: (id: string) => ["bufferPool", id] as const,
+  transactions: (id: string) => ["transactions", id] as const,
   pages: (id: string) => ["pages", id] as const,
   page: (id: string, pageId: number) => ["page", id, pageId] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -62,6 +65,7 @@ function invalidateDatabase(
     queryKeys.tables(databaseId),
     queryKeys.pages(databaseId),
     queryKeys.bufferPool(databaseId),
+    queryKeys.transactions(databaseId),
     queryKeys.indexes(databaseId),
     ["indexes", databaseId],
     ["index", databaseId],
@@ -88,7 +92,10 @@ export function useHealth(): UseQueryResult<HealthResponse> {
 }
 
 export function useDatabases(): UseQueryResult<DatabaseListResponse> {
-  return useQuery({ queryKey: queryKeys.databases, queryFn: api.listDatabases });
+  return useQuery({
+    queryKey: queryKeys.databases,
+    queryFn: api.listDatabases,
+  });
 }
 
 export function useDatabase(id: string | null): UseQueryResult<DatabaseDetail> {
@@ -214,7 +221,57 @@ export function useBufferPool(
   });
 }
 
+/**
+ * The transaction timeline and the open transaction's undo log.
+ *
+ * Polled for the same reason the pool is: the undo log grows on every write to
+ * a page it has not seen yet, and a stream of that would be noise. Unlike the
+ * pool, this is also *correctness*-relevant — a forgotten open transaction is
+ * something the user must be able to see — so it keeps polling even when the
+ * transactions workspace is not on screen, and the top bar reads from the same
+ * cache entry.
+ */
+export function useTransactions(
+  id: string | null,
+  { refetchInterval = 1500 }: { refetchInterval?: number | false } = {},
+): UseQueryResult<TransactionListResponse> {
+  return useQuery({
+    queryKey: queryKeys.transactions(id ?? ""),
+    queryFn: () => api.getTransactions(id!),
+    enabled: Boolean(id),
+    refetchInterval,
+    // Unlike the pool, this keeps polling in a background tab. An open
+    // transaction is state the user is responsible for ending, and finding out
+    // it exists only when the tab regains focus is too late to be useful.
+    refetchIntervalInBackground: true,
+  });
+}
+
 // -- writes ----------------------------------------------------------------
+
+/**
+ * BEGIN, COMMIT and ROLLBACK as one hook.
+ *
+ * A rollback rewrites pages the rest of the UI is displaying — rows, the disk
+ * map, the catalog, the page inspector — so every one of them is invalidated,
+ * not just the transaction panel. Anything less would leave the explorer
+ * showing rows that no longer exist, which is exactly the "fake frontend
+ * simulation" this project refuses to ship.
+ */
+export function useTransactionAction(databaseId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (action: "begin" | "commit" | "rollback") => {
+      const id = databaseId!;
+      if (action === "begin") return api.beginTransaction(id);
+      if (action === "commit") return api.commitTransaction(id);
+      return api.rollbackTransaction(id);
+    },
+    onSuccess: () => {
+      if (databaseId) invalidateDatabase(client, databaseId);
+    },
+  });
+}
 
 export function useCreateDatabase() {
   const client = useQueryClient();
@@ -249,7 +306,8 @@ export function useCreateTable(databaseId: string) {
 export function useInsertRecords(databaseId: string, table: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (rows: unknown[][]) => api.insertRecords(databaseId, table, rows),
+    mutationFn: (rows: unknown[][]) =>
+      api.insertRecords(databaseId, table, rows),
     onSuccess: () => invalidateDatabase(client, databaseId),
   });
 }
@@ -271,7 +329,8 @@ export function useDeleteRecord(databaseId: string, table: string) {
 export function useCreateIndex(databaseId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (payload: CreateIndexRequest) => api.createIndex(databaseId, payload),
+    mutationFn: (payload: CreateIndexRequest) =>
+      api.createIndex(databaseId, payload),
     // Building an index allocates pages and writes the catalog, so the storage
     // views are stale too — not just the index list.
     onSuccess: () => invalidateDatabase(client, databaseId),
@@ -300,6 +359,13 @@ export function useRunQuery(databaseId: string) {
         invalidateDatabase(client, databaseId);
       }
     },
+    onError: () => {
+      // A failed statement changes engine state too: it dooms the open
+      // transaction, and it may have written rows before it raised. Leaving the
+      // caches alone here would show a healthy transaction that is actually
+      // refusing to accept anything.
+      invalidateDatabase(client, databaseId);
+    },
   });
 }
 
@@ -309,7 +375,9 @@ export function useSetTraceLevel(databaseId: string) {
     mutationFn: (level: TraceLevelName) => api.setTraceLevel(databaseId, level),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.trace(databaseId) });
-      void client.invalidateQueries({ queryKey: queryKeys.database(databaseId) });
+      void client.invalidateQueries({
+        queryKey: queryKeys.database(databaseId),
+      });
     },
   });
 }

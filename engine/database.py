@@ -35,17 +35,24 @@ from Milestones 1-3, which had exactly one table per file and therefore did not
 need one; the single JSON schema page and the ``heap_first_page`` meta fields are
 both gone.
 
-There are still no transactions.  Every :meth:`insert` writes through to the OS
-immediately, and :meth:`sync` is what makes it durable.  Creating a table writes
-several rows across two system tables and is *not* atomic: a crash part-way could
-leave a table with columns but no ``chendb_tables`` row, or an orphaned heap.
-Fixing that is what the write-ahead log in Milestone 9 is for.
+Milestone 8 scope
+-----------------
+Writes are transactional.  :meth:`begin`, :meth:`commit` and :meth:`rollback`
+wrap a group of statements, and anything run without one gets an implicit
+transaction so a multi-row ``INSERT`` that fails half-way leaves nothing behind.
+``CREATE TABLE`` — several rows across two system tables — became atomic for
+free, because the undo log works in pages and does not care what the rows meant.
+
+That is atomicity against *errors*.  Atomicity against *power loss* needs a
+commit record on disk, which is the write-ahead log in Milestone 9;
+:meth:`sync` is still what makes anything durable.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -75,6 +82,7 @@ from engine.storage.inspect import (
 )
 from engine.storage.page import Page
 from engine.storage.pager import Pager, PagerStats
+from engine.transaction.manager import Transaction, TransactionManager
 
 __all__ = ["DATABASE_SUFFIX", "Database"]
 
@@ -92,6 +100,7 @@ class Database:
         "_pager",
         "_statistics",
         "_tracer",
+        "_transactions",
     )
 
     def __init__(
@@ -108,6 +117,9 @@ class Database:
         self._closed = False
         self._catalog = Catalog(pager, tracer=self._tracer)
         self._statistics = StatisticsCatalog(self, tracer=self._tracer)
+        self._transactions = TransactionManager(tracer=self._tracer)
+        # One hook, and every page change in the engine becomes undoable.
+        pager.on_before_write = self._transactions.before_write
         if create and not self._catalog.initialised:
             self._catalog.bootstrap()
 
@@ -159,6 +171,102 @@ class Database:
     def catalog(self) -> Catalog:
         """The system catalog. Read it directly for statistics or listings."""
         return self._catalog
+
+    # -- transactions ------------------------------------------------------
+
+    @property
+    def transactions(self) -> TransactionManager:
+        """The transaction manager. Read it for the timeline."""
+        return self._transactions
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._transactions.in_transaction
+
+    def begin(self, *, implicit: bool = False) -> Transaction:
+        """Open a transaction, so the writes that follow can be taken back."""
+        self._ensure_open()
+        return self._transactions.begin(implicit=implicit)
+
+    def commit(self) -> Transaction:
+        """Accept the work. Durability is still :meth:`sync`'s job.
+
+        A ``COMMIT`` on a transaction that already had a statement fail rolls
+        back instead. That is what PostgreSQL does — ``COMMIT`` in an aborted
+        block prints ``ROLLBACK`` — and it is the safe direction: the caller
+        never gets half a transaction, and never gets stuck in one either. The
+        returned transaction reports ``aborted``, so nothing has to guess.
+        """
+        self._ensure_open()
+        if self._transactions.is_failed:
+            return self.rollback()
+        return self._transactions.commit()
+
+    def rollback(self) -> Transaction:
+        """Put every page back as it was when the transaction started.
+
+        Restoring bytes is only most of the job. Two pieces of engine state live
+        in memory rather than on a page the engine re-reads, and both would
+        otherwise survive a rollback and describe a database that no longer
+        exists:
+
+        * the **meta page** is a decoded dataclass, so ``page_count`` and
+          ``next_object_id`` have to be re-read from the restored bytes;
+        * the **catalog cache** and the **statistics** are derived from pages
+          that just changed underneath them — a rolled-back ``CREATE TABLE``
+          would otherwise leave the engine happily serving a table with no rows
+          on disk.
+        """
+        self._ensure_open()
+        transaction = self._transactions.rollback(self._restore_page)
+        self._pager.reload_meta()
+        self._catalog.invalidate()
+        self._statistics.invalidate()
+        return transaction
+
+    def _restore_page(self, page_id: int, image: bytes) -> None:
+        """Write one before-image back, bypassing the undo hook.
+
+        Bypassing matters: the hook is what captures before-images, and a
+        rollback writing through it would try to capture the page it is in the
+        middle of restoring.
+        """
+        self._pager.restore_page(page_id, image)
+
+    @contextmanager
+    def transaction(self) -> Iterator[Transaction]:
+        """Run a block atomically: commit on success, roll back on anything else.
+
+            with db.transaction():
+                db.insert("users", (1, "ada"))
+                db.insert("users", (2, "alan"))
+
+        Nests by adopting an outer transaction rather than opening a second one
+        — ChenDB has no savepoints, so an inner block cannot roll back
+        independently, and pretending otherwise would be worse than not nesting.
+        """
+        outer = self._transactions.active
+        transaction = self.begin(implicit=True) if outer is None else outer
+        try:
+            yield transaction
+        except BaseException:
+            if self._owns(outer, transaction):
+                self.rollback()
+            raise
+        else:
+            if self._owns(outer, transaction):
+                self.commit()
+
+    def _owns(self, outer: Transaction | None, transaction: Transaction) -> bool:
+        """True when :meth:`transaction` should end ``transaction`` itself.
+
+        Two ways it should not. The caller had one open already, so it decides;
+        or the block ended this one itself — ``db.rollback()`` inside a ``with``
+        is a reasonable thing to write, and the context manager committing over
+        the top of it would raise "COMMIT with no transaction open" and hide
+        whatever the block was doing.
+        """
+        return outer is None and self._transactions.active is transaction
 
     @property
     def statistics(self) -> StatisticsCatalog:
@@ -257,9 +365,7 @@ class Database:
         """Encode ``values`` and append them to ``table``, updating its indexes."""
         return self.insert_many(table, (values,))[0]
 
-    def insert_many(
-        self, table: str, rows: Sequence[Sequence[Any]]
-    ) -> list[RecordId]:
+    def insert_many(self, table: str, rows: Sequence[Sequence[Any]]) -> list[RecordId]:
         """Insert several rows. Still one page write per row in Milestone 5.
 
         A real bulk loader fills a page in memory and writes it once; that becomes
@@ -289,9 +395,7 @@ class Database:
     def get(self, table: str, record_id: RecordId) -> Row:
         """Fetch and decode one row by its physical address."""
         info = self.require_table(table)
-        return decode_record(
-            info.schema, self._catalog.heap_for(info.name).get(record_id)
-        )
+        return decode_record(info.schema, self._catalog.heap_for(info.name).get(record_id))
 
     def describe(self, table: str, record_id: RecordId) -> RecordLayout:
         """Fetch one row along with each column's byte range."""

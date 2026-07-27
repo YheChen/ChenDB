@@ -5,7 +5,11 @@ whole appeal: the grammar below can be read straight off the method names.
 
     script         := statement { ';' statement } [ ';' ]
     statement      := create_table | create_index | insert | select
-                    | explain | analyze
+                    | explain | analyze | begin | commit | rollback
+
+    begin          := BEGIN [ TRANSACTION ]
+    commit         := COMMIT [ TRANSACTION ]
+    rollback       := ROLLBACK [ TRANSACTION ]
 
     explain        := EXPLAIN [ ANALYZE ] statement
     analyze        := ANALYZE [ ident ]
@@ -70,11 +74,13 @@ from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import ParseError, UnsupportedSqlError
 from engine.parser.ast import (
     AnalyzeStatement,
+    BeginStatement,
     BinaryOp,
     BinaryOperator,
     ColumnConstraint,
     ColumnDefinition,
     ColumnRef,
+    CommitStatement,
     CreateIndexStatement,
     CreateTableStatement,
     ExplainStatement,
@@ -83,6 +89,7 @@ from engine.parser.ast import (
     IsNullTest,
     Literal,
     Node,
+    RollbackStatement,
     SelectItem,
     SelectStatement,
     Star,
@@ -151,9 +158,6 @@ _NOT_YET: Final[dict[Keyword, str]] = {
     Keyword.UPDATE: "UPDATE is not implemented yet",
     Keyword.DELETE: "DELETE is not implemented yet",
     Keyword.DROP: "DROP is not implemented yet",
-    Keyword.BEGIN: "transactions arrive in Milestone 8",
-    Keyword.COMMIT: "transactions arrive in Milestone 8",
-    Keyword.ROLLBACK: "transactions arrive in Milestone 8",
 }
 
 
@@ -333,6 +337,8 @@ class Parser:
             return self._explain_statement()
         if self._check_keyword(Keyword.ANALYZE):
             return self._analyze_statement()
+        if self._check_keyword(Keyword.BEGIN, Keyword.COMMIT, Keyword.ROLLBACK):
+            return self._transaction_statement()
 
         keyword = self._current.keyword
         if keyword is not None and keyword in _NOT_YET:
@@ -346,8 +352,31 @@ class Parser:
                 "CREATE INDEX",
                 "EXPLAIN",
                 "ANALYZE",
+                "BEGIN",
+                "COMMIT",
+                "ROLLBACK",
             ),
         )
+
+    # -- transactions ------------------------------------------------------
+
+    def _transaction_statement(self) -> Statement:
+        """``BEGIN`` / ``COMMIT`` / ``ROLLBACK``, with an optional TRANSACTION.
+
+        The noise word is accepted and discarded, as in every SQL dialect: it
+        reads better in a script and means nothing.
+        """
+        token = self._advance()
+        span = token.span
+        noise = self._match_keyword(Keyword.TRANSACTION)
+        if noise is not None:
+            span = span.union(noise.span)
+        node = {
+            Keyword.BEGIN: BeginStatement,
+            Keyword.COMMIT: CommitStatement,
+            Keyword.ROLLBACK: RollbackStatement,
+        }[token.keyword]
+        return self._node(node, span)
 
     # -- EXPLAIN / ANALYZE -------------------------------------------------
 
@@ -543,9 +572,7 @@ class Parser:
                     break
             end = self._expect(TokenType.RPAREN, "')' after a row of values").span
             rows.append(
-                self._node(
-                    ValuesRow, open_paren.span.union(end), values=tuple(values)
-                )
+                self._node(ValuesRow, open_paren.span.union(end), values=tuple(values))
             )
             if not self._match(TokenType.COMMA):
                 break
@@ -556,14 +583,12 @@ class Parser:
             for row in rows:
                 if row.width != len(columns):
                     self._fail(
-                        f"row has {row.width} values but {len(columns)} columns "
-                        f"were named"
+                        f"row has {row.width} values but {len(columns)} columns were named"
                     )
         widths = {row.width for row in rows}
         if len(widths) > 1:
             self._fail(
-                f"every row must have the same number of values; found "
-                f"{sorted(widths)}"
+                f"every row must have the same number of values; found {sorted(widths)}"
             )
 
         return self._node(
@@ -644,9 +669,7 @@ class Parser:
         self._depth += 1
         if self._depth > MAX_EXPRESSION_DEPTH:
             self._depth -= 1
-            self._fail(
-                f"expression nested deeper than {MAX_EXPRESSION_DEPTH} levels"
-            )
+            self._fail(f"expression nested deeper than {MAX_EXPRESSION_DEPTH} levels")
         try:
             return self._or_expression()
         finally:
@@ -744,9 +767,7 @@ class Parser:
 
     def _multiplicative(self) -> Expression:
         left = self._unary()
-        while (
-            operator := _MULTIPLICATIVE_OPERATORS.get(self._current.type)
-        ) is not None:
+        while (operator := _MULTIPLICATIVE_OPERATORS.get(self._current.type)) is not None:
             self._advance()
             right = self._unary()
             left = self._node(

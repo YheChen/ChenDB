@@ -1,9 +1,16 @@
-"""Failure behaviour in Milestone 1.
+"""Failure behaviour: what survives, what does not, and what is merely detected.
 
 There is no write-ahead log yet, so the engine cannot *repair* anything.  What
 it can do — and what these tests pin down — is fail loudly and specifically
 instead of returning wrong answers.  Milestone 9 turns each of these
 "detected" outcomes into a "recovered" one.
+
+Milestone 8 added transactions, and the boundary they draw is the important
+thing to keep honest: **a rollback in-process is atomic, a crash is not.** The
+undo log lives in memory and the buffer pool may already have written
+uncommitted pages out, so a process killed mid-transaction leaves whatever the
+pool happened to evict. The last two tests here assert exactly that, so nobody
+reads "ChenDB has transactions" as "ChenDB has crash atomicity".
 
 The crash simulations kill a child process with ``SIGKILL``.  Nothing runs on
 the way out: no ``close()``, no ``fsync``, no atexit hook.  That is the only
@@ -199,7 +206,116 @@ def test_corruption_is_localised_to_the_damaged_page(tmp_path: Path):
         summaries = {s.page_id: s for s in db.page_summaries()}
         assert summaries[victim].checksum_valid is False
         assert all(
-            summaries[page_id].checksum_valid
-            for page_id in heap_pages
-            if page_id != victim
+            summaries[page_id].checksum_valid for page_id in heap_pages if page_id != victim
         )
+
+
+# -- transactions across a crash (Milestone 8) -----------------------------
+
+_TRANSACTION_TEMPLATE = """
+import os, signal, sys
+sys.path.insert(0, {repo!r})
+from engine import Column, DataType, Database, Schema
+
+schema = Schema.of(
+    Column("id", DataType.INTEGER, nullable=False),
+    Column("payload", DataType.TEXT, nullable=False),
+)
+db = Database.open({path!r}, page_size={page_size}, buffer_pool_frames=4)
+db.create_table("t", schema)
+db.insert_many("t", [(i, f"committed-{{i}}") for i in range(20)])
+db.sync()
+
+# An open transaction, deliberately never committed. With a four-frame pool and
+# this many rows, the pool is forced to steal — some of these pages reach the
+# disk despite belonging to a transaction that will never commit.
+db.begin()
+db.insert_many("t", [(1000 + i, f"uncommitted-{{i}}") for i in range(200)])
+sys.stdout.write("ready")
+sys.stdout.flush()
+os.kill(os.getpid(), signal.SIGKILL)
+"""
+
+
+def crash_mid_transaction(path: Path) -> None:
+    source = _TRANSACTION_TEMPLATE.format(
+        repo=str(REPO_ROOT), path=str(path), page_size=PAGE_SIZE
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(source)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.stdout == "ready", completed.stderr
+    assert completed.returncode == -signal.SIGKILL
+
+
+def readable_rows(db: Database) -> list[tuple]:
+    """Scan until a page the crash left incomplete stops us.
+
+    A partial scan is the honest outcome: the pages that reached the disk are
+    whole and readable, and the first one that did not is *detected* rather than
+    returned as plausible-looking garbage.
+    """
+    rows: list[tuple] = []
+    try:
+        for _, row in db.scan("t"):
+            rows.append(row)
+    except ChecksumMismatchError:
+        pass
+    return rows
+
+
+def test_a_crash_mid_transaction_leaves_a_file_that_opens(tmp_path: Path):
+    """Opening must work even though the transaction never finished.
+
+    This is the one that found a real bug. The buffer pool is free to evict the
+    meta page before the pages it references, so a crash could leave a file
+    *shorter* than its own page count — which the length check correctly refuses
+    to open. ``allocate_page`` now extends the file at allocation time, which is
+    the ordering Milestones 1-6 had for free by writing everything immediately.
+    """
+    path = tmp_path / "crashed-txn.chendb"
+    crash_mid_transaction(path)
+
+    with Database.open(path, page_size=PAGE_SIZE) as db:
+        assert db.page_count > 1
+
+
+def test_a_page_the_crash_never_flushed_is_detected_not_returned(tmp_path: Path):
+    # A page allocated but never written is zeros, and zeros are not a valid
+    # checksum. Detected, not repaired — the contract until Milestone 9.
+    path = tmp_path / "unflushed.chendb"
+    crash_mid_transaction(path)
+
+    with Database.open(path, page_size=PAGE_SIZE) as db:
+        rows = readable_rows(db)
+        assert rows, "the pages that did reach the disk are readable"
+        assert all(isinstance(row[0], int) for row in rows)
+
+
+def test_a_crash_mid_transaction_is_not_atomic(tmp_path: Path):
+    """The boundary, asserted rather than assumed.
+
+    An uncommitted transaction that outgrew the buffer pool has had pages
+    *stolen* — written to disk before it committed. The undo log died with the
+    process, and nothing on disk says a transaction was open, so those rows are
+    simply there.
+
+    This is what a write-ahead log fixes, and it is the whole reason Milestone 9
+    exists. Pinning uncommitted pages would not have fixed it either: a crash
+    during the commit flush leaves the same partial state, and only a durable
+    commit *record* can tell a complete transaction from an interrupted one.
+    """
+    path = tmp_path / "not-atomic.chendb"
+    crash_mid_transaction(path)
+
+    with Database.open(path, page_size=PAGE_SIZE) as db:
+        uncommitted = [row for row in readable_rows(db) if row[0] >= 1000]
+
+    assert uncommitted, (
+        "expected some uncommitted rows to have survived — if this ever fails, "
+        "either the pool stopped stealing or Milestone 9 landed, and this test "
+        "should become an assertion that they were rolled back"
+    )

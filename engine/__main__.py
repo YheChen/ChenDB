@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from engine import __version__
+from engine import MILESTONE, MILESTONE_FEATURES, __version__
 from engine.database import Database
 from engine.diagnostics import RingBufferSink, TraceLevel, Tracer
 from engine.errors import ChenDBError
@@ -37,8 +37,8 @@ _DEFAULT_SCAN_LIMIT = 50
 _DEFAULT_EVENT_LIMIT = 20
 _DEFAULT_HEX_BYTES = 256
 
-_BANNER = f"""ChenDB {__version__} — Milestone 6 \
-(storage + SQL + execution + catalog + indexes + planner)
+_BANNER = f"""ChenDB {__version__} — Milestone {MILESTONE} \
+({" + ".join(MILESTONE_FEATURES)})
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL."""
 
 _HELP = """\
@@ -228,7 +228,9 @@ class Shell:
             print(f"  {index}  {column.name:<20} {column.data_type.sql_name}{flags}")
         print(f"  null bitmap: {table.schema.null_bitmap_size} byte(s)")
         fixed = table.schema.fixed_row_size
-        print(f"  row size:    {fixed} bytes (fixed)" if fixed else "  row size:    variable")
+        print(
+            f"  row size:    {fixed} bytes (fixed)" if fixed else "  row size:    variable"
+        )
         for info in self.db.indexes(table.name):
             kind = "UNIQUE INDEX" if info.unique else "INDEX"
             print(f"  {kind} {info.name} ({info.column_name})")
@@ -286,15 +288,19 @@ class Shell:
     def _cmd_analyze(self, rest: str) -> None:
         gathered = self.db.analyze(rest.strip() or None)
         for stats in gathered:
-            print(f"analyzed {stats.table_name}: {stats.row_count} rows, "
-                  f"{stats.page_count} pages")
+            print(
+                f"analyzed {stats.table_name}: {stats.row_count} rows, "
+                f"{stats.page_count} pages"
+            )
 
     def _cmd_stats_of(self, rest: str) -> None:
         """What the planner reasons about, and how old it is."""
         name = rest.strip() or self.table
         stats = self.db.statistics.for_table(name)
         stale = " (STALE — run .analyze)" if self.db.statistics.is_stale(name) else ""
-        print(f"{stats.table_name}: {stats.row_count} rows, {stats.page_count} pages{stale}")
+        print(
+            f"{stats.table_name}: {stats.row_count} rows, {stats.page_count} pages{stale}"
+        )
         print(f"  {'column':<18}{'distinct':>10}{'nulls':>8}  min / max")
         for column in stats.columns:
             span = (
@@ -359,9 +365,11 @@ class Shell:
         print(f"path    {' -> '.join(f'p{page}' for page in tree.descent_path(key))}")
         print(f"height  {tree.height}")
         print(f"pages   {self.db.stats.page_reads - before} read")
-        print(f"found   {len(matches)} row(s): "
-              f"{' '.join(str(rid) for rid in matches[:12])}"
-              f"{' …' if len(matches) > 12 else ''}")
+        print(
+            f"found   {len(matches)} row(s): "
+            f"{' '.join(str(rid) for rid in matches[:12])}"
+            f"{' …' if len(matches) > 12 else ''}"
+        )
 
     def _cmd_pages(self, _: str) -> None:
         print(
@@ -450,7 +458,9 @@ class Shell:
             print("no events; raise the level with .trace storage")
             return
         for item in records:
-            print(f"  #{item.seq:<5} {item.category:<10} {item.event_type:<22} {item.event}")
+            print(
+                f"  #{item.seq:<5} {item.category:<10} {item.event_type:<22} {item.event}"
+            )
 
     def _cmd_sync(self, _: str) -> None:
         self.db.sync()

@@ -43,9 +43,7 @@ def seeded(client: TestClient) -> TestClient:
 
 
 def query(client: TestClient, sql: str, **extra) -> list[dict]:
-    response = client.post(
-        f"{API_PREFIX}/databases/demo/query", json={"sql": sql, **extra}
-    )
+    response = client.post(f"{API_PREFIX}/databases/demo/query", json={"sql": sql, **extra})
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -55,15 +53,14 @@ def query(client: TestClient, sql: str, **extra) -> list[dict]:
 
 def test_health_reports_execution(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 7
+    assert body["milestone"] >= 3, "execution shipped in Milestone 3"
     assert body["features"]["sql"] is True
     assert body["features"]["execution"] is True
     assert body["features"]["catalog"] is True
     assert body["features"]["indexes"] is True
     assert body["features"]["planner"] is True
     assert body["features"]["buffer_pool"] is True
-    # Still nothing after this milestone.
-    assert body["features"]["transactions"] is False
+    assert body["features"]["transactions"] is True
 
 
 # -- normal mode -----------------------------------------------------------
@@ -146,9 +143,7 @@ def test_record_ids_point_at_real_rows(seeded: TestClient):
     (result,) = query(seeded, "SELECT id FROM users")
     assert len(result["record_ids"]) == len(result["rows"])
     first = result["record_ids"][0]
-    page = seeded.get(
-        f"{API_PREFIX}/databases/demo/pages/{first['page_id']}"
-    ).json()
+    page = seeded.get(f"{API_PREFIX}/databases/demo/pages/{first['page_id']}").json()
     slot = page["slots"][first["slot_id"]]
     assert slot["is_live"] is True
     assert slot["record"]["values"][0] == result["rows"][0][0]
@@ -294,9 +289,7 @@ def step(client: TestClient, execution_id: str, path: str = "next", **body) -> d
 
 
 def start_step(client: TestClient, sql: str) -> dict:
-    response = client.post(
-        f"{API_PREFIX}/databases/demo/query/step", json={"sql": sql}
-    )
+    response = client.post(f"{API_PREFIX}/databases/demo/query/step", json={"sql": sql})
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -363,9 +356,9 @@ def test_until_row_skips_intermediate_checkpoints(seeded: TestClient):
 
 
 def test_until_operator_stops_at_the_named_operator(seeded: TestClient):
-    execution_id = start_step(
-        seeded, "SELECT email FROM users WHERE age >= 18"
-    )["execution_id"]
+    execution_id = start_step(seeded, "SELECT email FROM users WHERE age >= 18")[
+        "execution_id"
+    ]
     execution = step(
         seeded, execution_id, "resume", mode="until_operator", operator_id="scan_1"
     )
@@ -383,9 +376,9 @@ def test_until_operator_needs_an_operator_id(seeded: TestClient):
 
 
 def test_continue_finishes_and_returns_the_result(seeded: TestClient):
-    execution_id = start_step(
-        seeded, "SELECT email FROM users WHERE age >= 18"
-    )["execution_id"]
+    execution_id = start_step(seeded, "SELECT email FROM users WHERE age >= 18")[
+        "execution_id"
+    ]
     execution = step(seeded, execution_id, "continue")
     assert execution["state"] == "finished"
     assert execution["result"]["rows"] == [["ada@example.com"], ["grace@example.com"]]
@@ -438,9 +431,9 @@ def test_executions_can_be_listed_and_filtered(seeded: TestClient):
     ids = [e["execution_id"] for e in listing["executions"]]
     assert first in ids and second in ids
     assert listing["max_executions"] == 4
-    assert seeded.get(f"{API_PREFIX}/executions?database_id=other").json()[
-        "executions"
-    ] == []
+    assert (
+        seeded.get(f"{API_PREFIX}/executions?database_id=other").json()["executions"] == []
+    )
 
 
 def test_the_execution_registry_is_bounded(seeded: TestClient):
@@ -455,9 +448,7 @@ def test_the_execution_registry_is_bounded(seeded: TestClient):
 
 def test_an_unknown_execution_is_404(seeded: TestClient):
     assert seeded.get(f"{API_PREFIX}/executions/exec_nope").status_code == 404
-    assert (
-        seeded.post(f"{API_PREFIX}/executions/exec_nope/next").status_code == 404
-    )
+    assert seeded.post(f"{API_PREFIX}/executions/exec_nope/next").status_code == 404
 
 
 def test_stepping_refuses_a_multi_statement_script(seeded: TestClient):

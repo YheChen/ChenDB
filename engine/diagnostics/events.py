@@ -49,6 +49,8 @@ __all__ = [
     "RecordInsertedEvent",
     "RecordReadEvent",
     "StatisticsGatheredEvent",
+    "TransactionEvent",
+    "UndoRecordEvent",
 ]
 
 #: Where a page came from.  Constant ``"disk"`` until Milestone 7 added the
@@ -704,3 +706,63 @@ class BufferPoolEvent(DiagnosticEvent):
     staying full, is the shape of a cache doing its job."""
     pages_written: int = 0
     """Flush only: how many dirty frames reached the disk."""
+
+
+# --------------------------------------------------------------------------
+# Transactions (Milestone 8)
+# --------------------------------------------------------------------------
+
+#: Where a transaction is in its life. No ``prepare``: there is no two-phase
+#: commit, because there is nothing to coordinate with.
+TransactionAction = Literal[
+    "begin", "failed", "commit", "rollback_started", "rollback_done"
+]
+
+#: ``capture`` saves a page's before-image; ``restore`` writes one back.
+UndoAction = Literal["capture", "restore"]
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionEvent(DiagnosticEvent):
+    """A transaction started or ended.
+
+    ``implicit`` distinguishes a transaction the engine opened around a
+    statement from one the user asked for. Most transactions in a session are
+    implicit, and a timeline that did not say so would look like the user was
+    running ``BEGIN`` constantly.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.TRANSACTION
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    transaction_id: int
+    action: TransactionAction
+    implicit: bool
+    pages_held: int
+    """Pages with a before-image saved — the undo log's size in pages."""
+    undo_bytes: int
+    pages_restored: int = 0
+    """``rollback_done`` only: how many before-images were written back."""
+
+
+@dataclass(frozen=True, slots=True)
+class UndoRecordEvent(DiagnosticEvent):
+    """One page's before-image was saved, or written back.
+
+    ``capture`` is ``STORAGE``: it happens once per page a transaction touches,
+    which is few. ``restore`` is ``VERBOSE`` — a rollback emits one per captured
+    page all at once, and the count is already on the ``rollback_done``
+    :class:`TransactionEvent`.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.TRANSACTION
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    transaction_id: int
+    page_id: int
+    kind: UndoAction
+    before_image_size: int
+    reason: str = ""
+    """What was about to change the page. Not used to undo — the bytes are the
+    whole mechanism — but a log of "page 4, page 4, page 1" reads as noise
+    without it."""

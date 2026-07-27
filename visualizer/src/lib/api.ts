@@ -33,6 +33,8 @@ import type {
   PageListResponse,
   RecordsResponse,
   TraceLevelResponse,
+  TransactionListResponse,
+  TransactionResultResponse,
 } from "@/types/api";
 
 export const API_PREFIX = "/api/v1";
@@ -90,7 +92,11 @@ function extractError(status: number, body: unknown): ApiRequestError {
     return new ApiRequestError(status, "Error", detail);
   }
   if (payload?.message) {
-    return new ApiRequestError(status, payload.error ?? "Error", payload.message);
+    return new ApiRequestError(
+      status,
+      payload.error ?? "Error",
+      payload.message,
+    );
   }
   return new ApiRequestError(status, "Error", `Request failed (${status})`);
 }
@@ -141,7 +147,8 @@ export const api = {
   deleteDatabase: (id: string) =>
     request<void>(`/databases/${id}`, { method: "DELETE" }),
 
-  getCatalog: (id: string) => request<CatalogResponse>(`/databases/${id}/catalog`),
+  getCatalog: (id: string) =>
+    request<CatalogResponse>(`/databases/${id}/catalog`),
 
   listTables: (id: string, includeSystem = false) =>
     request<TableSummary[]>(
@@ -192,21 +199,29 @@ export const api = {
     ),
 
   stepExecution: (executionId: string) =>
-    request<ExecutionDetail>(`/executions/${executionId}/next`, { method: "POST" }),
+    request<ExecutionDetail>(`/executions/${executionId}/next`, {
+      method: "POST",
+    }),
 
   continueExecution: (executionId: string) =>
     request<ExecutionDetail>(`/executions/${executionId}/continue`, {
       method: "POST",
     }),
 
-  resumeExecution: (executionId: string, mode: ResumeModeName, operatorId?: string) =>
+  resumeExecution: (
+    executionId: string,
+    mode: ResumeModeName,
+    operatorId?: string,
+  ) =>
     request<ExecutionDetail>(
       `/executions/${executionId}/resume`,
       json({ mode, ...(operatorId ? { operator_id: operatorId } : {}) }),
     ),
 
   cancelExecution: (executionId: string) =>
-    request<ExecutionDetail>(`/executions/${executionId}/cancel`, { method: "POST" }),
+    request<ExecutionDetail>(`/executions/${executionId}/cancel`, {
+      method: "POST",
+    }),
 
   listIndexes: (id: string, table?: string) =>
     request<IndexListResponse>(
@@ -230,18 +245,44 @@ export const api = {
   getBufferPool: (id: string) =>
     request<BufferPoolResponse>(`/databases/${id}/buffer-pool`),
 
-  listPages: (id: string) => request<PageListResponse>(`/databases/${id}/pages`),
+  getTransactions: (id: string) =>
+    request<TransactionListResponse>(`/databases/${id}/transactions`),
+
+  beginTransaction: (id: string) =>
+    request<TransactionResultResponse>(`/databases/${id}/transactions`, {
+      method: "POST",
+    }),
+
+  commitTransaction: (id: string) =>
+    request<TransactionResultResponse>(`/databases/${id}/transactions/commit`, {
+      method: "POST",
+    }),
+
+  rollbackTransaction: (id: string) =>
+    request<TransactionResultResponse>(
+      `/databases/${id}/transactions/rollback`,
+      {
+        method: "POST",
+      },
+    ),
+
+  listPages: (id: string) =>
+    request<PageListResponse>(`/databases/${id}/pages`),
 
   getPage: (id: string, pageId: number) =>
     request<PageDetailModel>(`/databases/${id}/pages/${pageId}`),
 
   listEvents: (id: string, afterSeq: number | null, limit: number) => {
     const cursor = afterSeq === null ? "" : `after_seq=${afterSeq}&`;
-    return request<EventsResponse>(`/databases/${id}/events?${cursor}limit=${limit}`);
+    return request<EventsResponse>(
+      `/databases/${id}/events?${cursor}limit=${limit}`,
+    );
   },
 
   clearEvents: (id: string) =>
-    request<TraceLevelResponse>(`/databases/${id}/events`, { method: "DELETE" }),
+    request<TraceLevelResponse>(`/databases/${id}/events`, {
+      method: "DELETE",
+    }),
 
   getTraceLevel: (id: string) =>
     request<TraceLevelResponse>(`/databases/${id}/trace`),

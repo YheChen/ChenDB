@@ -1,5 +1,25 @@
 """Endpoint definitions, one module per resource family."""
 
-from engine.server.routers import catalog, databases, events, pages, query, sql
+from engine.server.routers import (
+    buffer,
+    catalog,
+    databases,
+    events,
+    indexes,
+    pages,
+    query,
+    sql,
+    transactions,
+)
 
-__all__ = ["catalog", "databases", "events", "pages", "query", "sql"]
+__all__ = [
+    "buffer",
+    "catalog",
+    "databases",
+    "events",
+    "indexes",
+    "pages",
+    "query",
+    "sql",
+    "transactions",
+]

@@ -146,3 +146,44 @@ def test_importing_the_engine_pulls_in_no_third_party_package():
     assert payload["leaked"] == [], (
         f"importing engine loaded {payload['leaked']}. {STDLIB_ONLY_MESSAGE}."
     )
+
+
+# -- one milestone number ---------------------------------------------------
+#
+# It used to be written out three times — engine/__init__, the CLI banner and
+# the server's /health — and the CLI's copy sat a whole release behind, because
+# a stale string breaks nothing. Now they all derive from the version, and these
+# tests are what stop the derivation quietly coming apart again.
+
+
+def test_the_milestone_is_the_version_minor():
+    import engine
+
+    assert int(engine.__version__.split(".")[1]) == engine.MILESTONE, (
+        "the roadmap says 0.N.0 means Milestone N"
+    )
+
+
+def test_the_packaged_version_matches_the_engine():
+    import tomllib
+
+    import engine
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    assert pyproject["project"]["version"] == engine.__version__
+
+
+def test_the_feature_list_has_one_entry_per_milestone():
+    import engine
+
+    assert len(engine.MILESTONE_FEATURES) == engine.MILESTONE, (
+        "the CLI banner enumerates what shipped; a missing entry means a "
+        "milestone landed without the banner being told"
+    )
+
+
+def test_the_api_reports_the_engine_milestone():
+    import engine
+    from engine.server import app
+
+    assert app.MILESTONE == engine.MILESTONE

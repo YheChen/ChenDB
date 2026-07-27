@@ -267,20 +267,38 @@ Two existing events changed meaning in this milestone:
 
 ---
 
+### Milestone 8 — `transaction`
+
+| Event | Level | Fields |
+|---|---|---|
+| `TransactionEvent` | `SUMMARY` | `transaction_id`, `action`, `implicit`, `pages_held`, `undo_bytes`, `pages_restored` |
+| `UndoRecordEvent` | `STORAGE` | `transaction_id`, `page_id`, `kind`, `before_image_size`, `reason` |
+
+`action` is one of `begin`, `failed`, `commit`, `rollback_started`,
+`rollback_done`. There is no `abort`: an abort *is* a rollback here, and two
+names for one thing in a stream people read is a way to make them wonder what
+the difference is.
+
+There is no `isolation_level` either — this was in the plan and turned out to
+name nothing. One writer at a time means every transaction sees a database only
+it is changing, so the field would have read `SERIALIZABLE` forever. It arrives
+in Milestone 10 with MVCC, where the value can actually differ.
+
+`UndoRecordEvent` has no `slot_id`, for the reason the whole undo design turns
+on: the log works in **pages**, not rows. A record is one page's entire contents
+before the transaction touched it, so there is no slot to name. `kind` is
+`capture` or `restore`.
+
+`implicit` distinguishes a transaction the engine opened around a bare statement
+from one the user asked for. Most transactions in a session are implicit, and a
+timeline that did not say so would look like the user was running `BEGIN`
+constantly.
+
 ## Planned events
 
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 8 — `transaction`
-
-```
-TransactionEvent      transaction_id,
-                      action: begin|commit|abort|rollback_started|rollback_done,
-                      isolation_level
-UndoRecordEvent       transaction_id, page_id, slot_id, kind, before_image_size
-```
 
 ### Milestone 9 — `wal`, `recovery`
 

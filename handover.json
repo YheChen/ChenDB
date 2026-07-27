@@ -50,7 +50,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 8 \u2014 transactions, undo records, rollback. NOT STARTED. See milestone_8_plan below.",
+    "next": "Milestone 9 \u2014 WAL, checkpoints, ARIES-style recovery. NOT STARTED. See milestone_9_plan below.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -71,6 +71,17 @@
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/storage/buffer.py (BufferPool: fixed frames, copy-in/copy-out, write-back, exact LRU via OrderedDict, no pin counts); Pager routes all page I/O through it and splits logical page_reads/page_writes from physical_reads/physical_writes; Page.validate split into validate_header (O(1), on the read path) and validate (O(slots), explicit); read_page skips verification on a hit; Database.open gains buffer_pool_frames; BufferPoolEvent; PageWriteEvent.deferred; cost model RECALIBRATED \u2014 PAGE_HIT_COST/PAGE_MISS_COST replace PAGE_COST/RANDOM_PAGE_COST, plus distinct_pages_touched (Cardenas); GET /buffer-pool; visualizer Buffer pool workspace with a workload runner; benchmarks updated; examples/milestone7_buffer_pool.py; docs/milestone-07-buffer-pool.md.",
       "headline_numbers": "read_page hit 661ns vs miss 1822ns (2.75x). THE WIN WAS NOT THE SYSCALL: Page.validate() walked every slot at 13,290ns against 103ns for the CRC32 and 303ns for the pread. Splitting it took an index scan over 14k rows from 307ms to 86ms. Write-back absorbed 95% of writes (3,169 logical -> 143 syscalls). Sequential flooding measured at a 0.0% hit rate for a 75-page scan through a 16-frame pool. The crossover MOVED: bucket < 200 (20% selectivity) was SeqScan in M6 and is IndexScan now."
+    },
+    "milestone_8": {
+      "state": "COMPLETE on branch milestone-8-transactions; PR pending",
+      "shipped": "engine/transaction/{undo,manager}.py \u2014 page-level physical undo log with first-write-wins; one hook in Pager._write_at covers heap, indexes, catalog and meta with no changes to any of them. BEGIN/COMMIT/ROLLBACK in SQL and as four HTTP endpoints. Implicit transactions around every statement; execute_script wraps a whole script. PostgreSQL-style failed state. Visualizer Transactions workspace: undo log, timeline, three buttons, two demonstrations. docs/milestone-08-transactions.md, examples/milestone8_transactions.py.",
+      "measured": {
+        "hook_idle_ns": 42,
+        "hook_page_already_held_ns": 84,
+        "undo_20k_rows": "20,352 page writes -> 91 before-images (223x), 364 KiB",
+        "rollback_us_per_page": 1.0
+      },
+      "boundary": "Atomic against ERRORS, not against POWER LOSS. Rollback in-process is always correct even after the pool stole a dirty page; a crash mid-transaction is not undone because the undo log is in memory. tests/recovery/ asserts both directions. Pinning was rejected: it does not buy crash atomicity without a commit record, which is Milestone 9."
     }
   },
   "architecture_invariants": {
@@ -150,7 +161,14 @@
     "PagerStats.page_reads is LOGICAL from Milestone 7 (times the engine asked); physical_reads is syscalls. Tests asserting page_reads as a proxy for I/O now measure logical reads \u2014 usually what they meant, but check.",
     "tests/integration/test_websocket.py's drain_events(until=N) BLOCKS FOREVER if N exceeds the connection's queue capacity: a burst happens inside one request, so every event is offered before the loop runs and all but the newest queue_size are dropped. Adding BufferPoolEvent pushed a test past the ceiling and hung the suite. Keep `until` under websocket_queue_size.",
     "A table smaller than the pool never evicts, so a test or example that wants to show eviction must either seed past the capacity or open with buffer_pool_frames=<small>. Database.open takes that parameter for this reason.",
-    "Every INSERT through the API ends in a sync, which flushes the pool \u2014 so the dirty frame count is normally 0 in API tests. That is the durability contract holding, not the pool failing to buffer. Assert on writes_absorbed instead."
+    "Every INSERT through the API ends in a sync, which flushes the pool \u2014 so the dirty frame count is normally 0 in API tests. That is the durability contract holding, not the pool failing to buffer. Assert on writes_absorbed instead.",
+    "engine/transaction/manager.py: TransactionState.FAILED is open-but-doomed. `is_finished` is `not is_open`, so FAILED counts as open. Anything switching on state must handle four values, not three.",
+    "Pager._write_at takes `capture=False` for two callers: allocating a brand-new page (it is not in the file yet, so reading it to snapshot raises 'short read') and restore_page during a rollback (it would try to capture the page it is restoring).",
+    "Database.rollback() must reload the meta page and invalidate the catalog AND statistics caches. Restoring bytes is not enough \u2014 a rolled-back CREATE TABLE otherwise leaves the engine serving a table whose heap page was overwritten.",
+    "MILESTONE is now derived: engine/__init__.py computes it from __version__'s minor number, and engine/server/app.py re-exports it. Bumping the version in engine/__init__.py AND pyproject.toml is the whole job; tests/unit/test_architecture_boundaries.py pins all three together. The CLI banner sat a whole milestone behind before this.",
+    "MILESTONE_FEATURES must gain one entry per milestone or test_the_feature_list_has_one_entry_per_milestone fails.",
+    "PRIMARY KEY is metadata only \u2014 uniqueness is enforced by a UNIQUE index, which a table may not have. Any demo or test relying on a duplicate-key failure must create the index first, or it silently succeeds.",
+    "The repo is NOT `ruff format` clean at its configured line-length = 92 (43 files would reformat). `make lint` runs `ruff check` only, so nothing catches it. Running `ruff format` over the whole tree adds ~70 files of churn to a diff \u2014 format only the files you actually touched."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -162,18 +180,29 @@
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py."
   },
-  "milestone_8_plan": {
-    "goal": "Transactions: BEGIN / COMMIT / ROLLBACK, undo records, and atomicity for multi-statement work. The first milestone where a failure part-way through leaves the database unchanged rather than half-changed.",
-    "engine_files_to_create": [
-      "engine/transaction/manager.py \u2014 TransactionManager: ids, state, the active transaction. One at a time (the database lock already enforces that), so no concurrency control yet \u2014 that is Milestone 10.",
-      "engine/transaction/undo.py \u2014 undo records. A physical undo log is simplest: before-images of the pages a statement touched, replayed backwards on rollback. A logical one (insert -> delete, delete -> reinsert) is smaller but has to reason about the index too. Pick one and say why.",
-      "Database.insert/delete/create_table must enlist in the active transaction. create_table is the interesting case: it writes several rows across two system tables and is NOT atomic today \u2014 that is called out in engine/database.py's docstring and is precisely what this milestone fixes."
+  "milestone_9_plan": {
+    "goal": "Make a commit mean something on disk.",
+    "engine": [
+      "engine/wal/: log records (before-image, commit, checkpoint), LSN allocation, append + flush, a log file beside the database.",
+      "Page headers gain an `lsn` field \u2014 format version 4. Meta gains `checkpoint_lsn` and `last_lsn` (already reserved in docs/roadmap.md).",
+      "Write-ahead rule: a page may not reach disk before the log record that describes it. That is a constraint on the BUFFER POOL's eviction path, which is the integration point.",
+      "Recovery on open: analysis -> redo -> undo. RecoveryPhaseEvent and RecoveryActionEvent are already specified in docs/event-schema.md.",
+      "Commit becomes: append a commit record, fsync the log (not the pages). no-force. Group commit is the obvious follow-up.",
+      "_extend_file_to() in pager.py becomes redundant \u2014 a logged allocation can be repaired during recovery. Remove it and its comment then.",
+      "MAX_UNDO_BYTES (64 MiB) can go once undo spills to the log."
     ],
-    "interaction_with_the_buffer_pool": "The pool must NOT flush an uncommitted page, or a crash mid-transaction leaves half of it on disk. Milestone 7 flushes on eviction with no notion of commit. The clean fix is the WAL rule (write the log record before the page), which is Milestone 9 \u2014 so M8 either pins dirty uncommitted pages in the pool (bounded, can exhaust it) or accepts that rollback after an eviction needs the undo log to reach the disk too. Decide explicitly and document it; this is the single hardest interaction in the project.",
-    "events_to_add": "TransactionEvent (transaction_id, action: begin|commit|abort|rollback_started|rollback_done, isolation_level) and UndoRecordEvent (transaction_id, page_id, slot_id, kind, before_image_size). Signatures in docs/event-schema.md. EventCategory.TRANSACTION exists. PageReadEvent and PageWriteEvent already carry a transaction_id field, unused since Milestone 1 \u2014 this is what it was for.",
-    "sql": "BEGIN / COMMIT / ROLLBACK are in parser._NOT_YET pointing at Milestone 8. Add the three statements to ast.py and parse_statement. execute_script currently applies statements before a failure \u2014 its docstring says Milestone 8 makes that atomic, so make it so.",
-    "api": "GET /databases/{db}/transactions plus begin/commit/rollback. Flip features.transactions; MILESTONE = 8; version 0.8.0 in engine/__init__.py AND pyproject.toml.",
-    "visualizer": "A Transactions workspace: the timeline of a transaction, the undo records it accumulated, and a before/after view of a row. A rollback button that visibly puts the rows back is the demo.",
-    "gotcha_to_expect": "Statistics and the catalog cache are in memory and are NOT transactional. A rolled-back CREATE TABLE must invalidate Catalog._cache and StatisticsCatalog, or the engine keeps serving a table that no longer exists on disk. Catalog.invalidate() already exists for this."
+    "api": [
+      "GET /databases/{db}/wal \u2014 records, LSNs, flushed-up-to",
+      "POST /databases/{db}/crash \u2014 simulate a crash (the visualizer's crash button)",
+      "GET /databases/{db}/recovery \u2014 the three phases, step-through",
+      "features.wal -> true; MILESTONE is now derived from __version__, so bump engine/__init__.py and pyproject.toml to 0.9.0 and it follows."
+    ],
+    "visualizer": [
+      "WAL workspace: the log as a table, a crash button, step-through recovery showing each page's decision (redo / skip / undo) and why."
+    ],
+    "watch_out": [
+      "tests/recovery/test_a_page_the_crash_never_flushed_is_detected_not_returned asserts today's 'detected, not repaired' contract. Milestone 9 makes it repairable \u2014 that test's premise changes and it must be rewritten, not deleted.",
+      "test_a_crash_mid_transaction_is_not_atomic asserts the OPPOSITE of what Milestone 9 delivers. Inverting it is the milestone's headline test."
+    ]
   }
 }

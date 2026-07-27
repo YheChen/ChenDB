@@ -39,6 +39,7 @@ __all__ = [
     "SchemaMismatchError",
     "SerializationError",
     "StorageError",
+    "TransactionError",
     "TypeMismatchError",
     "UniqueViolation",
 ]
@@ -239,6 +240,15 @@ class CatalogError(ChenDBError):
 
 class ExecutionError(ChenDBError):
     """A query failed while running."""
+
+
+class TransactionError(ChenDBError):
+    """A transaction cannot do what was asked.
+
+    ``COMMIT`` with nothing open, a ``BEGIN`` that would nest, or an undo log
+    that has outgrown memory. Distinct from an error *inside* a transaction,
+    which rolls it back rather than being reported as a transaction problem.
+    """
 
 
 class EvaluationError(ExecutionError):
