@@ -15,9 +15,14 @@ hidden in the UI until the engine behind it exists.
 | 7 | Buffer pool, write-back, LRU eviction | Frame grid, counters, workload runner | **done** |
 | 8 | Transactions, undo log, rollback, atomic DDL | Transaction timeline, undo log, BEGIN/COMMIT/ROLLBACK | **done** |
 | 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, recovery report | **done** |
-| 10 | MVCC, locks, wait-for graph, deadlocks | Multi-session consoles, version chains, lock table | next |
+| 10 | MVCC, locks, wait-for graph, deadlocks | Two consoles, snapshots, lock table | **done** |
 
-Engine version tracks the milestone: `0.N.0` means Milestone N is complete.
+Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
+which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
+So the tenth is `1.0.0`, and `engine.MILESTONE` is `major * 10 + minor`.
+
+**All ten are done.** What is deliberately not built is below, and
+`docs/milestone-10-mvcc.md` ends with the edges of the last one.
 
 ## What each milestone adds to the file format
 
@@ -30,7 +35,7 @@ Engine version tracks the milestone: `0.N.0` means Milestone N is complete.
 | 7 | — | — (the pool is memory; the file format is untouched) |
 | 8 | — | — (the undo log is memory; it dies with the process, which is why a crash mid-transaction is not atomic) |
 | 9 | — | **v4**: `checkpoint_lsn` — the LSN of the log file's first byte. Page `lsn` starts being written; the field had been reserved since Milestone 1. |
-| 10 | — | tuple headers gain `xmin`/`xmax` |
+| 10 | — | **v5**: `next_xid`; every row gains an 8-byte tuple header with `xmin`/`xmax` |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 

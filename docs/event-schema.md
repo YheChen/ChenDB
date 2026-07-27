@@ -324,24 +324,40 @@ should see without having turned tracing up. `RecoveryActionEvent` is one per
 record, so it sits at `OPERATOR` — and `skip` matters as much as `redo`, because
 a skipped record is the last checkpoint having done its job.
 
-## Planned events
-
-Specified here, implemented in the milestone that builds the component that
-emits them. Nothing below exists yet; stubbing them now would be dead code with
-no way to verify the field list is right.
-
 ### Milestone 10 — `lock`, `mvcc`
 
-```
-LockEvent             transaction_id, resource, mode: shared|exclusive,
-                      action: requested|granted|waiting|released|upgraded
-DeadlockEvent         cycle, victim_transaction_id, waits_for
-VisibilityEvent       transaction_id, page_id, slot_id, visible,
-                      xmin, xmax, snapshot_xmin, reason
-VersionChainEvent     page_id, slot_id, chain_length, action: append|prune
-```
+| Event | Level | Fields |
+|---|---|---|
+| `LockEvent` | `SUMMARY` | `transaction_id`, `resource`, `mode`, `action` |
+| `DeadlockEvent` | `SUMMARY` | `cycle`, `victim`, `waiters` |
+| `SnapshotEvent` | `OPERATOR` | `transaction_id`, `isolation_level`, `xmin`, `xmax`, `active_count` |
+| `VersionEvent` | `VERBOSE` | `transaction_id`, `table_name`, `page_id`, `slot_id`, `action`, `xmin`, `xmax` |
 
----
+`LockEvent` is `SUMMARY` and every one of them is a **writer**: under MVCC a
+reader takes no lock, so a lock event appearing at all means two writers met.
+The `waiting` action is the interesting one — row-level locking is supposed to
+make it rare.
+
+`DeadlockEvent` names the whole cycle rather than just the victim, because being
+told only that *you* deadlocked leaves the actual question unanswered.
+
+`SnapshotEvent` fires once per transaction under REPEATABLE READ and once per
+*statement* under READ COMMITTED. That is the entire difference between the two
+levels, and this event is the only place it is observable from outside.
+
+`VersionEvent`'s `skipped` is what MVCC costs a reader: a version physically on
+the page that this snapshot had to walk past. If it grows and never falls, a
+vacuum is overdue.
+
+There is no `isolation_level` on `TransactionEvent`, which the original plan
+had. It went on `SnapshotEvent` instead — the level only ever *does* anything at
+the moment a snapshot is taken, and putting it on both would mean two places to
+keep in step.
+
+## Planned events
+
+Nothing. All ten milestones have shipped, and every event specified in this
+document exists.
 
 ## Adding an event
 

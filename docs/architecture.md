@@ -83,8 +83,11 @@ engine/
 │   ├── log.py             the file: append, flush, checkpoint, truncate
 │   └── recovery.py        analysis → redo → undo, on open
 │
-└── parser/ planner/ optimizer/ executor/
-    concurrency/                                ← Milestones 2, 6, 10
+├── concurrency/
+│   ├── snapshot.py        who can see which version of a row
+│   └── locks.py           row locks, wait-for graph, deadlock detection
+│
+└── parser/ planner/ optimizer/ executor/       ← Milestones 2, 3, 6
 ```
 
 Each layer knows only the one beneath it:
@@ -131,6 +134,22 @@ Milestone 9 hangs off the same single write path, and adds one constraint to the
 one below it: **a page may not reach the disk before the record describing it**.
 That line lives on the pool's write-through callback, and it is the only reason
 the pool did not have to change to become crash-safe.
+
+Milestone 10 is the one that did *not* fit the pattern. Every other milestone
+slid between two existing layers; MVCC changed what a **row** is, eight bytes at
+a time, and the change reached everything that decodes one:
+
+```
+     Database.scan ──▶ read_tuple_header ──▶ visible(header, snapshot)
+                                                   │
+     SeqScan / IndexScan ─────────────────────────┘   before decoding,
+                                                       so an invisible
+                                                       version is cheap
+```
+
+The catalog is the exception, and deliberately: its own tables carry no header,
+because a rolled-back ``CREATE TABLE`` is undone by restoring the *page*, so
+there is never a catalog row anybody wants an older version of.
 
 ## An insert, end to end
 
