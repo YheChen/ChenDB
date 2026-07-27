@@ -35,6 +35,10 @@ import type {
   TraceLevelResponse,
   TransactionListResponse,
   TransactionResultResponse,
+  CheckpointResponse,
+  CrashResponse,
+  RecoveryReportModel,
+  WalResponse,
 } from "@/types/api";
 
 export const API_PREFIX = "/api/v1";
@@ -244,6 +248,18 @@ export const api = {
 
   getBufferPool: (id: string) =>
     request<BufferPoolResponse>(`/databases/${id}/buffer-pool`),
+
+  getWal: (id: string, limit = 200) =>
+    request<WalResponse>(`/databases/${id}/wal?limit=${limit}`),
+
+  getRecovery: (id: string) =>
+    request<RecoveryReportModel>(`/databases/${id}/recovery`),
+
+  checkpoint: (id: string) =>
+    request<CheckpointResponse>(`/databases/${id}/checkpoint`, { method: "POST" }),
+
+  crash: (id: string) =>
+    request<CrashResponse>(`/databases/${id}/crash`, { method: "POST" }),
 
   getTransactions: (id: string) =>
     request<TransactionListResponse>(`/databases/${id}/transactions`),

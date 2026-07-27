@@ -268,6 +268,71 @@ aborted tuples stay in the heap, invisible, until `VACUUM`. That is MVCC paying
 for itself, and it is the trade ChenDB makes in the other direction until
 Milestone 10.
 
+## The write-ahead log — Milestone 9
+
+### What logging costs a write
+
+| | Median |
+|---|---|
+| insert, no log | 14.4 µs |
+| insert, logged | 18.7 µs (+30%) |
+
+Every page write now also encodes a record, checksums it, and stamps an LSN into
+the page — and that last one means a second CRC32 pass over the whole page,
+because the LSN lives inside the range the page checksum covers.
+
+### What a commit costs
+
+| | Median | Ceiling |
+|---|---|---|
+| commit, fsync on | 88.7 µs | 11,300 commits/s |
+| commit, fsync off | 29.2 µs | 34,300 commits/s |
+| **the fsync** | **59.5 µs** | |
+
+That ceiling has **nothing to do with how much work each transaction did**. It is
+the disk, once per commit. Real systems amortise it with **group commit** —
+several concurrent committers sharing one flush — which is meaningless with one
+writer and is the obvious first optimisation once Milestone 10 brings a second.
+
+`set_sync_policy(sync_on_commit=False)` exists so this table can be measured, not
+as a durability option. It is the same line SQLite draws at
+`synchronous=NORMAL` versus `FULL`: NORMAL survives a process crash, not a
+machine crash.
+
+### Log volume, and the coalescing that made it shippable
+
+The first working version logged a whole page image per write:
+
+| 20,000 rows in one transaction | Naive | With coalescing |
+|---|---|---|
+| log size | 81.1 MiB | **2.10 MiB** |
+| amplification over the data | 197× | **5.1×** |
+| records written | 22,516 | 516 |
+| insert cost | 25.8 µs | 18.7 µs |
+
+Writing the same page twice in a row produces two records of which only the
+second matters — redo replays them in order and the first is immediately
+overwritten. So an append whose predecessor is a **still-staged** update to the
+same page by the same transaction replaces it rather than following it. 98% of
+records in a bulk insert go that way.
+
+Safe only while staged: once flushed, a page carrying that LSN may already be on
+the disk, and the write-ahead rule guarantees the two windows cannot overlap.
+
+What it does not fix is amplification across flush boundaries. Fixing that means
+logging **deltas** rather than pages, which is what real systems do — see
+`docs/milestone-09-wal.md`.
+
+### Recovery
+
+| Log | Records | Time |
+|---|---|---|
+| 113 KiB | 22 | 0.6 ms |
+| 1.1 MiB | 222 | 2.2 ms |
+
+Linear in log size, which is what checkpoint frequency is for. A checkpoint on a
+2.5 MiB log takes 0.2 ms and takes it to zero.
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |
@@ -275,8 +340,9 @@ Milestone 10.
 | CRC32 per page | one pass over the page on read and write | a torn write becomes a loud error instead of wrong answers |
 | `validate()` on read | O(slots) | catches a corrupt header before it corrupts memory |
 | Meta write per allocation | one extra page write | the free list and page count must survive a crash |
-| `ftruncate` per new page | one syscall, no I/O | the pool may evict the meta page before the pages it references; the file must never be shorter than it claims |
 | Undo capture, first write to a page | one page copy | a rollback that restores bytes needs the bytes |
+| LSN stamp per page write | a second CRC32 over the page | the LSN is inside the checksum's range, and without it recovery cannot tell an applied change from an unapplied one |
+| One `fsync` per commit | ~60 µs | the only thing that distinguishes a finished transaction from an interrupted one after a power cut |
 | Null bitmap always present | 1 byte per row per 8 columns | branch-free decoding |
 
 The checksum is the expensive one — it touches the whole page. PostgreSQL makes
@@ -296,21 +362,19 @@ the inspector.
 - **Queries are invalidated precisely.** An insert invalidates records, pages
   and the database summary — not the database *list*.
 
-## What Milestone 9 should change
+## What Milestone 10 should change
 
-The WAL is what makes a commit mean something on disk, so these are the numbers
-to watch:
+MVCC and a second writer change what the numbers even mean:
 
-- **Commit becomes a write.** Today it is a state change and costs nothing; with
-  a log it costs one append plus, at some interval, one `fsync`. Group commit is
-  the standard answer and the reason to measure batches rather than single
-  commits.
-- **`sync` should stop being the durability point.** A no-force policy means
-  committing without flushing every dirty page, so a commit-heavy workload
-  should get *faster* in wall-clock terms even though it does more I/O calls.
-- **Undo can leave memory.** `MAX_UNDO_BYTES` caps a transaction at 64 MiB
-  today. Spilling to the log removes the ceiling; the thing to measure is what
-  a transaction larger than memory costs.
-- **`_extend_file_to` becomes redundant.** A log that records the allocation can
-  repair a short file during recovery, so the pager stops paying a syscall per
-  new page to prevent one.
+- **Group commit becomes possible, and the fsync stops being a per-transaction
+  cost.** With *n* concurrent committers sharing one flush the ceiling goes from
+  11,300 commits/s to 11,300 *flushes*/s, which is a different quantity.
+- **Page-granularity becomes the bottleneck.** Two transactions writing different
+  rows on the same page conflict at page level today. That is invisible with one
+  writer and is the first thing a second one hits.
+- **Read paths grow a visibility check.** Every row read has to test `xmin`/`xmax`
+  against a snapshot, which is per *row*, not per page — the first thing since
+  Milestone 1 to make the scan path itself more expensive.
+- **The undo log stops being throwaway.** InnoDB serves read views out of its
+  undo records; ChenDB discards its before-images at commit today, and keeping
+  them is what a version chain is.

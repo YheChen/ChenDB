@@ -66,8 +66,10 @@ def main() -> int:
         print(f"     {value:>5}   record {record.hex(' ')}   key {key.hex(' ')}")
 
     print()
-    print(f"   record bytes:  1 > 256 is {struct.pack('<q', 1) > struct.pack('<q', 256)}"
-          "   <- the first byte read is the least significant one")
+    print(
+        f"   record bytes:  1 > 256 is {struct.pack('<q', 1) > struct.pack('<q', 256)}"
+        "   <- the first byte read is the least significant one"
+    )
     print(
         f"   index keys:    1 > 256 is "
         f"{encode_key(1, DataType.INTEGER) > encode_key(256, DataType.INTEGER)}"
@@ -149,7 +151,9 @@ def main() -> int:
                 if item.event_type == "NodeSplitEvent"
             ]
             root_splits = [event for event in splits if event.is_root_split]
-            print(f"\n   {len(splits)} NodeSplitEvents, {len(root_splits)} of them root splits.")
+            print(
+                f"\n   {len(splits)} NodeSplitEvents, {len(root_splits)} of them root splits."
+            )
             print("   A root split is the only thing that changes the tree's height:")
             for event in root_splits:
                 print(
@@ -169,8 +173,10 @@ def main() -> int:
                 f"tree height {tree.height}"
             )
             print(f"   path: {' -> '.join(f'p{p}' for p in tree.descent_path(key))}")
-            print(f"\n   The table itself is {db.count('users')} rows over "
-                  f"{len(list(db.heap_for('users').page_ids()))} heap pages.")
+            print(
+                f"\n   The table itself is {db.count('users')} rows over "
+                f"{len(list(db.heap_for('users').page_ids()))} heap pages."
+            )
             print("   A sequential scan reads all of them. The index reads the height.")
 
             low, high = (
@@ -202,8 +208,10 @@ def main() -> int:
 
             record_id = next(r for r, row in db.scan("users") if row[0] == 9999)
             db.delete("users", record_id)
-            print(f"\n   after DELETE, the index entry is gone too: "
-                  f"{db.lookup('users_email', 'late@example.com')}")
+            print(
+                f"\n   after DELETE, the index entry is gone too: "
+                f"{db.lookup('users_email', 'late@example.com')}"
+            )
             print("   The row had to be *read* first — an index entry is keyed on the")
             print("   value, so removing it needs to know what the value was. This is")
             print("   why PostgreSQL leaves dead entries for VACUUM instead.")

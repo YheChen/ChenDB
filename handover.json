@@ -50,7 +50,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 9 \u2014 WAL, checkpoints, ARIES-style recovery. NOT STARTED. See milestone_9_plan below.",
+    "next": "Milestone 10 \u2014 MVCC, locks, wait-for graph, deadlocks. NOT STARTED. See milestone_10_plan below.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -82,6 +82,22 @@
         "rollback_us_per_page": 1.0
       },
       "boundary": "Atomic against ERRORS, not against POWER LOSS. Rollback in-process is always correct even after the pool stole a dirty page; a crash mid-transaction is not undone because the undo log is in memory. tests/recovery/ asserts both directions. Pinning was rejected: it does not buy crash atomicity without a commit record, which is Milestone 9."
+    },
+    "milestone_9": {
+      "state": "COMPLETE on branch milestone-9-wal; PR pending",
+      "shipped": "engine/wal/{record,log,recovery}.py \u2014 a write-ahead log with LSN-as-byte-offset, whole-page before/after images, ARIES analysis/redo/undo on open, sharp checkpoints. Meta page format version 4 adds checkpoint_lsn. Every page write stamps an LSN; the buffer pool's write-through enforces the write-ahead rule. GET /wal, GET /recovery, POST /checkpoint, POST /crash. Visualizer WAL workspace with a crash button. docs/milestone-09-wal.md, examples/milestone9_wal.py.",
+      "measured": {
+        "insert_no_log_ns": 14400,
+        "insert_logged_ns": 18700,
+        "commit_with_fsync_us": 88.7,
+        "commit_without_fsync_us": 29.2,
+        "commit_ceiling_per_s": 11300,
+        "log_amplification_naive": "197x",
+        "log_amplification_with_coalescing": "5.1x",
+        "coalesced_share": "98% of records in a bulk insert",
+        "recovery_1MiB_log_ms": 2.2
+      },
+      "boundary": "A committed transaction survives SIGKILL with no sync. An uncommitted one is rolled back on the next open, even after the pool stole its pages. Physical corruption is still only detected \u2014 a log cannot repair damage it has no record of."
     }
   },
   "architecture_invariants": {
@@ -168,7 +184,15 @@
     "MILESTONE is now derived: engine/__init__.py computes it from __version__'s minor number, and engine/server/app.py re-exports it. Bumping the version in engine/__init__.py AND pyproject.toml is the whole job; tests/unit/test_architecture_boundaries.py pins all three together. The CLI banner sat a whole milestone behind before this.",
     "MILESTONE_FEATURES must gain one entry per milestone or test_the_feature_list_has_one_entry_per_milestone fails.",
     "PRIMARY KEY is metadata only \u2014 uniqueness is enforced by a UNIQUE index, which a table may not have. Any demo or test relying on a duplicate-key failure must create the index first, or it silently succeeds.",
-    "The repo is NOT `ruff format` clean at its configured line-length = 92 (43 files would reformat). `make lint` runs `ruff check` only, so nothing catches it. Running `ruff format` over the whole tree adds ~70 files of churn to a diff \u2014 format only the files you actually touched."
+    "The repo is NOT `ruff format` clean at its configured line-length = 92 (43 files would reformat). `make lint` runs `ruff check` only, so nothing catches it. Running `ruff format` over the whole tree adds ~70 files of churn to a diff \u2014 format only the files you actually touched.",
+    "An LSN is a BYTE OFFSET in the log stream, not a counter. Two consequences: 'durable up to LSN n' is a comparison, and log.next_lsn is readable before appending \u2014 which the pager needs, because the page inside a record has to carry that record's LSN.",
+    "read_page_lsn returns -1 for an absent page, NEVER 0. Zero is a real LSN (the first record ever written, which for a new database is the meta page), and conflating them makes redo skip it. A unit test against a dictionary found this.",
+    "The meta page has its own LSN stamper: stamp_meta_lsn (offset 60, checksum at 80). Using engine.storage.page.stamp_lsn on page 0 writes a u64 over format_version and a u32 over the magic.",
+    "Checkpoint order is flush pages -> fsync db -> append CHECKPOINT -> fsync log -> write meta DIRECTLY (around the log and the pool) -> truncate. The direct write is unavoidable: logging it would put a record in the log about to be truncated. A crash between the meta write and the truncate is safe because decode_record rejects a record whose stored LSN does not match its position.",
+    "WAL record coalescing only applies to the immediately preceding STAGED record. Once flushed, a page carrying that LSN may be on disk and rewriting the record behind it would desynchronise them. This optimisation is the difference between a 197x and a 5x log.",
+    "UndoLog.capture marks a page captured even when it has no room for the bytes. First-write-wins is a DECISION, and the WAL asks the same question through has(). Letting it lapse made the log record mid-transaction states each claiming to be the rollback target.",
+    "Pager.abandon() / Database.abandon() / Workspace.crash() lose data on purpose \u2014 they are the crash button. Never call them from a normal path.",
+    "The direct Python API (db.insert, db.create_table) does NOT open an implicit transaction; only the SQL layer does. So a bare db.insert() is not committed and not durable until sync(). engine/database.py's docstring says so."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -180,29 +204,31 @@
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py."
   },
-  "milestone_9_plan": {
-    "goal": "Make a commit mean something on disk.",
+  "milestone_10_plan": {
+    "goal": "More than one writer, and readers that do not block them.",
     "engine": [
-      "engine/wal/: log records (before-image, commit, checkpoint), LSN allocation, append + flush, a log file beside the database.",
-      "Page headers gain an `lsn` field \u2014 format version 4. Meta gains `checkpoint_lsn` and `last_lsn` (already reserved in docs/roadmap.md).",
-      "Write-ahead rule: a page may not reach disk before the log record that describes it. That is a constraint on the BUFFER POOL's eviction path, which is the integration point.",
-      "Recovery on open: analysis -> redo -> undo. RecoveryPhaseEvent and RecoveryActionEvent are already specified in docs/event-schema.md.",
-      "Commit becomes: append a commit record, fsync the log (not the pages). no-force. Group commit is the obvious follow-up.",
-      "_extend_file_to() in pager.py becomes redundant \u2014 a logged allocation can be repaired during recovery. Remove it and its comment then.",
-      "MAX_UNDO_BYTES (64 MiB) can go once undo spills to the log."
+      "Tuple headers gain xmin/xmax \u2014 format version 5. docs/roadmap.md already reserves this. Every row read grows a visibility test against a snapshot, which is the first thing since Milestone 1 to make the scan path itself more expensive.",
+      "engine/concurrency/: lock manager (shared/exclusive), wait-for graph, deadlock detection. LockEvent is already specified in docs/event-schema.md.",
+      "TransactionManager currently holds exactly ONE transaction and says so in its docstring. That is the central thing this milestone replaces.",
+      "ManagedDatabase._lock in engine/server/workspace.py serialises every request onto one engine thread. Multi-session consoles need that boundary rethought.",
+      "Isolation levels become real: TransactionEvent has no isolation_level field because with one writer it would read SERIALIZABLE forever. Add it here.",
+      "Group commit: several committers share one fsync. Measured ceiling today is ~11,300 commits/s, entirely the fsync \u2014 see docs/performance.md.",
+      "Page-granularity conflicts are the wall. Two transactions writing different rows of the same page conflict at page level today.",
+      "The WAL's before-images are the right data in the wrong place for MVCC read views \u2014 in memory, and discarded at commit. InnoDB reuses undo records for exactly this."
     ],
     "api": [
-      "GET /databases/{db}/wal \u2014 records, LSNs, flushed-up-to",
-      "POST /databases/{db}/crash \u2014 simulate a crash (the visualizer's crash button)",
-      "GET /databases/{db}/recovery \u2014 the three phases, step-through",
-      "features.wal -> true; MILESTONE is now derived from __version__, so bump engine/__init__.py and pyproject.toml to 0.9.0 and it follows."
+      "GET /databases/{db}/locks \u2014 the lock table and the wait-for graph",
+      "Sessions: the API is currently one shared handle per database. Multi-session consoles need a session id in the path or a connection concept.",
+      "features.mvcc -> true; bump engine/__init__.py and pyproject.toml to 1.0.0 and MILESTONE follows automatically.",
+      "MILESTONE_FEATURES must gain an entry or the boundaries test fails."
     ],
     "visualizer": [
-      "WAL workspace: the log as a table, a crash button, step-through recovery showing each page's decision (redo / skip / undo) and why."
+      "Multi-session consoles, version chains, lock table, deadlock visualisation."
     ],
     "watch_out": [
-      "tests/recovery/test_a_page_the_crash_never_flushed_is_detected_not_returned asserts today's 'detected, not repaired' contract. Milestone 9 makes it repairable \u2014 that test's premise changes and it must be rewritten, not deleted.",
-      "test_a_crash_mid_transaction_is_not_atomic asserts the OPPOSITE of what Milestone 9 delivers. Inverting it is the milestone's headline test."
+      "Database.checkpoint() refuses while a transaction is open. With concurrent transactions that becomes 'refuse while ANY is open', which may never be true \u2014 real systems keep the log back to the oldest active transaction's first record instead of truncating wholesale. That is the fix.",
+      "WriteAheadLog._last_lsn_of is keyed by transaction id and cleared on commit/abort; it is fine concurrently but is not thread-safe.",
+      "Transaction ids restart at 1 every process. Harmless today because recovery resets the log before any new transaction runs. With sessions that needs revisiting."
     ]
   }
 }

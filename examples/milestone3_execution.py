@@ -72,10 +72,12 @@ def main() -> int:
             print(f"\n   {[c.name for c in result.columns]}")
             for row in result.rows:
                 print(f"   {row}")
-            print(f"\n   scanned {result.stats.rows_scanned}, "
-                  f"rejected {result.stats.rows_rejected}, "
-                  f"returned {result.stats.rows_returned}, "
-                  f"{result.stats.pages_read} page read(s)")
+            print(
+                f"\n   scanned {result.stats.rows_scanned}, "
+                f"rejected {result.stats.rows_rejected}, "
+                f"returned {result.stats.rows_returned}, "
+                f"{result.stats.pages_read} page read(s)"
+            )
 
             # ----------------------------------------------------------
             heading(3, "Three-valued logic: alan's NULL age")

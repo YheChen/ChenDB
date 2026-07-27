@@ -98,6 +98,8 @@ def test_storage_level_emits_the_expected_event_families(
         "RecordInsertedEvent",
         "RecordDeletedEvent",
         "HeapScanEvent",
+        # Milestone 9: every one of those page writes is logged first.
+        "WalAppendEvent",
     } <= seen
 
     categories = {item.category for item in sink.snapshot()}
@@ -109,6 +111,8 @@ def test_storage_level_emits_the_expected_event_families(
         EventCategory.CATALOG,
         # Every page read and write goes through the pool from Milestone 7.
         EventCategory.BUFFER_POOL,
+        # …and through the log from Milestone 9, before it reaches the pool.
+        EventCategory.WAL,
     }
 
 

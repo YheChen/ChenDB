@@ -44,7 +44,7 @@ META_PAGE_ID = 0
 #: 2 — Milestone 4: system tables, many tables per file.
 #: 3 — Milestone 5: a third system table for indexes, and a single object-id
 #:     counter shared by tables and indexes.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 #: Written at file offset 0 so ``head -c 16`` identifies a ChenDB file.
 MAGIC = b"ChenDB Format 1\x00"

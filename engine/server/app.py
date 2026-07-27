@@ -30,6 +30,7 @@ from engine.server.routers import (
     query,
     sql,
     transactions,
+    wal,
 )
 from engine.server.schemas.common import ApiError, HealthResponse
 from engine.server.workspace import Workspace
@@ -56,7 +57,7 @@ FEATURES: dict[str, bool] = {
     "planner": True,  # Milestone 6 — cost model, EXPLAIN, alternatives
     "buffer_pool": True,  # Milestone 7 — frames, write-back, LRU
     "transactions": True,  # Milestone 8 — undo log, BEGIN/COMMIT/ROLLBACK
-    "wal": False,  # Milestone 9
+    "wal": True,  # Milestone 9 — log, checkpoints, ARIES recovery
     "mvcc": False,  # Milestone 10
 }
 
@@ -142,6 +143,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(indexes.router, prefix=API_PREFIX)
     app.include_router(buffer.router, prefix=API_PREFIX)
     app.include_router(transactions.router, prefix=API_PREFIX)
+    app.include_router(wal.router, prefix=API_PREFIX)
     app.include_router(pages.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(sql.router, prefix=API_PREFIX)

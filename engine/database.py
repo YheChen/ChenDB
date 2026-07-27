@@ -35,17 +35,39 @@ from Milestones 1-3, which had exactly one table per file and therefore did not
 need one; the single JSON schema page and the ``heap_first_page`` meta fields are
 both gone.
 
-Milestone 8 scope
------------------
-Writes are transactional.  :meth:`begin`, :meth:`commit` and :meth:`rollback`
-wrap a group of statements, and anything run without one gets an implicit
-transaction so a multi-row ``INSERT`` that fails half-way leaves nothing behind.
-``CREATE TABLE`` — several rows across two system tables — became atomic for
-free, because the undo log works in pages and does not care what the rows meant.
+Transactions, and which API gets them
+-------------------------------------
+:meth:`begin`, :meth:`commit` and :meth:`rollback` wrap a group of writes, and
+:meth:`transaction` is the context-manager form::
 
-That is atomicity against *errors*.  Atomicity against *power loss* needs a
-commit record on disk, which is the write-ahead log in Milestone 9;
-:meth:`sync` is still what makes anything durable.
+    with db.transaction():
+        db.insert("users", (1, "ada"))
+        db.insert("users", (2, "alan"))
+
+**The SQL layer opens one for you; these methods do not.**
+:func:`~engine.executor.engine.execute_script` wraps every statement in an
+implicit transaction, so ``INSERT INTO t VALUES (a), (b), (c)`` that fails on
+``c`` leaves none of them. A bare :meth:`insert` from Python is a single write
+with nobody watching — atomic because it is one write, but not committed, and
+therefore **not durable until something commits or syncs**.
+
+That is deliberate rather than an oversight. Wrapping every embedded call would
+mean an ``fsync`` per call once Milestone 9's log arrived, turning a 19 µs
+insert into a 90 µs one, and the embedded API's whole reason to exist is to be
+the fast path. The SQL layer is where autocommit belongs, because that is where
+the statement boundary is.
+
+``CREATE TABLE`` — several rows across two system tables — became atomic for
+free in Milestone 8, because the undo log works in pages and does not care what
+the rows meant.
+
+Durability
+----------
+Since Milestone 9, **committing is what makes work durable**, not :meth:`sync`.
+A commit appends a record to the write-ahead log and ``fsync``s *the log*; the
+pages may still be sitting in the buffer pool, and recovery on the next open
+puts them back. :meth:`sync` still forces everything to disk and is what a bare
+embedded write needs, since it never commits.
 """
 
 from __future__ import annotations
@@ -60,7 +82,12 @@ from typing import Any
 from engine.catalog.catalog import Catalog, IndexInfo, TableInfo
 from engine.diagnostics.events import DatabaseClosedEvent, DatabaseOpenedEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
-from engine.errors import CatalogError, ChenDBError, RecordNotFoundError
+from engine.errors import (
+    CatalogError,
+    ChenDBError,
+    RecordNotFoundError,
+    TransactionError,
+)
 from engine.index.bplustree import BPlusTree
 from engine.planner.statistics import StatisticsCatalog
 from engine.serialization.record import (
@@ -200,7 +227,11 @@ class Database:
         self._ensure_open()
         if self._transactions.is_failed:
             return self.rollback()
-        return self._transactions.commit()
+        transaction = self._transactions.commit()
+        # After the manager, not before: a commit record for a transaction the
+        # manager then refused would be a durable lie.
+        self._pager.log_commit(transaction.transaction_id)
+        return transaction
 
     def rollback(self) -> Transaction:
         """Put every page back as it was when the transaction started.
@@ -218,11 +249,92 @@ class Database:
           on disk.
         """
         self._ensure_open()
+        active = self._transactions.active
+        if active is not None and active.undo.overflowed:
+            self._restore_from_wal(active.transaction_id)
         transaction = self._transactions.rollback(self._restore_page)
+        self._pager.log_abort(transaction.transaction_id)
         self._pager.reload_meta()
         self._catalog.invalidate()
         self._statistics.invalidate()
         return transaction
+
+    # -- durability --------------------------------------------------------
+
+    @property
+    def wal(self):
+        """The write-ahead log, or None if this handle was opened without one."""
+        return self._pager.wal
+
+    @property
+    def recovery(self):
+        """What recovery did when this file was opened.
+
+        ``recovery.ran`` is False after a clean shutdown, because a clean
+        shutdown ends with a checkpoint and leaves an empty log. So it means
+        exactly "the previous process did not close properly".
+        """
+        return self._pager.recovery
+
+    def checkpoint(self) -> int:
+        """Flush every dirty page and discard the log. Returns pages written.
+
+        Refuses while a transaction is open, because discarding the log would
+        discard that transaction's before-images — the ones a rollback past the
+        in-memory cap reads, and the ones recovery would need if the machine
+        died before the commit. Real systems solve this by keeping the log back
+        to the oldest active transaction's first record instead of truncating
+        wholesale; ChenDB's checkpoints are all-or-nothing, so refusing is the
+        version of that rule this design can express.
+
+        Nothing needs to call this: :meth:`close` does it, and a real system
+        would run it on a timer or when the log outgrew a threshold. It is
+        public because watching the log collapse to zero bytes is the clearest
+        way to see what a checkpoint is for.
+        """
+        self._ensure_open()
+        if self._transactions.in_transaction:
+            raise TransactionError(
+                "cannot checkpoint with a transaction open: truncating the log "
+                "would discard the before-images that transaction needs to roll "
+                "back. Commit or roll back first."
+            )
+        return self._pager.checkpoint()
+
+    def _restore_from_wal(self, transaction_id: int) -> None:
+        """Put back the pages the in-memory undo log could not hold.
+
+        Only runs for a transaction that overflowed :data:`MAX_UNDO_BYTES`. The
+        WAL carries a before-image for every page a transaction first touched —
+        the same first-write-wins rule, on disk — so the log has exactly what
+        memory dropped.
+
+        Runs *before* the in-memory rollback rather than instead of it, so the
+        cached images are applied last. They are the same bytes either way —
+        this is only ever filling the gaps memory could not hold — and ordering
+        it this way keeps the memory path the one that decides.
+
+        The scan runs **forwards** and keeps the first image per page, not the
+        last. There is only ever one, because first-write-wins is enforced on
+        the decision rather than on the cache, but scanning forwards is what
+        makes that a property of the code rather than a thing to remember.
+        """
+        log = self._pager.wal
+        if log is None:
+            raise TransactionError(
+                "this transaction outgrew the in-memory undo log and there is "
+                "no write-ahead log to fall back on; it cannot be rolled back"
+            )
+        log.flush()
+        records, _ = log.read_all()
+        restored: set[int] = set()
+        for record in records:
+            if record.transaction_id != transaction_id or not record.has_undo:
+                continue
+            if record.page_id in restored:
+                continue
+            restored.add(record.page_id)
+            self._restore_page(record.page_id, record.before_image)
 
     def _restore_page(self, page_id: int, image: bytes) -> None:
         """Write one before-image back, bypassing the undo hook.
@@ -536,10 +648,33 @@ class Database:
         if self._closed:
             raise ChenDBError(f"database {self._database_id!r} is closed")
 
-    def close(self) -> None:
-        """Sync and release the file handle. Idempotent."""
+    def abandon(self) -> None:
+        """Simulate a crash: drop everything unwritten and release the file.
+
+        **This loses data on purpose.** An open transaction is *not* rolled
+        back, dirty pages are *not* flushed, and no checkpoint runs — so
+        reopening the file goes through recovery, which is the point. Committed
+        work survives, because its commit record was ``fsync``ed when it
+        committed; everything else is gone.
+        """
         if self._closed:
             return
+        self._pager.abandon()
+        self._closed = True
+
+    def close(self) -> None:
+        """Roll back anything unfinished, checkpoint, and release the file.
+
+        Idempotent. An open transaction is **rolled back**, not committed: a
+        handle closed with work outstanding is a handle whose caller never said
+        the work was good, and keeping it would be the closest thing to a
+        silent commit. It also has to happen before the checkpoint, which
+        refuses to run while a transaction is open.
+        """
+        if self._closed:
+            return
+        if self._transactions.in_transaction:
+            self.rollback()
         if self._tracer.summary:
             self._tracer.emit(
                 DatabaseClosedEvent(

@@ -45,11 +45,16 @@ change to it as well. A transaction that appends a thousand rows to one heap
 page therefore holds one 4 KiB image, not a thousand.
 
 That bounds the log at ``pages touched x page_size``. A transaction that
-rewrites a 10,000-page table holds 40 MB in memory, and there is no spilling —
-:data:`MAX_UNDO_BYTES` refuses to grow past a ceiling rather than exhausting the
-machine, which is the honest failure. Real systems write undo to disk (Oracle's
-undo tablespace, InnoDB's rollback segments) precisely so a long transaction is
-bounded by disk rather than RAM.
+rewrites a 10,000-page table would hold 40 MB in memory, so
+:data:`MAX_UNDO_BYTES` stops it growing past a ceiling.
+
+Since Milestone 9 that ceiling is a **memory** bound and no longer a
+correctness one. The write-ahead log carries the same before-images, on disk,
+under the same first-write-wins rule — so a transaction that overflows this log
+simply stops caching and :meth:`Database.rollback` reads what it needs from the
+WAL instead. This class is the fast path, not the only path. That is what
+Oracle's undo tablespace and InnoDB's rollback segments are: undo that lives on
+disk so a long transaction is bounded by disk rather than RAM.
 """
 
 from __future__ import annotations
@@ -57,8 +62,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Final
-
-from engine.errors import TransactionError
 
 __all__ = ["MAX_UNDO_BYTES", "UndoLog", "UndoRecord"]
 
@@ -93,6 +96,9 @@ class UndoLog:
     _records: list[UndoRecord] = field(default_factory=list)
     _captured: set[int] = field(default_factory=set)
     _bytes: int = 0
+    overflowed: bool = False
+    """This transaction touched more than :data:`MAX_UNDO_BYTES` of pages, so
+    the in-memory copy is incomplete. Rollback reads the WAL instead."""
 
     def has(self, page_id: int) -> bool:
         return page_id in self._captured
@@ -106,13 +112,24 @@ class UndoLog:
         """
         if page_id in self._captured:
             return False
+        # The page is marked captured either way. That is the important part:
+        # first-write-wins is a *decision*, and it has to hold whether or not
+        # there is room to keep the bytes, because the WAL asks the same
+        # question through :meth:`has` and must get the same answer. Letting the
+        # decision lapse under memory pressure would have the log record a fresh
+        # "before" on every later write to the page — mid-transaction states,
+        # each claiming to be the state to roll back to.
+        #
+        # A page id is 8 bytes against a 4 KiB image, so the set is not what
+        # runs out of room; only the images are.
+        self._captured.add(page_id)
         if self._bytes + len(image) > MAX_UNDO_BYTES:
-            raise TransactionError(
-                f"undo log would exceed {MAX_UNDO_BYTES // (1024 * 1024)} MiB "
-                f"({len(self._records)} pages held). ChenDB keeps undo in memory; "
-                f"a transaction this large needs the on-disk undo a real system "
-                f"has, which ChenDB does not."
-            )
+            # Stop caching rather than fail. The write-ahead log has this same
+            # image on disk, so a rollback is still exact — it just reads the
+            # log instead of memory. Raising would have made this ceiling a
+            # limit on transaction *size*, which it is not.
+            self.overflowed = True
+            return False
         self._records.append(
             UndoRecord(
                 sequence=len(self._records),
@@ -121,7 +138,6 @@ class UndoLog:
                 reason=reason,
             )
         )
-        self._captured.add(page_id)
         self._bytes += len(image)
         return True
 
@@ -149,6 +165,7 @@ class UndoLog:
         self._records.clear()
         self._captured.clear()
         self._bytes = 0
+        self.overflowed = False
 
     def __len__(self) -> int:
         return len(self._records)

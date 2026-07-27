@@ -31,7 +31,8 @@ import {
   useTransactionAction,
   useTransactions,
 } from "@/hooks/useEngine";
-import type { ColumnModel, TableDetail, TransactionModel } from "@/types/api";
+import { insertRow, notNullColumn } from "@/lib/demoRows";
+import type { TableDetail, TransactionModel } from "@/types/api";
 import { formatBytes, formatCount } from "@/lib/format";
 import { TransactionTimeline } from "./TransactionTimeline";
 import { UndoLogPanel } from "./UndoLogPanel";
@@ -57,16 +58,11 @@ const DEMOS: Demo[] = [
         : `Every column of ${table.name} is nullable, so there is no constraint here to violate.`,
     sql: (table) => {
       const doomed = notNullColumn(table)!;
-      const rows = [910_001, 910_002, 910_003].map((seed, index) =>
-        table.columns
-          .map((column) =>
-            index === 2 && column.name === doomed.name
-              ? "NULL"
-              : literalFor(column, seed),
-          )
-          .join(", "),
-      );
-      return `INSERT INTO ${table.name} VALUES\n  (${rows.join("),\n  (")});`;
+      return [
+        insertRow(table, 910_001),
+        insertRow(table, 910_002),
+        insertRow(table, 910_003, doomed.name),
+      ].join("\n");
     },
   },
   {
@@ -77,36 +73,6 @@ const DEMOS: Demo[] = [
       "BEGIN;\nCREATE TABLE rolled_back_demo (id INTEGER PRIMARY KEY, note TEXT);",
   },
 ];
-
-/**
- * A column a NULL is not allowed in.
- *
- * The demonstration needs a constraint that fails *during* the insert, after
- * earlier rows have already been written — that is the only kind of failure
- * that leaves something for the undo log to take back. NOT NULL is the one
- * constraint ChenDB enforces on every table without an index: a duplicate key
- * would be the more familiar example, but ``PRIMARY KEY`` here is metadata, and
- * uniqueness is enforced by a UNIQUE index that the table may not have. Writing
- * the demo around a duplicate would make it silently succeed, which is worse
- * than not offering it.
- */
-function notNullColumn(table: TableDetail): ColumnModel | undefined {
-  return table.columns.find((column) => !column.nullable);
-}
-
-/** A value of the right type for a column, varied by seed so keys differ. */
-function literalFor(column: ColumnModel, seed: number): string {
-  switch (column.type) {
-    case "INTEGER":
-      return String(seed);
-    case "FLOAT":
-      return `${seed}.5`;
-    case "BOOLEAN":
-      return seed % 2 === 0 ? "TRUE" : "FALSE";
-    default:
-      return `'demo-${seed}'`;
-  }
-}
 
 export function TransactionWorkspace({
   databaseId,

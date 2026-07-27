@@ -292,6 +292,45 @@
         "title": "CatalogStatsModel",
         "type": "object"
       },
+      "CheckpointResponse": {
+        "properties": {
+          "base_lsn": {
+            "title": "Base Lsn",
+            "type": "integer"
+          },
+          "bytes_reclaimed": {
+            "title": "Bytes Reclaimed",
+            "type": "integer"
+          },
+          "log_size_after": {
+            "description": "Zero \u2014 a checkpoint discards the log",
+            "title": "Log Size After",
+            "type": "integer"
+          },
+          "log_size_before": {
+            "title": "Log Size Before",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pages_flushed": {
+            "title": "Pages Flushed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pages_flushed",
+          "bytes_reclaimed",
+          "log_size_before",
+          "log_size_after",
+          "base_lsn",
+          "message"
+        ],
+        "title": "CheckpointResponse",
+        "type": "object"
+      },
       "ColumnModel": {
         "properties": {
           "fixed_size": {
@@ -374,6 +413,42 @@
           "type"
         ],
         "title": "ColumnSpec",
+        "type": "object"
+      },
+      "CrashResponse": {
+        "description": "What the crash button did.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "recovered": {
+            "$ref": "#/components/schemas/RecoveryReportModel",
+            "description": "Recovery already ran: reopening the file is what triggers it, and the response would be a lie if it reported the pre-crash state."
+          },
+          "rows_after": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Rows After",
+            "type": "object"
+          },
+          "rows_before": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Row count per table before the crash, so the caller can show what survived without having to have asked first",
+            "title": "Rows Before",
+            "type": "object"
+          }
+        },
+        "required": [
+          "message",
+          "recovered",
+          "rows_before",
+          "rows_after"
+        ],
+        "title": "CrashResponse",
         "type": "object"
       },
       "CreateDatabaseRequest": {
@@ -2239,6 +2314,87 @@
         "title": "RecordsResponse",
         "type": "object"
       },
+      "RecoveryReportModel": {
+        "properties": {
+          "duration_ns": {
+            "title": "Duration Ns",
+            "type": "integer"
+          },
+          "highest_lsn": {
+            "title": "Highest Lsn",
+            "type": "integer"
+          },
+          "losers": {
+            "description": "Caught in flight; their work was undone",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Losers",
+            "type": "array"
+          },
+          "pages_redone": {
+            "title": "Pages Redone",
+            "type": "integer"
+          },
+          "pages_skipped": {
+            "description": "Records the page had already got. High relative to redone means the last checkpoint did its job.",
+            "title": "Pages Skipped",
+            "type": "integer"
+          },
+          "pages_undone": {
+            "title": "Pages Undone",
+            "type": "integer"
+          },
+          "phase_ns": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Phase Ns",
+            "type": "object"
+          },
+          "ran": {
+            "description": "False after a clean shutdown, because a clean shutdown ends with a checkpoint and leaves an empty log. So this means exactly 'the previous process did not close properly'.",
+            "title": "Ran",
+            "type": "boolean"
+          },
+          "records_scanned": {
+            "title": "Records Scanned",
+            "type": "integer"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "truncated_tail": {
+            "title": "Truncated Tail",
+            "type": "boolean"
+          },
+          "winners": {
+            "description": "Committed or aborted; their work stands",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Winners",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ran",
+          "records_scanned",
+          "truncated_tail",
+          "winners",
+          "losers",
+          "pages_redone",
+          "pages_skipped",
+          "pages_undone",
+          "highest_lsn",
+          "duration_ns",
+          "phase_ns",
+          "summary"
+        ],
+        "title": "RecoveryReportModel",
+        "type": "object"
+      },
       "ResultColumnModel": {
         "properties": {
           "name": {
@@ -3196,13 +3352,199 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WalRecordModel": {
+        "description": "One entry in the log.",
+        "properties": {
+          "after_image_size": {
+            "title": "After Image Size",
+            "type": "integer"
+          },
+          "before_image_size": {
+            "description": "Non-zero only on a transaction's first write to a page \u2014 first-write-wins, the same rule the in-memory undo log follows",
+            "title": "Before Image Size",
+            "type": "integer"
+          },
+          "lsn": {
+            "description": "This record's byte offset in the log stream",
+            "title": "Lsn",
+            "type": "integer"
+          },
+          "page_id": {
+            "title": "Page Id",
+            "type": "integer"
+          },
+          "prev_lsn": {
+            "description": "The same transaction's previous record, or 0 for its first. ARIES calls this the backward chain.",
+            "title": "Prev Lsn",
+            "type": "integer"
+          },
+          "record_type": {
+            "enum": [
+              "update",
+              "commit",
+              "abort",
+              "checkpoint"
+            ],
+            "title": "Record Type",
+            "type": "string"
+          },
+          "size": {
+            "description": "Bytes on disk, header and images together",
+            "title": "Size",
+            "type": "integer"
+          },
+          "transaction_id": {
+            "description": "0 for engine bookkeeping outside any",
+            "title": "Transaction Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lsn",
+          "prev_lsn",
+          "transaction_id",
+          "record_type",
+          "page_id",
+          "size",
+          "before_image_size",
+          "after_image_size"
+        ],
+        "title": "WalRecordModel",
+        "type": "object"
+      },
+      "WalResponse": {
+        "properties": {
+          "base_lsn": {
+            "description": "The LSN of the log file's first byte. Non-zero after a checkpoint has truncated it, which is why the meta page has to carry it.",
+            "title": "Base Lsn",
+            "type": "integer"
+          },
+          "buffered_bytes": {
+            "description": "Staged in memory, not yet written",
+            "title": "Buffered Bytes",
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "False for a handle opened without a log",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "flushed_lsn": {
+            "description": "Everything below this has reached the OS",
+            "title": "Flushed Lsn",
+            "type": "integer"
+          },
+          "next_lsn": {
+            "description": "What the next appended record will get",
+            "title": "Next Lsn",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Filename only \u2014 never a path from the host",
+            "title": "Path",
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/WalRecordModel"
+            },
+            "title": "Records",
+            "type": "array"
+          },
+          "size_bytes": {
+            "description": "The log file on disk",
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/WalStatsModel"
+          },
+          "total_records": {
+            "description": "Before the response limit was applied",
+            "title": "Total Records",
+            "type": "integer"
+          },
+          "truncated_tail": {
+            "description": "The last record in the file is incomplete. Normal after a crash \u2014 the process died part-way through a write.",
+            "title": "Truncated Tail",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "path",
+          "base_lsn",
+          "next_lsn",
+          "flushed_lsn",
+          "buffered_bytes",
+          "size_bytes",
+          "records",
+          "truncated_tail",
+          "total_records",
+          "stats"
+        ],
+        "title": "WalResponse",
+        "type": "object"
+      },
+      "WalStatsModel": {
+        "properties": {
+          "bytes_appended": {
+            "title": "Bytes Appended",
+            "type": "integer"
+          },
+          "bytes_reclaimed": {
+            "title": "Bytes Reclaimed",
+            "type": "integer"
+          },
+          "checkpoints": {
+            "title": "Checkpoints",
+            "type": "integer"
+          },
+          "flushes": {
+            "description": "Times the buffer reached the OS",
+            "title": "Flushes",
+            "type": "integer"
+          },
+          "mean_sync_ns": {
+            "description": "Average fsync. One second divided by this is the hard ceiling on commits per second.",
+            "title": "Mean Sync Ns",
+            "type": "number"
+          },
+          "records_appended": {
+            "title": "Records Appended",
+            "type": "integer"
+          },
+          "records_coalesced": {
+            "description": "Appends that replaced a staged record for the same page instead of following it. Every one is a page image not written, and in a bulk insert it is almost all of them.",
+            "title": "Records Coalesced",
+            "type": "integer"
+          },
+          "syncs": {
+            "description": "Times it reached the disk. The expensive one.",
+            "title": "Syncs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "records_appended",
+          "records_coalesced",
+          "bytes_appended",
+          "flushes",
+          "syncs",
+          "mean_sync_ns",
+          "checkpoints",
+          "bytes_reclaimed"
+        ],
+        "title": "WalStatsModel",
+        "type": "object"
       }
     }
   },
   "info": {
     "description": "HTTP and WebSocket access to a running ChenDB engine, for the Visual Database\nExplorer.\n\nEverything served here is real engine state read from a real database file.\nEndpoints for features that do not exist yet are absent rather than stubbed:\ncheck `features` on `/health` to see what this build supports.",
     "title": "ChenDB Engine API",
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3431,6 +3773,98 @@
         "summary": "Every table, plus catalog cache statistics",
         "tags": [
           "catalog"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/checkpoint": {
+      "post": {
+        "description": "Refused while a transaction is open \u2014 see :meth:`Database.checkpoint`.",
+        "operationId": "run_checkpoint_api_v1_databases__database_id__checkpoint_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Flush every dirty page, then discard the log",
+        "tags": [
+          "wal"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/crash": {
+      "post": {
+        "description": "Abandon the handle without flushing, reopen, and report what survived.\n\nThe row counts are gathered on both sides of the crash by this endpoint\nrather than left to the caller, because a caller that forgot to ask first\nwould have nothing to compare against \u2014 and \"some rows are gone\" is not a\ndemonstration without the number they were.",
+        "operationId": "simulate_crash_api_v1_databases__database_id__crash_post",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrashResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Simulate a crash \u2014 destroys uncommitted work, then recovers",
+        "tags": [
+          "wal"
         ]
       }
     },
@@ -4090,6 +4524,52 @@
         ]
       }
     },
+    "/api/v1/databases/{database_id}/recovery": {
+      "get": {
+        "description": "Empty after a clean shutdown, which is what makes it meaningful.\n\nA clean close ends with a checkpoint and leaves an empty log, so ``ran``\nsays exactly \"the previous process did not shut down properly\".",
+        "operationId": "get_recovery_api_v1_databases__database_id__recovery_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryReportModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "What the last open had to repair",
+        "tags": [
+          "wal"
+        ]
+      }
+    },
     "/api/v1/databases/{database_id}/tables": {
       "get": {
         "operationId": "list_tables_api_v1_databases__database_id__tables_get",
@@ -4742,6 +5222,63 @@
         "summary": "ROLLBACK \u2014 put every touched page back as it was",
         "tags": [
           "transactions"
+        ]
+      }
+    },
+    "/api/v1/databases/{database_id}/wal": {
+      "get": {
+        "operationId": "get_wal_api_v1_databases__database_id__wal_get",
+        "parameters": [
+          {
+            "description": "Workspace-relative database id",
+            "in": "path",
+            "name": "database_id",
+            "required": true,
+            "schema": {
+              "description": "Workspace-relative database id",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+              "title": "Database Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The log: records, LSNs, and what fsync costs",
+        "tags": [
+          "wal"
         ]
       }
     },

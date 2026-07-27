@@ -10,6 +10,7 @@ from engine.server.routers import (
     query,
     sql,
     transactions,
+    wal,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "query",
     "sql",
     "transactions",
+    "wal",
 ]

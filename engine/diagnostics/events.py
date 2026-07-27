@@ -25,6 +25,7 @@ from engine.diagnostics.levels import EventCategory, TraceLevel
 
 __all__ = [
     "BufferPoolEvent",
+    "CheckpointEvent",
     "CostEstimateEvent",
     "DatabaseClosedEvent",
     "DatabaseOpenedEvent",
@@ -48,9 +49,13 @@ __all__ = [
     "RecordDeletedEvent",
     "RecordInsertedEvent",
     "RecordReadEvent",
+    "RecoveryActionEvent",
+    "RecoveryPhaseEvent",
     "StatisticsGatheredEvent",
     "TransactionEvent",
     "UndoRecordEvent",
+    "WalAppendEvent",
+    "WalFlushEvent",
 ]
 
 #: Where a page came from.  Constant ``"disk"`` until Milestone 7 added the
@@ -766,3 +771,102 @@ class UndoRecordEvent(DiagnosticEvent):
     """What was about to change the page. Not used to undo — the bytes are the
     whole mechanism — but a log of "page 4, page 4, page 1" reads as noise
     without it."""
+
+
+# -- Milestone 9: the write-ahead log --------------------------------------
+
+WalRecordKind = Literal["update", "commit", "abort", "checkpoint"]
+RecoveryPhase = Literal["analysis", "redo", "undo"]
+RecoveryDecision = Literal["redo", "skip", "undo"]
+
+
+@dataclass(frozen=True, slots=True)
+class WalAppendEvent(DiagnosticEvent):
+    """A record was staged in the log.
+
+    ``STORAGE`` rather than ``SUMMARY`` because there is one of these per page
+    write — the log is the busiest thing in the engine, and a summary-level
+    trace of a bulk insert should not be mostly WAL.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.WAL
+    level: ClassVar[TraceLevel] = TraceLevel.STORAGE
+
+    lsn: int
+    transaction_id: int
+    record_type: WalRecordKind
+    page_id: int
+    prev_lsn: int
+    """The transaction's previous record. 0 for its first."""
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
+class WalFlushEvent(DiagnosticEvent):
+    """The log reached the disk.
+
+    ``SUMMARY``, unlike the append: this is the ``fsync``, and its duration is
+    the number that decides how fast commits can go. It deserves to show up in
+    a trace that is otherwise only reporting statements.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.WAL
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    up_to_lsn: int
+    bytes_written: int
+    duration_ns: int
+    synced: bool
+    """False for a flush that only reached the OS — enough to survive a process
+    crash, not a machine one."""
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointEvent(DiagnosticEvent):
+    """Dirty pages were flushed and the log was discarded."""
+
+    category: ClassVar[EventCategory] = EventCategory.WAL
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    lsn: int
+    pages_flushed: int
+    bytes_reclaimed: int
+    duration_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryPhaseEvent(DiagnosticEvent):
+    """One of the three ARIES passes started or finished.
+
+    ``SUMMARY``, and deliberately loud: recovery running at all means the last
+    process did not shut down cleanly, and that is something a user should see
+    without having turned tracing up.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.RECOVERY
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    phase: RecoveryPhase
+    action: Literal["started", "finished"]
+    records_processed: int = 0
+    duration_ns: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryActionEvent(DiagnosticEvent):
+    """What recovery decided about one record.
+
+    ``skip`` is as interesting as ``redo`` here: it means the page on disk
+    already carries an LSN at or past the record's, so the change is present.
+    Being able to see *why* a record was skipped is most of what makes the
+    step-through recovery view worth having.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.RECOVERY
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    phase: RecoveryPhase
+    lsn: int
+    page_id: int
+    decision: RecoveryDecision
+    reason: str

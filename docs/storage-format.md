@@ -44,12 +44,20 @@ PostgreSQL instead keeps cluster metadata in a separate `pg_control` file.
   48     4  catalog_indexes_first   u32 ┐ chendb_indexes heap      (v3)
   52     4  catalog_indexes_last    u32 ┘
   56     4  next_object_id          u32 — shared table/index counter (v3)
-  60     8  lsn                     u64 — reserved for the WAL (Milestone 9)
-  68     4  flags                   u32 — reserved
-  72     4  checksum                u32 — CRC32 over bytes [0, 72)
+  60     8  lsn                     u64 — last log record for this page (v4)
+  68     8  checkpoint_lsn          u64 — LSN of the log file's byte 0   (v4)
+  76     4  flags                   u32 — reserved
+  80     4  checksum                u32 — CRC32 over bytes [0, 80)
  ─────────────────────────────────────────────────────────────────────────
-  76 bytes; the rest of the page is reserved and zero-filled.
+  84 bytes; the rest of the page is reserved and zero-filled.
 ```
+
+`checkpoint_lsn` is here rather than in the log because it has to be readable
+*before* the log is opened: it says what LSN the log file's first byte
+corresponds to. A checkpoint truncates the log, so that is not zero after the
+first one — and without it, LSNs would restart, page LSNs written earlier would
+compare greater than records written later, and redo would skip work it had to
+do.
 
 `0xFFFFFFFF` is the null page pointer. Zero cannot serve as the sentinel
 because page 0 is a real page.
@@ -72,6 +80,7 @@ O(1).
 | 1 | 1 | One table per file: `heap_first_page`, `heap_last_page`, `schema_page_id` |
 | 2 | 4 | Those three replaced by the two catalog heaps plus `next_table_id` |
 | 3 | 5 | `catalog_indexes_*` added; `next_table_id` → `next_object_id` |
+| 4 | 9 | `checkpoint_lsn` added; `lsn` stops being reserved and starts being written |
 
 There is no in-place upgrade. Every bump so far moved where the catalog lives,
 so reading an old file would mean carrying a reader per layout — worth it for a
@@ -102,7 +111,7 @@ two regions that grow toward each other.
  off  size  field          notes
  ───  ────  ─────────────  ─────────────────────────────────────────────
    0     4  checksum       u32 — CRC32 over bytes [4, page_size)
-   4     8  lsn            u64 — reserved for the WAL (Milestone 9)
+   4     8  lsn            u64 — the log record that last changed this page
   12     1  page_type      u8  — 0 FREE · 1 META · 2 HEAP · 3 SCHEMA
                                  4/5 BTREE_* (reserved) · 6 OVERFLOW
   13     1  flags          u8  — reserved
@@ -116,6 +125,13 @@ two regions that grow toward each other.
 stored anyway, mirroring PostgreSQL's `pd_lower`/`pd_upper`, and
 `Page.validate()` asserts the invariant on every read. A redundant field that
 is checked is a corruption detector.
+
+The `lsn` was reserved from Milestone 1 and became load-bearing in Milestone 9.
+Recovery compares it against each log record: a record whose LSN the page has
+already passed is skipped, which is what makes replaying a log idempotent and
+therefore what makes a crash *during recovery* survivable. It sits inside the
+checksum's range, so stamping it means recomputing the checksum — which is why
+`stamp_lsn` exists and why a logged write pays a second CRC32 pass.
 
 ### Slot directory — 4 bytes per entry
 

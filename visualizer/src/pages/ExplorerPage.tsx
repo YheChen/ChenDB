@@ -13,6 +13,7 @@
  *   │  Indexes:   Index list    │ Point lookup · B+ tree        │
  *   │  Buffer:    Counters      │ Workloads │ Frame grid        │
  *   │  Txns:      BEGIN/COMMIT  │ Undo log  │ Timeline          │
+ *   │  WAL:       Checkpoint/Crash │ Recovery │ The log           │
  *   │                                                          │
  *   ├──────────────────────────────────────────────────────────┤
  *   │ Event timeline (shared by every workspace)               │
@@ -40,6 +41,7 @@ import { RecordsPanel } from "@/features/records/RecordsPanel";
 import { ExecutionWorkspace } from "@/features/execution/ExecutionWorkspace";
 import { BufferWorkspace } from "@/features/buffer/BufferWorkspace";
 import { TransactionWorkspace } from "@/features/transactions/TransactionWorkspace";
+import { WalWorkspace } from "@/features/wal/WalWorkspace";
 import { IndexWorkspace } from "@/features/indexes/IndexWorkspace";
 import { SqlWorkspace } from "@/features/sql/SqlWorkspace";
 import {
@@ -57,7 +59,13 @@ const WORKSPACE_KEY = "chendb.workspace";
 const TABLE_KEY = "chendb.table";
 
 type WorkspaceId =
-  "storage" | "sql" | "execution" | "indexes" | "buffer" | "transactions";
+  | "storage"
+  | "sql"
+  | "execution"
+  | "indexes"
+  | "buffer"
+  | "transactions"
+  | "wal";
 
 const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "storage", label: "Storage", feature: "storage" },
@@ -66,6 +74,7 @@ const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "indexes", label: "Indexes", feature: "indexes" },
   { id: "buffer", label: "Buffer pool", feature: "buffer_pool" },
   { id: "transactions", label: "Transactions", feature: "transactions" },
+  { id: "wal", label: "WAL", feature: "wal" },
 ];
 
 export function ExplorerPage() {
@@ -169,7 +178,15 @@ export function ExplorerPage() {
         label="Resize the workspace against the event timeline"
         className="min-h-0 flex-1"
         first={
-          workspace === "transactions" && databaseId ? (
+          workspace === "wal" && databaseId ? (
+            <WalWorkspace
+              databaseId={databaseId}
+              onSelectPage={(pageId) => {
+                setSelectedPageId(pageId);
+                setWorkspace("storage");
+              }}
+            />
+          ) : workspace === "transactions" && databaseId ? (
             <TransactionWorkspace
               databaseId={databaseId}
               onSelectPage={(pageId) => {

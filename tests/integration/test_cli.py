@@ -131,7 +131,7 @@ def test_find_on_an_unknown_index_says_what_exists(db_path: Path):
 
 def test_info_reports_the_catalog_pointers(db_path: Path):
     output = run(db_path, ".info")
-    assert "format       version 3" in output
+    assert "format       version 4" in output
     assert "chendb_indexes" in output
     assert "next object id" in output
 

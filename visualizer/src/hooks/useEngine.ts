@@ -30,6 +30,8 @@ import type {
   RecordsResponse,
   TableDetail,
   TransactionListResponse,
+  RecoveryReportModel,
+  WalResponse,
 } from "@/types/api";
 
 export const queryKeys = {
@@ -49,6 +51,8 @@ export const queryKeys = {
     ["indexSearch", id, name, value] as const,
   bufferPool: (id: string) => ["bufferPool", id] as const,
   transactions: (id: string) => ["transactions", id] as const,
+  wal: (id: string, limit: number) => ["wal", id, limit] as const,
+  recovery: (id: string) => ["recovery", id] as const,
   pages: (id: string) => ["pages", id] as const,
   page: (id: string, pageId: number) => ["page", id, pageId] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -66,6 +70,8 @@ function invalidateDatabase(
     queryKeys.pages(databaseId),
     queryKeys.bufferPool(databaseId),
     queryKeys.transactions(databaseId),
+    ["wal", databaseId],
+    queryKeys.recovery(databaseId),
     queryKeys.indexes(databaseId),
     ["indexes", databaseId],
     ["index", databaseId],
@@ -247,6 +253,35 @@ export function useTransactions(
   });
 }
 
+/**
+ * The log, as a window onto its most recent records.
+ *
+ * Polled rather than streamed, for the reason the pool is: there is one record
+ * per page write, so a stream of them would be the busiest thing in the app and
+ * the interesting shape — the log filling up, then collapsing at a checkpoint —
+ * is perfectly legible at a human refresh rate.
+ */
+export function useWal(
+  id: string | null,
+  { limit = 200, refetchInterval = 1500 }: { limit?: number; refetchInterval?: number | false } = {},
+): UseQueryResult<WalResponse> {
+  return useQuery({
+    queryKey: queryKeys.wal(id ?? "", limit),
+    queryFn: () => api.getWal(id!, limit),
+    enabled: Boolean(id),
+    refetchInterval,
+  });
+}
+
+/** What the last open had to repair. Static until the database is reopened. */
+export function useRecovery(id: string | null): UseQueryResult<RecoveryReportModel> {
+  return useQuery({
+    queryKey: queryKeys.recovery(id ?? ""),
+    queryFn: () => api.getRecovery(id!),
+    enabled: Boolean(id),
+  });
+}
+
 // -- writes ----------------------------------------------------------------
 
 /**
@@ -267,6 +302,35 @@ export function useTransactionAction(databaseId: string | null) {
       if (action === "commit") return api.commitTransaction(id);
       return api.rollbackTransaction(id);
     },
+    onSuccess: () => {
+      if (databaseId) invalidateDatabase(client, databaseId);
+    },
+  });
+}
+
+export function useCheckpoint(databaseId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.checkpoint(databaseId!),
+    onSuccess: () => {
+      if (databaseId) invalidateDatabase(client, databaseId);
+    },
+  });
+}
+
+/**
+ * The crash button. **Destroys uncommitted work.**
+ *
+ * Everything is invalidated afterwards, not just the log: recovery really did
+ * roll pages back, so rows, the disk map, the catalog and the page inspector
+ * are all showing state that no longer exists. Refreshing only the WAL panel
+ * would leave the rest of the explorer confidently wrong, which is the failure
+ * mode this project exists to avoid.
+ */
+export function useCrash(databaseId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.crash(databaseId!),
     onSuccess: () => {
       if (databaseId) invalidateDatabase(client, databaseId);
     },

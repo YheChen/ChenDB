@@ -71,6 +71,7 @@ from typing import TYPE_CHECKING
 from engine.diagnostics.events import TransactionEvent, UndoRecordEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import TransactionError
+from engine.storage.pager import WriteIntent
 from engine.transaction.undo import UndoLog
 
 if TYPE_CHECKING:
@@ -310,19 +311,25 @@ class TransactionManager:
 
     def before_write(
         self, page_id: int, current: Callable[[], bytes], reason: str = ""
-    ) -> None:
+    ) -> WriteIntent | None:
         """Capture ``page_id``'s current bytes, if a transaction needs them.
 
         ``current`` is a callable rather than the bytes themselves so the page
         is only read when a record is actually going to be kept — which, thanks
         to first-write-wins, is the minority of writes in any real transaction.
+
+        Returns what the pager needs to log this change: which transaction it
+        belongs to, and the before-image if this is that transaction's first
+        write to the page. Both mechanisms — the in-memory undo log and the
+        on-disk one — capture on exactly the same rule, so the page is read at
+        most once either way.
         """
         transaction = self._active
         if transaction is None:
-            return
+            return None
         if transaction.undo.has(page_id):
             transaction.pages_written += 1
-            return
+            return WriteIntent(transaction_id=transaction.transaction_id)
 
         transaction.pages_written += 1
         image = current()
@@ -336,6 +343,7 @@ class TransactionManager:
                     reason=reason,
                 )
             )
+        return WriteIntent(transaction_id=transaction.transaction_id, before_image=image)
 
     def note_statement(self) -> None:
         if self._active is not None:

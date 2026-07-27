@@ -79,7 +79,9 @@ def main() -> int:
             heading(3, "The catalog is just rows")
             print(f"   {TABLES_TABLE_NAME}:")
             for row in db.rows(TABLES_TABLE_NAME):
-                print(f"     table_id={row[0]:<4} name={row[1]:<8} pages={row[2]}..{row[3]}")
+                print(
+                    f"     table_id={row[0]:<4} name={row[1]:<8} pages={row[2]}..{row[3]}"
+                )
             print(f"\n   {COLUMNS_TABLE_NAME} (first 6):")
             for row in db.rows(COLUMNS_TABLE_NAME)[:6]:
                 print(

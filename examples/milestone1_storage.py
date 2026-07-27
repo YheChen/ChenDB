@@ -77,7 +77,7 @@ def main() -> int:
             page_count = db.page_count
             print(f"   {row[1]!s:<22} → {record_id}   file: {page_count} pages")
         print()
-        print(f"   {len(ROWS)} rows over {len(db.heap_page_ids("users"))} heap page(s).")
+        print(f"   {len(ROWS)} rows over {len(db.heap_page_ids('users'))} heap page(s).")
         print("   Pages are threaded by next_page_id; the meta page remembers")
         print("   the last one, so appending is O(1) instead of walking the chain.")
 
@@ -111,7 +111,9 @@ def main() -> int:
         print(f"   → {', '.join(null_names)} is absent from the bytes entirely.")
         print()
         print("   The raw bytes of that record:")
-        print(hexdump(bytes.fromhex(nullable_slot.raw_hex), start_offset=nullable_slot.offset))
+        print(
+            hexdump(bytes.fromhex(nullable_slot.raw_hex), start_offset=nullable_slot.offset)
+        )
 
         # ------------------------------------------------------------------
         heading(5, "Delete a row — a tombstone, not an erasure")
