@@ -303,7 +303,8 @@ class Database:
         if active is None:
             return
         self._locks.acquire(
-            active.transaction_id, f"{table}:{record_id.page_id}.{record_id.slot_id}",
+            active.transaction_id,
+            f"{table}:{record_id.page_id}.{record_id.slot_id}",
             LockMode.EXCLUSIVE,
         )
         active.locks_held = len(self._locks.held_by(active.transaction_id))
@@ -699,9 +700,7 @@ class Database:
             # heap deals in opaque payloads and has no business knowing what a
             # transaction is. Everything above this line is MVCC; everything
             # below it is Milestone 1.
-            record_id = heap.insert(
-                add_tuple_header(encode_record(info.schema, row), xid)
-            )
+            record_id = heap.insert(add_tuple_header(encode_record(info.schema, row), xid))
             self._lock_row(info.name, record_id)
             record_ids.append(record_id)
             for index in indexes:

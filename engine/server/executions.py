@@ -237,9 +237,7 @@ class ExecutionStore:
         # The controller was notified, so a paused thread wakes and raises. Join
         # so the caller knows the database lock has actually been released.
         if execution.thread is not None:
-            execution.thread.join(
-                timeout=self._config.execution_step_timeout_seconds
-            )
+            execution.thread.join(timeout=self._config.execution_step_timeout_seconds)
         execution.touch()
         return execution
 
@@ -265,8 +263,7 @@ class ExecutionStore:
             stale = [
                 execution
                 for execution in self._executions.values()
-                if not execution.state.is_terminal
-                and execution.idle_seconds > timeout
+                if not execution.state.is_terminal and execution.idle_seconds > timeout
             ]
         for execution in stale:
             execution.controller.cancel()

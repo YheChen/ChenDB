@@ -27,6 +27,7 @@ from engine.server.workspace import (
 
 router = APIRouter(prefix="/databases", tags=["databases"])
 
+
 def _fail(exc: Exception) -> HTTPException:
     return HTTPException(
         status_code=http_status_for(exc),
@@ -92,9 +93,7 @@ def create_database(
 
 
 @router.get("/{database_id}", response_model=DatabaseDetail, summary="Database detail")
-def get_database_detail(
-    managed: DatabaseDep, workspace: WorkspaceDep
-) -> DatabaseDetail:
+def get_database_detail(managed: DatabaseDep, workspace: WorkspaceDep) -> DatabaseDetail:
     return _detail(managed, workspace)
 
 

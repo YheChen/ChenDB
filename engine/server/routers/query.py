@@ -152,9 +152,7 @@ def get_execution(execution_id: str, request: Request) -> ExecutionDetail:
     summary="Advance to the next checkpoint",
 )
 def step_execution(execution_id: str, request: Request) -> ExecutionDetail:
-    return mappers.execution_detail_to_api(
-        _resume(request, execution_id, ResumeMode.STEP)
-    )
+    return mappers.execution_detail_to_api(_resume(request, execution_id, ResumeMode.STEP))
 
 
 @executions_router.post(

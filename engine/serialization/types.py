@@ -163,13 +163,10 @@ class IntegerCodec(Codec):
         # True. Accepting it here would let `True` round-trip as `1` and
         # silently change a value's type.
         if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeMismatchError(
-                f"expected INTEGER, got {python_type_name(value)}"
-            )
+            raise TypeMismatchError(f"expected INTEGER, got {python_type_name(value)}")
         if not _INT64_MIN <= value <= _INT64_MAX:
             raise TypeMismatchError(
-                f"integer {value} does not fit in 64 bits "
-                f"[{_INT64_MIN}, {_INT64_MAX}]"
+                f"integer {value} does not fit in 64 bits [{_INT64_MIN}, {_INT64_MAX}]"
             )
 
     def encode(self, value: Any) -> bytes:

@@ -114,8 +114,7 @@ def test_column_order_survives_because_position_is_stored(db_path: Path):
     # `position` column is what makes the rebuild deterministic.
     wide = Schema(
         tuple(
-            Column(f"c{index}", DataType.INTEGER, nullable=index > 0)
-            for index in range(12)
+            Column(f"c{index}", DataType.INTEGER, nullable=index > 0) for index in range(12)
         )
     )
     with Database.open(db_path, page_size=PAGE_SIZE) as db:
@@ -175,9 +174,7 @@ def test_table_ids_are_stable_and_start_above_the_reserved_range(
         assert third.table_id == FIRST_USER_OBJECT_ID + 2
 
 
-def test_the_system_tables_are_readable_like_any_other(
-    db_path: Path, users_schema: Schema
-):
+def test_the_system_tables_are_readable_like_any_other(db_path: Path, users_schema: Schema):
     with Database.open(db_path, page_size=PAGE_SIZE) as db:
         db.create_table("users", users_schema)
 
@@ -299,9 +296,7 @@ def test_every_supported_page_size_roundtrips(
         assert db.schema_of("users") == users_schema
 
 
-def test_deleted_slots_can_be_reused_by_later_inserts(
-    db_path: Path, users_schema: Schema
-):
+def test_deleted_slots_can_be_reused_by_later_inserts(db_path: Path, users_schema: Schema):
     with Database.open(db_path, page_size=PAGE_SIZE) as db:
         db.create_table("users", users_schema)
         first = db.insert("users", (1, "first", None, True, 0.0))

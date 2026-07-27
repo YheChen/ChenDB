@@ -154,8 +154,10 @@ class PauseReason:
 
     def __str__(self) -> str:
         where = f" in {self.operator_id}" if self.operator_id else ""
-        return f"{self.kind.value}{where}: {self.detail}" if self.detail else (
-            f"{self.kind.value}{where}"
+        return (
+            f"{self.kind.value}{where}: {self.detail}"
+            if self.detail
+            else (f"{self.kind.value}{where}")
         )
 
 
@@ -334,8 +336,7 @@ class StepController:
         """
         with self._condition:
             self._condition.wait_for(
-                lambda: self._state is ExecutionState.PAUSED
-                or self._state.is_terminal,
+                lambda: self._state is ExecutionState.PAUSED or self._state.is_terminal,
                 timeout=timeout,
             )
             return self._state

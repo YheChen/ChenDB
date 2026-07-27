@@ -51,14 +51,14 @@ class EventCategory(StrEnum):
     RECORD = "record"
 
     # Reserved for later milestones. No events use these yet.
-    PARSER = "parser"          # M2: tokens, AST nodes
-    OPERATOR = "operator"      # M3: volcano iterator calls
-    CATALOG = "catalog"        # M4: schema lookups
-    INDEX = "index"            # M5: B+ tree descent, splits, merges
-    PLANNER = "planner"        # M6: logical/physical plans, cost estimates
+    PARSER = "parser"  # M2: tokens, AST nodes
+    OPERATOR = "operator"  # M3: volcano iterator calls
+    CATALOG = "catalog"  # M4: schema lookups
+    INDEX = "index"  # M5: B+ tree descent, splits, merges
+    PLANNER = "planner"  # M6: logical/physical plans, cost estimates
     BUFFER_POOL = "buffer_pool"  # M7: hits, misses, pins, evictions
     TRANSACTION = "transaction"  # M8: begin/commit/rollback
-    WAL = "wal"                # M9: appends, flushes, checkpoints
-    RECOVERY = "recovery"      # M9: analysis, redo, undo
-    LOCK = "lock"              # M10: acquire, wait, deadlock
-    MVCC = "mvcc"              # M10: version visibility decisions
+    WAL = "wal"  # M9: appends, flushes, checkpoints
+    RECOVERY = "recovery"  # M9: analysis, redo, undo
+    LOCK = "lock"  # M10: acquire, wait, deadlock
+    MVCC = "mvcc"  # M10: version visibility decisions

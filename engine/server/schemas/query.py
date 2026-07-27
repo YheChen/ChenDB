@@ -67,8 +67,12 @@ class OperatorNodeModel(ApiModel):
     estimated_cost: float | None = Field(
         description="Cumulative estimated cost of this node and everything below it"
     )
-    estimated_io_cost: float | None = Field(description="The I/O half of this node's own cost")
-    estimated_cpu_cost: float | None = Field(description="The CPU half of this node's own cost")
+    estimated_io_cost: float | None = Field(
+        description="The I/O half of this node's own cost"
+    )
+    estimated_cpu_cost: float | None = Field(
+        description="The CPU half of this node's own cost"
+    )
 
     next_calls: int = Field(description="Times this operator was asked for a row")
     input_rows: int = Field(description="Rows it consumed from its children")
@@ -141,9 +145,7 @@ class QueryResultModel(ApiModel):
     record_ids: list[RecordIdModel] = Field(
         description="Where each row lives; empty when the projection computes values"
     )
-    plan: PlanModel | None = Field(
-        description="Null for statements with no operator tree"
-    )
+    plan: PlanModel | None = Field(description="Null for statements with no operator tree")
 
     rows_returned: int
     rows_affected: int = Field(description="Rows written, for INSERT")
@@ -202,12 +204,8 @@ class ExecutionDetail(ApiModel):
     pause_kind: str | None = Field(
         description="operator_open, operator_next, row_emitted, operator_close or page_read"
     )
-    pause_operator_id: str | None = Field(
-        description="Which operator is at the checkpoint"
-    )
-    pause_detail: str = Field(
-        description="The row or page involved, rendered for display"
-    )
+    pause_operator_id: str | None = Field(description="Which operator is at the checkpoint")
+    pause_detail: str = Field(description="The row or page involved, rendered for display")
 
     plan: PlanModel | None = Field(
         description="Available once the operators have been built"

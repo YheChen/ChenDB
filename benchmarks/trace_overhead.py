@@ -109,10 +109,7 @@ def benchmark_levels(workdir: Path) -> None:
             per_event = f"{(best - baseline) / events * 1e6:.3f}"
         else:
             per_event = "—"
-        print(
-            f"{level.name:<10} {best:>9.4f} {ratio:>8.2f}× {events:>10,} "
-            f"{per_event:>10}"
-        )
+        print(f"{level.name:<10} {best:>9.4f} {ratio:>8.2f}× {events:>10,} {per_event:>10}")
 
         digests.add((workdir / f"{level.name.lower()}-0.chendb").read_bytes())
 
@@ -152,10 +149,14 @@ def benchmark_emit_pattern() -> None:
     guarded_time = measure(guarded)
     unguarded_time = measure(unguarded)
 
-    print(f"{'guarded':<12} {guarded_time:>9.4f}s  "
-          f"{guarded_time / EMIT_ITERATIONS * 1e9:>7.1f} ns/call")
-    print(f"{'unguarded':<12} {unguarded_time:>9.4f}s  "
-          f"{unguarded_time / EMIT_ITERATIONS * 1e9:>7.1f} ns/call")
+    print(
+        f"{'guarded':<12} {guarded_time:>9.4f}s  "
+        f"{guarded_time / EMIT_ITERATIONS * 1e9:>7.1f} ns/call"
+    )
+    print(
+        f"{'unguarded':<12} {unguarded_time:>9.4f}s  "
+        f"{unguarded_time / EMIT_ITERATIONS * 1e9:>7.1f} ns/call"
+    )
     print("─" * 74)
     print(
         f"The guard saves {unguarded_time / guarded_time:.1f}× per call site "
@@ -195,13 +196,19 @@ def benchmark_storage_primitives(workdir: Path) -> None:
         rows_per_page = ROW_COUNT / max(1, len(db.heap_page_ids()))
 
     print(f"{'insert':<22} {insert_time / ROW_COUNT * 1e6:>8.2f} µs/row")
-    print(f"{'full scan':<22} {scan_time / ROW_COUNT * 1e6:>8.2f} µs/row"
-          f"   ({scan_reads} page reads)")
-    print(f"{'point read by RecordId':<22} {point_time / len(record_ids) * 1e6:>8.2f} µs/row")
+    print(
+        f"{'full scan':<22} {scan_time / ROW_COUNT * 1e6:>8.2f} µs/row"
+        f"   ({scan_reads} page reads)"
+    )
+    print(
+        f"{'point read by RecordId':<22} {point_time / len(record_ids) * 1e6:>8.2f} µs/row"
+    )
     print(f"{'fsync':<22} {statistics.median(sync_times) * 1e6:>8.2f} µs   (median of 20)")
     print("─" * 74)
-    print(f"{ROW_COUNT:,} rows in {pages} pages, ~{rows_per_page:.0f} rows/page "
-          f"at {PAGE_SIZE} B/page.")
+    print(
+        f"{ROW_COUNT:,} rows in {pages} pages, ~{rows_per_page:.0f} rows/page "
+        f"at {PAGE_SIZE} B/page."
+    )
     print("Every page read above is a syscall. Milestone 7's buffer pool is")
     print("the first change that should move the scan and point-read numbers.")
 

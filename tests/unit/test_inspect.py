@@ -146,9 +146,7 @@ def test_a_corrupt_page_still_renders_instead_of_raising(
     db_path.write_bytes(bytes(raw))
 
     with Database.open(db_path, verify_checksums=False) as db:
-        summary = next(
-            s for s in db.page_summaries() if s.page_id == heap_page_id
-        )
+        summary = next(s for s in db.page_summaries() if s.page_id == heap_page_id)
         # The inspector's job is to *show* corruption, not to fall over on it.
         assert summary.checksum_valid is False
 

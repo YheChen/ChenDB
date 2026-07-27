@@ -133,9 +133,7 @@ def hexdump(
     for base in range(0, len(view), width):
         chunk = view[base : base + width]
         hex_part = " ".join(f"{byte:02x}" for byte in chunk).ljust(width * 3 - 1)
-        ascii_part = "".join(
-            chr(byte) if 0x20 <= byte < 0x7F else "." for byte in chunk
-        )
+        ascii_part = "".join(chr(byte) if 0x20 <= byte < 0x7F else "." for byte in chunk)
         lines.append(f"{start_offset + base:08x}  {hex_part}  |{ascii_part}|")
     if limit is not None and len(data) > limit:
         lines.append(f"... {len(data) - limit} more bytes")

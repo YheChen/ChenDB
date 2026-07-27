@@ -312,9 +312,7 @@ class BPlusTree:
                         page_id=node.page_id,
                         tree_level=depth - 1,
                         child_page_id=child_page_id,
-                        separator=describe_key(
-                            node.entry_at(index).key, self._data_type
-                        ),
+                        separator=describe_key(node.entry_at(index).key, self._data_type),
                     )
                 )
             path.append((node.page_id, index))
@@ -800,9 +798,7 @@ class BPlusTree:
             )
         for position, entry in enumerate(entries):
             child_low = None if entry.is_minus_infinity else entry.key
-            child_high = (
-                entries[position + 1].key if position + 1 < len(entries) else high
-            )
+            child_high = entries[position + 1].key if position + 1 < len(entries) else high
             self._verify_subtree(
                 entry.child_page_id, child_low, child_high, depth + 1, leaf_depths
             )

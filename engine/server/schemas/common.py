@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["ApiError", "ApiModel", "HealthResponse", "PageInfo", "PaginationMeta", "RequestModel"]
+__all__ = [
+    "ApiError",
+    "ApiModel",
+    "HealthResponse",
+    "PageInfo",
+    "PaginationMeta",
+    "RequestModel",
+]
 
 
 class ApiModel(BaseModel):

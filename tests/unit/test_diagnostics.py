@@ -141,7 +141,9 @@ def _all_subclasses(cls: type) -> list[type]:
 
 def test_null_sink_accepts_everything_and_keeps_nothing():
     sink = NullSink()
-    sink.record(TraceRecord(1, 1, EventCategory.STORAGE, TraceLevel.STORAGE, "x", make_page_read()))
+    sink.record(
+        TraceRecord(1, 1, EventCategory.STORAGE, TraceLevel.STORAGE, "x", make_page_read())
+    )
 
 
 def test_ring_buffer_drops_oldest_and_counts_the_loss():

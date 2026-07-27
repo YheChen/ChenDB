@@ -114,8 +114,7 @@ class BoundSelect:
         optimisation the planner in Milestone 6 will generalise.
         """
         return all(
-            isinstance(projection, BoundColumnRef)
-            and projection.column_index == index
+            isinstance(projection, BoundColumnRef) and projection.column_index == index
             for index, projection in enumerate(self.projections)
         ) and len(self.projections) == len(self.input_schema)
 
@@ -233,7 +232,9 @@ def _static_type(expression: Expression) -> DataType | None:
             return DataType.BOOLEAN
         case UnaryOp():
             return _static_type(expression.operand)
-        case BinaryOp() if expression.operator.is_comparison or expression.operator.is_logical:
+        case BinaryOp() if (
+            expression.operator.is_comparison or expression.operator.is_logical
+        ):
             return DataType.BOOLEAN
         case BinaryOp():
             left = _static_type(expression.left)
@@ -290,9 +291,7 @@ def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect
 
         bound = bind_expression(item.expression, schema)
         projections.append(bound)
-        output_columns.append(
-            ResultColumn(_output_name(item, bound), _static_type(bound))
-        )
+        output_columns.append(ResultColumn(_output_name(item, bound), _static_type(bound)))
 
     where = bind_expression(statement.where, schema) if statement.where else None
 
@@ -364,9 +363,7 @@ def bind_insert(statement: InsertStatement, catalog: CatalogLike) -> BoundInsert
     )
 
 
-def _resolve_insert_columns(
-    statement: InsertStatement, schema: Schema
-) -> tuple[int, ...]:
+def _resolve_insert_columns(statement: InsertStatement, schema: Schema) -> tuple[int, ...]:
     assert statement.columns is not None
     indices: list[int] = []
     seen: set[int] = set()
@@ -404,7 +401,9 @@ def _require_omitted_columns_are_nullable(
     position, and only once the statement was already half-executed.
     """
     omitted = set(range(len(schema))) - set(target_indices)
-    missing = [schema[index].name for index in sorted(omitted) if not schema[index].nullable]
+    missing = [
+        schema[index].name for index in sorted(omitted) if not schema[index].nullable
+    ]
     if missing:
         raise BindingError(
             f"column(s) {', '.join(repr(name) for name in missing)} are NOT NULL "

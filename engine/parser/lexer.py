@@ -331,9 +331,7 @@ class Lexer:
 
         raise self._fail(f"unexpected character {char!r}", start, line, column)
 
-    def _operator(
-        self, token_type: TokenType, start: int, line: int, column: int
-    ) -> Token:
+    def _operator(self, token_type: TokenType, start: int, line: int, column: int) -> Token:
         return Token(
             token_type,
             self._source[start : self._pos],

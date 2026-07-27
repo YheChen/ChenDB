@@ -205,9 +205,7 @@ class HeapFile:
             self._stats.compactions += 1
             if self._tracer.storage:
                 self._tracer.emit(
-                    PageCompactedEvent(
-                        page_id=page.page_id, reclaimed_bytes=reclaimed
-                    )
+                    PageCompactedEvent(page_id=page.page_id, reclaimed_bytes=reclaimed)
                 )
             slot_id = page.insert(payload)
 
@@ -253,9 +251,7 @@ class HeapFile:
         self._stats.deletes += 1
         if self._tracer.storage:
             self._tracer.emit(
-                RecordDeletedEvent(
-                    page_id=record_id.page_id, slot_id=record_id.slot_id
-                )
+                RecordDeletedEvent(page_id=record_id.page_id, slot_id=record_id.slot_id)
             )
         return True
 
@@ -344,8 +340,7 @@ class HeapFile:
     def count(self) -> int:
         """Live record count. O(pages) — no cached count exists yet."""
         return sum(
-            self._pager.read_page(page_id).live_record_count
-            for page_id in self.page_ids()
+            self._pager.read_page(page_id).live_record_count for page_id in self.page_ids()
         )
 
     def page_count(self) -> int:

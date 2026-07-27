@@ -294,9 +294,7 @@ class BTreeNode:
             return entry.key + encode_rid(entry.record_id)
         if entry.child_page_id == INVALID_PAGE_ID:
             raise IndexingError("an internal entry must point at a child page")
-        return (
-            entry.key + encode_rid(entry.record_id) + _CHILD.pack(entry.child_page_id)
-        )
+        return entry.key + encode_rid(entry.record_id) + _CHILD.pack(entry.child_page_id)
 
     # -- searching ---------------------------------------------------------
     #

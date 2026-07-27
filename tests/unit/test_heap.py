@@ -135,7 +135,9 @@ def test_deleted_space_is_reused_within_a_page(heap: HeapFile, pager: Pager):
 
 def test_on_pages_changed_fires_only_when_the_chain_grows(pager: Pager):
     calls: list[tuple[int, int]] = []
-    heap = HeapFile.create(pager, on_pages_changed=lambda first, last: calls.append((first, last)))
+    heap = HeapFile.create(
+        pager, on_pages_changed=lambda first, last: calls.append((first, last))
+    )
     assert calls == [(heap.first_page_id, heap.first_page_id)]
 
     heap.insert(b"small")
