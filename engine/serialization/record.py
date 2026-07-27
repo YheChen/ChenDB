@@ -34,9 +34,10 @@ Encode and decode are both O(row bytes). Neither allocates beyond the result.
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from engine.errors import (
     NullConstraintViolation,
@@ -47,13 +48,20 @@ from engine.serialization.schema import Schema
 from engine.serialization.types import codec_for
 
 __all__ = [
+    "NO_TRANSACTION_ID",
+    "TUPLE_HEADER_SIZE",
     "FieldLayout",
     "RecordLayout",
     "Row",
+    "TupleHeader",
+    "add_tuple_header",
     "decode_record",
     "describe_record",
     "encode_record",
     "estimate_record_size",
+    "read_tuple_header",
+    "set_xmax",
+    "strip_tuple_header",
 ]
 
 #: A row is a positional tuple of Python values matching a schema's columns.
@@ -219,3 +227,95 @@ def estimate_record_size(schema: Schema, values: Sequence[Any]) -> int:
 
 def _is_null(raw: bytes, index: int) -> bool:
     return bool(raw[index // 8] >> (index % 8) & 1)
+
+
+# -- tuple headers (Milestone 10) ------------------------------------------
+#
+#     ┌──────┬──────┬──────────────┬─────────┬─────┐
+#     │ xmin │ xmax │ null bitmap  │ value 0 │ ... │
+#     │ u32  │ u32  │  ⌈cols/8⌉ B  │         │     │
+#     └──────┴──────┴──────────────┴─────────┴─────┘
+#
+# Eight bytes per row saying which transaction created it and which one deleted
+# it. That is what makes a row a *version* rather than a value, and it is the
+# whole of MVCC's storage cost — 8 bytes against PostgreSQL's 23-byte
+# ``HeapTupleHeaderData``, which also carries a command id, a ctid forward
+# pointer to the next version, and two infomask words of cached flags.
+#
+# On a thirty-byte row that is a 27% overhead, paid by every row whether or not
+# anything ever reads concurrently. It buys the thing that cannot be bought any
+# other way: **a reader never blocks a writer**, because it reads an older
+# version rather than waiting for the newer one.
+#
+# **32-bit transaction ids, deliberately.** PostgreSQL uses 32 bits too, and it
+# is the source of one of its most famous operational hazards: after four
+# billion transactions the counter wraps, and a row's ``xmin`` starts looking
+# like it is in the *future*. PostgreSQL handles that with a circular comparison
+# and an anti-wraparound VACUUM that must freeze old rows before the wrap
+# catches them — a maintenance job that has taken production systems down.
+# ChenDB cannot hit it for a reason worth understanding, spelled out in
+# ``engine/concurrency/snapshot.py``: rollback here physically removes a
+# transaction's work, so every row that survives is from a committed
+# transaction, and a single number in the meta page can declare everything below
+# it frozen.
+
+TUPLE_HEADER_FORMAT: Final[str] = "<II"
+TUPLE_HEADER_SIZE: Final[int] = struct.calcsize(TUPLE_HEADER_FORMAT)  # 8
+
+#: ``xmax`` for a row nobody has deleted. Zero is safe as a sentinel because
+#: transaction ids start at 1 — the same reason ``INVALID_PAGE_ID`` is not 0.
+NO_TRANSACTION_ID: Final = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TupleHeader:
+    """Which transactions created and deleted a row version."""
+
+    xmin: int
+    """The transaction that inserted this version."""
+    xmax: int
+    """The transaction that deleted it, or 0 if none has."""
+
+    @property
+    def deleted(self) -> bool:
+        return self.xmax != NO_TRANSACTION_ID
+
+
+def add_tuple_header(payload: bytes, xmin: int, xmax: int = NO_TRANSACTION_ID) -> bytes:
+    """Prefix an encoded record with its version header."""
+    return struct.pack(TUPLE_HEADER_FORMAT, xmin, xmax) + payload
+
+
+def read_tuple_header(raw: bytes) -> TupleHeader:
+    """Decode the header without touching the row.
+
+    Called once per row per scan, before the visibility check decides whether
+    the row is worth decoding at all — which is the point of putting the header
+    first. A row that is invisible costs eight bytes of unpacking rather than a
+    walk of every column.
+    """
+    if len(raw) < TUPLE_HEADER_SIZE:
+        raise SerializationError(
+            f"record is {len(raw)} bytes, too short for an "
+            f"{TUPLE_HEADER_SIZE}-byte tuple header"
+        )
+    xmin, xmax = struct.unpack_from(TUPLE_HEADER_FORMAT, raw, 0)
+    return TupleHeader(xmin=xmin, xmax=xmax)
+
+
+def strip_tuple_header(raw: bytes) -> bytes:
+    """The encoded row, without its header."""
+    return raw[TUPLE_HEADER_SIZE:]
+
+
+def set_xmax(raw: bytes, xmax: int) -> bytes:
+    """Mark a version deleted, returning the new bytes.
+
+    A delete rewrites eight bytes in place rather than removing the row, which
+    is what lets a transaction that started earlier keep reading it. The slot is
+    reclaimed later — by :meth:`Database.vacuum`, which is the price of never
+    blocking a reader, and the reason PostgreSQL ships an autovacuum daemon.
+    """
+    buf = bytearray(raw)
+    struct.pack_into("<I", buf, 4, xmax)
+    return bytes(buf)

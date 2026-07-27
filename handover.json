@@ -50,7 +50,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 10 \u2014 MVCC, locks, wait-for graph, deadlocks. NOT STARTED. See milestone_10_plan below.",
+    "next": "Finish Milestone 10 \u2014 see status.milestone_10.next_steps_in_order.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -98,6 +98,33 @@
         "recovery_1MiB_log_ms": 2.2
       },
       "boundary": "A committed transaction survives SIGKILL with no sync. An uncommitted one is rolled back on the next open, even after the pool stole its pages. Physical corruption is still only detected \u2014 a log cannot repair damage it has no record of."
+    },
+    "milestone_10": {
+      "state": "IN PROGRESS on branch milestone-10-mvcc. Core modules written and unit-verified by hand; NOT yet integrated, NOT yet committed.",
+      "done": [
+        "engine/serialization/record.py: TUPLE_HEADER (xmin u32, xmax u32, 8 bytes) prepended to every record. add_tuple_header / read_tuple_header / strip_tuple_header / set_xmax. Verified by hand.",
+        "engine/concurrency/snapshot.py: Snapshot, IsolationLevel (READ_COMMITTED = per statement, REPEATABLE_READ = per transaction), visible(), VisibilityStats.",
+        "engine/concurrency/locks.py: LockManager with row-granularity locks, wait-for graph, cycle detection, youngest-victim selection. The VICTIM raises, not the detector. Verified by hand: two threads, cycle found, victim rolled back, survivor granted.",
+        "engine/errors.py: LockTimeout, DeadlockError.",
+        "engine/diagnostics/events.py: LockEvent, DeadlockEvent, SnapshotEvent, VersionEvent. EventCategory.LOCK and .MVCC already existed."
+      ],
+      "next_steps_in_order": [
+        "1. TransactionManager: replace the single _active with a dict of xid -> Transaction. Keep `active` as a per-THREAD current transaction (threading.local) so the existing single-session API still works. Add isolation_level, snapshot, and a set of running ids for Snapshot.take().",
+        "2. Database.insert: wrap the encoded record with add_tuple_header(xmin). Database.delete: set_xmax instead of heap.delete (the row must stay readable by older snapshots). Database.scan: read_tuple_header, apply visible(), strip_tuple_header before decode_record.",
+        "3. Take an EXCLUSIVE lock on f'{table}:{record_id}' before any write, release on commit/rollback via LockManager.release_all(xid).",
+        "4. Database.vacuum(): reclaim versions no snapshot can want (xmax committed and below the oldest active snapshot's xmin). This is what stops the file growing forever.",
+        "5. FORMAT_VERSION 4 -> 5 in engine/storage/constants.py; add a v4 entry to _UPGRADE_HINTS in meta.py. Add frozen_xid to MetaPage (u32 or u64) \u2014 snapshot.py's design REQUIRES it: xids below it are known committed, which is why ChenDB needs no CLOG. Set it at checkpoint (which refuses while a transaction is open, so everything has finished).",
+        "6. EXPECT WIDE TEST FALLOUT from step 2: 8 bytes per row changes page counts, rows-per-page, storage sizes, and the cost model's calibration. Work through tests/ systematically; most will be number updates.",
+        "7. API: sessions. GET /databases/{db}/locks, GET /sessions, POST /sessions. features.mvcc -> true. Version 1.0.0 in engine/__init__.py AND pyproject.toml; add an entry to MILESTONE_FEATURES or test_the_feature_list_has_one_entry_per_milestone fails.",
+        "8. Visualizer: multi-session consoles, version chains, lock table, wait-for graph.",
+        "9. docs/milestone-10-mvcc.md, examples/milestone10_mvcc.py, and updates to roadmap / event-schema / api-contract / performance / README / architecture / storage-format."
+      ],
+      "design_decisions_already_made": [
+        "No commit log (no CLOG). Rollback here physically removes a transaction's work, so every surviving row is from a committed transaction \u2014 the whole commit log collapses into meta.frozen_xid. PostgreSQL cannot do this because it does not undo, which is also why it needs VACUUM FREEZE and has transaction-id wraparound hazards. This contrast is the milestone's best teaching point; it is written up in engine/concurrency/snapshot.py's docstring.",
+        "Row-granularity locks, not page. Page-level would make two transactions inserting into the same heap page conflict, which is most inserts.",
+        "Statements interleave; they do not run concurrently inside the engine. The existing per-database lock still serialises one statement at a time. What is new is that several transactions may be OPEN at once, so a lock held across statements can block another session \u2014 which is exactly what the two-console demonstration shows.",
+        "Deadlock detected, not prevented, and checked immediately rather than after a timeout (PostgreSQL waits 1s; a demo nobody waits for is a demo nobody watches)."
+      ]
     }
   },
   "architecture_invariants": {

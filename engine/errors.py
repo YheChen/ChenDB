@@ -30,7 +30,9 @@ __all__ = [
     "ChenDBError",
     "CorruptDatabaseError",
     "CorruptPageError",
+    "DeadlockError",
     "IndexingError",
+    "LockTimeout",
     "NullConstraintViolation",
     "PageNotFoundError",
     "RecordNotFoundError",
@@ -263,4 +265,25 @@ class QueryCancelledError(ExecutionError):
 
     Raised inside the engine thread at the next checkpoint so operators unwind
     through their normal ``close()`` path rather than being abandoned.
+    """
+
+
+class LockTimeout(TransactionError):
+    """A transaction waited too long for a lock somebody else was holding.
+
+    Not a deadlock — the wait-for graph had no cycle. Something is simply
+    holding a lock for a long time, which for an interactive explorer usually
+    means a session left a transaction open.
+    """
+
+
+class DeadlockError(TransactionError):
+    """Two or more transactions are each waiting for something the other holds.
+
+    Detected by finding a cycle in the wait-for graph, not by giving up after a
+    timeout — the two are distinguishable and conflating them means either
+    killing healthy work or leaving real deadlocks to sit.
+
+    The message names the whole cycle, because being told only that *you*
+    deadlocked leaves the actual question unanswered.
     """
