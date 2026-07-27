@@ -270,6 +270,8 @@ def slot_detail_to_api(slot: SlotDetail) -> SlotDetailModel:
         raw_hex=slot.raw_hex,
         record=record_layout_to_api(slot.record) if slot.record else None,
         decode_error=slot.decode_error,
+        xmin=slot.xmin,
+        xmax=slot.xmax,
     )
 
 

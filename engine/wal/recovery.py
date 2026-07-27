@@ -78,6 +78,9 @@ class RecoveryReport:
     relative to ``pages_redone``, the more work the last checkpoint saved."""
     pages_undone: int = 0
     highest_lsn: int = 0
+    highest_xid: int = 0
+    """The largest transaction id in the log. One past it is where new ids must
+    start: reusing one would make an existing row's ``xmin`` ambiguous."""
     duration_ns: int = 0
     phase_ns: dict[str, int] = field(default_factory=dict)
 
@@ -157,6 +160,7 @@ def _analyse(
     for record in records:
         if record.transaction_id != NO_TRANSACTION:
             seen.add(record.transaction_id)
+            report.highest_xid = max(report.highest_xid, record.transaction_id)
         if record.record_type in (RecordType.COMMIT, RecordType.ABORT):
             finished.add(record.transaction_id)
         report.highest_lsn = max(report.highest_lsn, record.end_lsn)

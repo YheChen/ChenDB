@@ -32,6 +32,7 @@ import pytest
 from engine import Column, Database, DataType, Schema
 from engine.errors import BindingError, TransactionError, UniqueViolation
 from engine.executor.engine import execute_script
+from engine.storage.meta import META_HEADER_SIZE
 from engine.transaction.manager import TransactionManager, TransactionState
 from engine.transaction.undo import MAX_UNDO_BYTES, UndoLog
 
@@ -41,6 +42,10 @@ SCHEMA = Schema.of(
 )
 
 PAGE_SIZE = 512
+
+#: Where the meta page keeps its LSN. Its checksum is always the last four
+#: bytes of the header, so that one is derived from META_HEADER_SIZE.
+_META_LSN = 60
 
 
 @pytest.fixture
@@ -87,14 +92,18 @@ def digest(db: Database) -> str:
 def _without_lsn(page: bytes, page_id: int) -> bytes:
     """One page with its LSN and checksum blanked.
 
-    The two layouts differ: the meta page keeps its LSN at offset 60 and its
-    checksum at 80, every other page at 4 and 0.
+    The two layouts differ, and the offsets are read from the modules that own
+    them rather than written out here — Milestone 9 put the LSN at 60 in the
+    meta page and Milestone 10 pushed the checksum from 80 to 84, and a
+    hardcoded copy silently blanked the wrong four bytes until a rollback test
+    started failing for a reason that had nothing to do with rollback.
     """
     buf = bytearray(page)
     if page_id == 0:
-        buf[60:68] = bytes(8)
-        buf[80:84] = bytes(4)
+        buf[_META_LSN : _META_LSN + 8] = bytes(8)
+        buf[META_HEADER_SIZE - 4 : META_HEADER_SIZE] = bytes(4)
     else:
+        # checksum u32 then lsn u64, at the very front.
         buf[0:12] = bytes(12)
     return bytes(buf)
 

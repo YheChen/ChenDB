@@ -173,6 +173,7 @@ class Pager:
         "_file",
         "_meta",
         "_on_before_write",
+        "_on_checkpoint",
         "_page_size",
         "_path",
         "_pool",
@@ -218,6 +219,10 @@ class Pager:
         self._on_before_write: (
             Callable[[int, Callable[[], bytes], str], WriteIntent | None] | None
         ) = None
+        #: Called at the start of a checkpoint, so the owner can bring the meta
+        #: page up to date before it is written. Milestone 10 uses it to stamp
+        #: ``next_xid``; the pager has no idea what a transaction id is.
+        self._on_checkpoint: Callable[[], None] | None = None
         self._wal: WriteAheadLog | None = None
         self._recovery = RecoveryReport()
 
@@ -305,6 +310,15 @@ class Pager:
     @property
     def stats(self) -> PagerStats:
         return self._stats
+
+    @property
+    def on_checkpoint(self):
+        """Called before a checkpoint writes the meta page. See :meth:`checkpoint`."""
+        return self._on_checkpoint
+
+    @on_checkpoint.setter
+    def on_checkpoint(self, hook) -> None:
+        self._on_checkpoint = hook
 
     @property
     def on_before_write(self):
@@ -472,6 +486,8 @@ class Pager:
         if log is None:
             return 0
 
+        if self._on_checkpoint is not None:
+            self._on_checkpoint()
         started = time.perf_counter_ns()
         reclaimed_before = log.stats.bytes_reclaimed
 

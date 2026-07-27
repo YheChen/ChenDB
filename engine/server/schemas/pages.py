@@ -87,6 +87,17 @@ class SlotDetailModel(ApiModel):
     raw_hex: str
     record: RecordLayoutModel | None = None
     decode_error: str | None = None
+    xmin: int = Field(
+        default=0,
+        description="The transaction that created this version. Zero for a "
+        "catalog row, which is not versioned.",
+    )
+    xmax: int = Field(
+        default=0,
+        description="The transaction that deleted it, or 0. Non-zero on a slot "
+        "that is still live means a **dead version**: physically there, "
+        "invisible to anyone new, and waiting for a vacuum.",
+    )
 
 
 class PageDetailModel(ApiModel):

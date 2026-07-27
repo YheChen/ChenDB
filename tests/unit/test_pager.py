@@ -256,8 +256,8 @@ def test_meta_page_roundtrip():
     assert MetaPage.from_bytes(meta.to_bytes()) == meta
 
 
-def test_meta_header_is_84_bytes_and_the_rest_is_reserved():
-    assert META_HEADER_SIZE == 84
+def test_meta_header_is_88_bytes_and_the_rest_is_reserved():
+    assert META_HEADER_SIZE == 88
     raw = MetaPage(page_size=PAGE_SIZE).to_bytes()
     assert len(raw) == PAGE_SIZE
     assert raw[META_HEADER_SIZE:] == bytes(PAGE_SIZE - META_HEADER_SIZE)

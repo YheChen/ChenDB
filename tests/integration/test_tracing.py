@@ -113,6 +113,11 @@ def test_storage_level_emits_the_expected_event_families(
         EventCategory.BUFFER_POOL,
         # …and through the log from Milestone 9, before it reaches the pool.
         EventCategory.WAL,
+        # Milestone 10: every write is inside a transaction, which takes a row
+        # lock. A *read* takes neither — which is the point, and is why there is
+        # no MVCC category here at this level.
+        EventCategory.TRANSACTION,
+        EventCategory.LOCK,
     }
 
 

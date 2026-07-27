@@ -574,6 +574,33 @@ class Page:
             return None
         return bytes(self._buf[offset : offset + length])
 
+    def overwrite(self, slot_id: int, payload: bytes) -> bool:
+        """Replace a slot's payload **in place**, same length only.
+
+        Same length is the whole reason this can exist. A slotted page cannot
+        grow a record without moving it, and moving it would change its record
+        id — which every index entry points at. Refusing anything but an
+        equal-length write keeps that impossible rather than merely unlikely.
+
+        Milestone 10 is the only caller: marking a row version deleted writes
+        four bytes of ``xmax`` into a header that is already there. PostgreSQL
+        does the same thing to ``t_xmax`` for the same reason, and it is why a
+        DELETE there does not free any space either.
+        """
+        if not 0 <= slot_id < self.slot_count:
+            return False
+        offset, length = self._read_slot(slot_id)
+        if length == 0:
+            return False  # a dead slot has no payload to replace
+        if len(payload) != length:
+            raise ValueError(
+                f"slot {slot_id} holds {length} bytes; refusing to overwrite it "
+                f"with {len(payload)}. A record cannot change size in place — "
+                f"its record id is what indexes point at."
+            )
+        self._buf[offset : offset + length] = payload
+        return True
+
     def delete(self, slot_id: int) -> bool:
         """Tombstone ``slot_id``. Returns ``False`` if it was already dead.
 

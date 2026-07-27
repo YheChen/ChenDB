@@ -80,7 +80,18 @@ from types import TracebackType
 from typing import Any
 
 from engine.catalog.catalog import Catalog, IndexInfo, TableInfo
-from engine.diagnostics.events import DatabaseClosedEvent, DatabaseOpenedEvent
+from engine.concurrency.locks import LockManager, LockMode
+from engine.concurrency.snapshot import (
+    DEFAULT_ISOLATION,
+    IsolationLevel,
+    Snapshot,
+    visible,
+)
+from engine.diagnostics.events import (
+    DatabaseClosedEvent,
+    DatabaseOpenedEvent,
+    VersionEvent,
+)
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import (
     CatalogError,
@@ -93,9 +104,14 @@ from engine.planner.statistics import StatisticsCatalog
 from engine.serialization.record import (
     RecordLayout,
     Row,
+    TupleHeader,
+    add_tuple_header,
     decode_record,
     describe_record,
     encode_record,
+    read_tuple_header,
+    set_xmax,
+    strip_tuple_header,
 )
 from engine.serialization.schema import Schema
 from engine.storage.buffer import DEFAULT_POOL_FRAMES
@@ -109,7 +125,11 @@ from engine.storage.inspect import (
 )
 from engine.storage.page import Page
 from engine.storage.pager import Pager, PagerStats
-from engine.transaction.manager import Transaction, TransactionManager
+from engine.transaction.manager import (
+    DEFAULT_SESSION,
+    Transaction,
+    TransactionManager,
+)
 
 __all__ = ["DATABASE_SUFFIX", "Database"]
 
@@ -124,7 +144,9 @@ class Database:
         "_catalog",
         "_closed",
         "_database_id",
+        "_locks",
         "_pager",
+        "_session",
         "_statistics",
         "_tracer",
         "_transactions",
@@ -144,9 +166,21 @@ class Database:
         self._closed = False
         self._catalog = Catalog(pager, tracer=self._tracer)
         self._statistics = StatisticsCatalog(self, tracer=self._tracer)
-        self._transactions = TransactionManager(tracer=self._tracer)
+        self._session = DEFAULT_SESSION
+        self._locks = LockManager(tracer=self._tracer)
+        # The horizon: every id below it has finished, so every row still on
+        # disk that carries one came from a transaction that committed. The
+        # meta page's copy can lag after a crash — it is only forced at a
+        # checkpoint — so the log's highest id closes the gap.
+        horizon = max(pager.meta.next_xid, pager.recovery.highest_xid + 1, 1)
+        self._transactions = TransactionManager(tracer=self._tracer, frozen_xid=horizon)
+        pager.on_checkpoint = self._stamp_next_xid
         # One hook, and every page change in the engine becomes undoable.
-        pager.on_before_write = self._transactions.before_write
+        # The hook is bound to a session lazily rather than at construction,
+        # because which session is writing changes with `in_session`.
+        pager.on_before_write = lambda page_id, current, reason="": (
+            self._transactions.before_write(page_id, current, reason, self._session)
+        )
         if create and not self._catalog.initialised:
             self._catalog.bootstrap()
 
@@ -199,6 +233,140 @@ class Database:
         """The system catalog. Read it directly for statistics or listings."""
         return self._catalog
 
+    # -- sessions and MVCC -------------------------------------------------
+
+    @property
+    def session(self) -> str:
+        """Which session this handle's calls belong to.
+
+        One handle, one session at a time. The server gives each console its own
+        *view* of the same handle by swapping this around
+        :meth:`in_session` — which works because statements are serialised, and
+        would not if they were not.
+        """
+        return self._session
+
+    @contextmanager
+    def in_session(self, session: str) -> Iterator[Database]:
+        """Run a block as ``session``, restoring the previous one afterwards."""
+        previous = self._session
+        self._session = session
+        try:
+            yield self
+        finally:
+            self._session = previous
+
+    @property
+    def locks(self) -> LockManager:
+        """The lock table. Read it for the lock view; do not lock through it
+        directly — :meth:`insert` and :meth:`delete` already do."""
+        return self._locks
+
+    def snapshot(self) -> Snapshot:
+        """The view this session reads through.
+
+        A session with no transaction open gets a fresh snapshot per call, which
+        is READ COMMITTED behaviour without the transaction — and is what a bare
+        ``SELECT`` from the embedded API has always effectively had.
+        """
+        active = self._transactions.active_in(self._session)
+        if active is None:
+            return Snapshot.take(
+                next_xid=self._transactions.next_xid,
+                active=self._transactions.running_ids(),
+                frozen_xid=self._transactions.frozen_xid,
+            )
+        return self._transactions.snapshot_for(active)
+
+    def _writer_xid(self) -> int:
+        """The transaction id to stamp on a row this session is writing.
+
+        A write outside a transaction opens an implicit one, because a row has
+        to be attributed to *something* — ``xmin`` of zero means "nobody made
+        this", which no snapshot would ever see. That is a change from Milestone
+        9, where a bare embedded write belonged to no transaction at all.
+        """
+        active = self._transactions.active_in(self._session)
+        if active is None:
+            active = self._transactions.begin(implicit=True, session=self._session)
+        active.rows_created += 1
+        return active.transaction_id
+
+    def _lock_row(self, table: str, record_id: RecordId) -> None:
+        """Take an exclusive lock on one row, for as long as the transaction.
+
+        Rows, not pages: page-granularity would make two sessions inserting into
+        the same heap page conflict, which is most inserts, and would make the
+        whole exercise pointless.
+        """
+        active = self._transactions.active_in(self._session)
+        if active is None:
+            return
+        self._locks.acquire(
+            active.transaction_id, f"{table}:{record_id.page_id}.{record_id.slot_id}",
+            LockMode.EXCLUSIVE,
+        )
+        active.locks_held = len(self._locks.held_by(active.transaction_id))
+
+    def _note_skipped(self, table: str, record_id: RecordId, header) -> None:
+        if not self._tracer.verbose:
+            return
+        self._tracer.emit(
+            VersionEvent(
+                transaction_id=self.snapshot().owner,
+                table_name=table,
+                page_id=record_id.page_id,
+                slot_id=record_id.slot_id,
+                action="skipped",
+                xmin=header.xmin,
+                xmax=header.xmax,
+            )
+        )
+
+    def vacuum(self, table: str | None = None) -> int:
+        """Reclaim versions no snapshot can want again. Returns how many.
+
+        A version is dead when its ``xmax`` is a committed transaction that
+        every open snapshot can already see — meaning nobody left could still be
+        reading the row as it was before the delete.
+        :meth:`TransactionManager.oldest_snapshot_xmin` is that horizon, and a
+        single long-running transaction holds it down and stops this making
+        progress. That is not a flaw in the implementation; it is the same
+        mechanism behind PostgreSQL's most common "why is my disk full".
+
+        Manual, because a background daemon in a teaching engine would make the
+        row counts move on their own while somebody was reading them.
+        """
+        self._ensure_open()
+        horizon = self._transactions.oldest_snapshot_xmin()
+        names = [table] if table else [info.name for info in self._catalog.list_tables()]
+
+        reclaimed = 0
+        for name in names:
+            info = self.require_table(name)
+            heap = self._catalog.heap_for(info.name)
+            dead = [
+                record_id
+                for record_id, payload in heap.scan()
+                if _is_dead(read_tuple_header(payload), horizon)
+            ]
+            for record_id in dead:
+                if heap.delete(record_id):
+                    reclaimed += 1
+                    if self._tracer.verbose:
+                        self._tracer.emit(
+                            VersionEvent(
+                                transaction_id=0,
+                                table_name=info.name,
+                                page_id=record_id.page_id,
+                                slot_id=record_id.slot_id,
+                                action="reclaimed",
+                                xmin=0,
+                                xmax=0,
+                            )
+                        )
+        return reclaimed
+
     # -- transactions ------------------------------------------------------
 
     @property
@@ -208,12 +376,19 @@ class Database:
 
     @property
     def in_transaction(self) -> bool:
-        return self._transactions.in_transaction
+        return self._transactions.in_transaction_in(self._session)
 
-    def begin(self, *, implicit: bool = False) -> Transaction:
-        """Open a transaction, so the writes that follow can be taken back."""
+    def begin(
+        self,
+        *,
+        implicit: bool = False,
+        isolation: IsolationLevel = DEFAULT_ISOLATION,
+    ) -> Transaction:
+        """Open a transaction for this session, so its writes can be taken back."""
         self._ensure_open()
-        return self._transactions.begin(implicit=implicit)
+        return self._transactions.begin(
+            implicit=implicit, session=self._session, isolation=isolation
+        )
 
     def commit(self) -> Transaction:
         """Accept the work. Durability is still :meth:`sync`'s job.
@@ -225,12 +400,13 @@ class Database:
         returned transaction reports ``aborted``, so nothing has to guess.
         """
         self._ensure_open()
-        if self._transactions.is_failed:
+        if self._transactions.is_failed_in(self._session):
             return self.rollback()
-        transaction = self._transactions.commit()
+        transaction = self._transactions.commit(self._session)
         # After the manager, not before: a commit record for a transaction the
         # manager then refused would be a durable lie.
         self._pager.log_commit(transaction.transaction_id)
+        self._locks.release_all(transaction.transaction_id)
         return transaction
 
     def rollback(self) -> Transaction:
@@ -249,11 +425,12 @@ class Database:
           on disk.
         """
         self._ensure_open()
-        active = self._transactions.active
+        active = self._transactions.active_in(self._session)
         if active is not None and active.undo.overflowed:
             self._restore_from_wal(active.transaction_id)
-        transaction = self._transactions.rollback(self._restore_page)
+        transaction = self._transactions.rollback(self._restore_page, self._session)
         self._pager.log_abort(transaction.transaction_id)
+        self._locks.release_all(transaction.transaction_id)
         self._pager.reload_meta()
         self._catalog.invalidate()
         self._statistics.invalidate()
@@ -293,13 +470,25 @@ class Database:
         way to see what a checkpoint is for.
         """
         self._ensure_open()
-        if self._transactions.in_transaction:
+        if self._transactions.any_open:
             raise TransactionError(
                 "cannot checkpoint with a transaction open: truncating the log "
                 "would discard the before-images that transaction needs to roll "
                 "back. Commit or roll back first."
             )
         return self._pager.checkpoint()
+
+    def _stamp_next_xid(self) -> None:
+        """Bring the meta page's ``next_xid`` up to date, before a checkpoint.
+
+        A checkpoint refuses to run while any transaction is open, so at this
+        moment every transaction so far has finished — and because a rollback
+        physically removes its work, every row still on disk belongs to one that
+        committed. That is exactly the condition the horizon asserts, and this
+        is the only instant it holds.
+        """
+        self._pager.meta.next_xid = self._transactions.next_xid
+        self._transactions.frozen_xid = self._transactions.next_xid
 
     def _restore_from_wal(self, transaction_id: int) -> None:
         """Put back the pages the in-memory undo log could not hold.
@@ -467,7 +656,7 @@ class Database:
         heap = self._catalog.heap_for(info.name)
         tree = self._catalog.tree_for(index.name)
         return [
-            decode_record(info.schema, heap.get(record_id))
+            decode_record(info.schema, strip_tuple_header(heap.get(record_id)))
             for record_id in tree.search(index.encode(value))
         ]
 
@@ -494,9 +683,26 @@ class Database:
         heap = self._catalog.heap_for(info.name)
         indexes = self._catalog.list_indexes(info.name)
 
+        # One transaction for the whole call, committed on the way out — which
+        # Milestone 10 made necessary rather than merely tidy. A row's ``xmin``
+        # has to name a *committed* transaction before anyone else can see it,
+        # so a bare embedded write that left its transaction open would write
+        # rows nobody but that handle could ever read.
+        with self.transaction():
+            return self._insert_all(info, heap, indexes, rows)
+
+    def _insert_all(self, info, heap, indexes, rows) -> list[RecordId]:
+        xid = self._writer_xid()
         record_ids: list[RecordId] = []
         for row in rows:
-            record_id = heap.insert(encode_record(info.schema, row))
+            # The tuple header goes on here rather than in the heap, because the
+            # heap deals in opaque payloads and has no business knowing what a
+            # transaction is. Everything above this line is MVCC; everything
+            # below it is Milestone 1.
+            record_id = heap.insert(
+                add_tuple_header(encode_record(info.schema, row), xid)
+            )
+            self._lock_row(info.name, record_id)
             record_ids.append(record_id)
             for index in indexes:
                 self._catalog.tree_for(index.name).insert(
@@ -505,27 +711,74 @@ class Database:
         return record_ids
 
     def get(self, table: str, record_id: RecordId) -> Row:
-        """Fetch and decode one row by its physical address."""
+        """Fetch and decode one row by its physical address.
+
+        By *address*, so no visibility check: the caller named a specific
+        version and gets it. :meth:`version_at` is the same fetch with the
+        header attached, for anyone who needs to know whose it is.
+        """
         info = self.require_table(table)
-        return decode_record(info.schema, self._catalog.heap_for(info.name).get(record_id))
+        payload = self._catalog.heap_for(info.name).get(record_id)
+        return decode_record(info.schema, strip_tuple_header(payload))
+
+    def version_at(self, table: str, record_id: RecordId) -> tuple[TupleHeader, Row]:
+        """One version, with the transactions that created and deleted it.
+
+        What the row inspector shows, and the only way to see a version the
+        current snapshot cannot.
+        """
+        info = self.require_table(table)
+        payload = self._catalog.heap_for(info.name).get(record_id)
+        return read_tuple_header(payload), decode_record(
+            info.schema, strip_tuple_header(payload)
+        )
 
     def describe(self, table: str, record_id: RecordId) -> RecordLayout:
         """Fetch one row along with each column's byte range."""
         info = self.require_table(table)
-        return describe_record(
-            info.schema, self._catalog.heap_for(info.name).get(record_id)
-        )
+        payload = self._catalog.heap_for(info.name).get(record_id)
+        return describe_record(info.schema, strip_tuple_header(payload))
 
     def scan(self, table: str) -> Iterator[tuple[RecordId, Row]]:
-        """Yield every live row of ``table``, lazily, in physical order.
+        """Yield every row of ``table`` **visible to this reader**, lazily.
 
-        Physical order is *not* insertion order after deletes: a tombstoned slot
+        Physical order is *not* insertion order after deletes: a reclaimed slot
         can be reused by a later row. Heaps are unordered by definition, which is
         why ``SELECT`` without ``ORDER BY`` guarantees nothing.
+
+        Since Milestone 10 the heap holds *versions*, not rows, and this filters
+        them against a snapshot. A version created by a transaction that has not
+        committed, or deleted by one that has, is walked past — which is what
+        lets a reader never wait for a writer, and what makes a scan's cost
+        depend on how much dead weight nobody has vacuumed yet.
+
+        **No lock is taken.** That is the whole of MVCC in one sentence.
         """
         info = self.require_table(table)
-        for record_id, payload in self._catalog.heap_for(info.name).scan():
-            yield record_id, decode_record(info.schema, payload)
+        heap = self._catalog.heap_for(info.name)
+
+        if info.is_system:
+            # The catalog's own tables carry no tuple header and are not
+            # versioned. They do not need to be: a rolled-back CREATE TABLE is
+            # undone by restoring the *page*, so there is never a catalog row a
+            # reader might want an older version of. Versioning them would cost
+            # eight bytes on every column definition to represent a history that
+            # cannot be observed.
+            #
+            # PostgreSQL does the opposite — pg_class rows are MVCC tuples like
+            # any other — because it has no undo and therefore no other way to
+            # take a failed DDL back.
+            for record_id, payload in heap.scan():
+                yield record_id, decode_record(info.schema, payload)
+            return
+
+        snapshot = self.snapshot()
+        for record_id, payload in heap.scan():
+            header = read_tuple_header(payload)
+            if not visible(header, snapshot):
+                self._note_skipped(info.name, record_id, header)
+                continue
+            yield record_id, decode_record(info.schema, strip_tuple_header(payload))
 
     def rows(self, table: str) -> list[Row]:
         """Materialise every row. Convenience for tests and small tables."""
@@ -544,19 +797,50 @@ class Database:
         heap = self._catalog.heap_for(info.name)
         indexes = self._catalog.list_indexes(info.name)
 
+        with self.transaction():
+            return self._delete_one(info, heap, indexes, record_id)
+
+    def _delete_one(self, info, heap, indexes, record_id: RecordId) -> bool:
+        try:
+            payload = heap.get(record_id)
+        except RecordNotFoundError:
+            return False
+
+        header = read_tuple_header(payload)
+        if header.deleted:
+            return False  # already a dead version
+
+        xid = self._writer_xid()
+        self._lock_row(info.name, record_id)
+
         if indexes:
-            try:
-                values = decode_record(info.schema, heap.get(record_id))
-            except RecordNotFoundError:
-                return False
+            values = decode_record(info.schema, strip_tuple_header(payload))
             for index in indexes:
                 self._catalog.tree_for(index.name).delete(
                     index.encode(values[index.column_position]), record_id
                 )
-        return heap.delete(record_id)
+
+        # Eight bytes, not a tombstone. The version stays readable by any
+        # snapshot older than this transaction — which is the point — and the
+        # slot is reclaimed later by vacuum(). PostgreSQL does exactly this and
+        # ships a daemon to do the reclaiming.
+        heap.replace(record_id, set_xmax(payload, xid))
+        active = self._transactions.active_in(self._session)
+        if active is not None:
+            active.rows_deleted += 1
+        return True
 
     def count(self, table: str) -> int:
-        """Live row count. O(pages) — there is no cached count."""
+        """Rows visible to this reader. O(pages) — there is no cached count.
+
+        Not the same as the number of *versions* on disk, and the gap between
+        them is what vacuum reclaims. :meth:`version_count` reports the other
+        number, so the difference is inspectable rather than mysterious.
+        """
+        return sum(1 for _ in self.scan(table))
+
+    def version_count(self, table: str) -> int:
+        """Every version physically present, visible or not."""
         info = self.require_table(table)
         return self._catalog.heap_for(info.name).count()
 
@@ -673,8 +957,9 @@ class Database:
         """
         if self._closed:
             return
-        if self._transactions.in_transaction:
-            self.rollback()
+        for session in self._transactions.sessions():
+            with self.in_session(session):
+                self.rollback()
         if self._tracer.summary:
             self._tracer.emit(
                 DatabaseClosedEvent(
@@ -708,3 +993,13 @@ class Database:
             f"<Database {self._database_id!r} {state} "
             f"tables={tables} pages={self._pager.page_count}>"
         )
+
+
+def _is_dead(header, horizon: int) -> bool:
+    """True when no open snapshot could still want this version.
+
+    Deleted, and deleted by a transaction old enough that every snapshot alive
+    has already seen the deletion. A version deleted by a *newer* transaction is
+    still needed by anyone whose snapshot predates it.
+    """
+    return header.deleted and header.xmax < horizon
