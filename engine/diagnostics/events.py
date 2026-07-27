@@ -29,12 +29,14 @@ __all__ = [
     "CostEstimateEvent",
     "DatabaseClosedEvent",
     "DatabaseOpenedEvent",
+    "DeadlockEvent",
     "DiagnosticEvent",
     "FileSyncEvent",
     "HeapScanEvent",
     "IndexCreatedEvent",
     "IndexDescentEvent",
     "IndexSearchEvent",
+    "LockEvent",
     "LogicalPlanEvent",
     "NodeMergeEvent",
     "NodeSplitEvent",
@@ -51,9 +53,11 @@ __all__ = [
     "RecordReadEvent",
     "RecoveryActionEvent",
     "RecoveryPhaseEvent",
+    "SnapshotEvent",
     "StatisticsGatheredEvent",
     "TransactionEvent",
     "UndoRecordEvent",
+    "VersionEvent",
     "WalAppendEvent",
     "WalFlushEvent",
 ]
@@ -870,3 +874,86 @@ class RecoveryActionEvent(DiagnosticEvent):
     page_id: int
     decision: RecoveryDecision
     reason: str
+
+
+# -- Milestone 10: concurrency ---------------------------------------------
+
+LockAction = Literal["requested", "granted", "waiting", "released", "upgraded"]
+LockModeName = Literal["shared", "exclusive"]
+
+
+@dataclass(frozen=True, slots=True)
+class LockEvent(DiagnosticEvent):
+    """A lock was asked for, granted, waited on, or let go.
+
+    ``waiting`` is the one worth watching. Under MVCC a reader never appears
+    here at all, so every event is a writer — and a ``waiting`` is two writers
+    that genuinely collide, which row-level locking is supposed to make rare.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.LOCK
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    transaction_id: int
+    resource: str
+    mode: LockModeName
+    action: LockAction
+
+
+@dataclass(frozen=True, slots=True)
+class DeadlockEvent(DiagnosticEvent):
+    """A cycle was found in the wait-for graph.
+
+    ``SUMMARY``, and never filtered out: a deadlock is a transaction being
+    killed to break a tie, and a user who cannot see that happen has no way to
+    understand why their statement failed.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.LOCK
+    level: ClassVar[TraceLevel] = TraceLevel.SUMMARY
+
+    cycle: tuple[int, ...]
+    """The transactions in the cycle, in the order the search walked them."""
+    victim: int
+    """The one rolled back — the youngest, so the least work is lost."""
+    waiters: int
+    """Transactions blocked at the moment the cycle was found, cycle or not."""
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotEvent(DiagnosticEvent):
+    """A transaction took a view of the database.
+
+    Once per transaction under REPEATABLE READ, once per *statement* under READ
+    COMMITTED — which is the entire difference between the two levels, and the
+    only place it is observable.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.MVCC
+    level: ClassVar[TraceLevel] = TraceLevel.OPERATOR
+
+    transaction_id: int
+    isolation_level: str
+    xmin: int
+    xmax: int
+    active_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class VersionEvent(DiagnosticEvent):
+    """A row version was created, deleted, or skipped as invisible.
+
+    ``skipped`` is what MVCC costs a reader: a version physically on the page
+    that this snapshot must walk past. If it keeps growing, vacuum is overdue.
+    """
+
+    category: ClassVar[EventCategory] = EventCategory.MVCC
+    level: ClassVar[TraceLevel] = TraceLevel.VERBOSE
+
+    transaction_id: int
+    table_name: str
+    page_id: int
+    slot_id: int
+    action: Literal["created", "deleted", "skipped", "reclaimed"]
+    xmin: int
+    xmax: int

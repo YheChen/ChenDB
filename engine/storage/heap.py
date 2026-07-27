@@ -97,6 +97,9 @@ class HeapStats:
 
     inserts: int = 0
     deletes: int = 0
+    replacements: int = 0
+    """In-place, same-length overwrites. Milestone 10's deletes are these:
+    four bytes of ``xmax`` into a header, leaving the row readable."""
     reads: int = 0
     scans: int = 0
     pages_allocated: int = 0
@@ -254,6 +257,22 @@ class HeapFile:
                     page_id=record_id.page_id, slot_id=record_id.slot_id
                 )
             )
+        return True
+
+    def replace(self, record_id: RecordId, payload: bytes) -> bool:
+        """Overwrite a record in place. Same length only.
+
+        Added for Milestone 10, whose deletes rewrite a tuple header rather than
+        removing anything. The length restriction is inherited from
+        :meth:`Page.overwrite` and is not negotiable: a record that changed size
+        would have to move, and moving it would invalidate every index entry
+        pointing at its record id.
+        """
+        page = self._pager.read_page(record_id.page_id)
+        if not page.overwrite(record_id.slot_id, payload):
+            return False
+        self._pager.write_page(page)
+        self._stats.replacements += 1
         return True
 
     # -- reads -------------------------------------------------------------

@@ -23,6 +23,7 @@ from engine.server.executions import ExecutionStore
 from engine.server.routers import (
     buffer,
     catalog,
+    concurrency,
     databases,
     events,
     indexes,
@@ -58,7 +59,7 @@ FEATURES: dict[str, bool] = {
     "buffer_pool": True,  # Milestone 7 — frames, write-back, LRU
     "transactions": True,  # Milestone 8 — undo log, BEGIN/COMMIT/ROLLBACK
     "wal": True,  # Milestone 9 — log, checkpoints, ARIES recovery
-    "mvcc": False,  # Milestone 10
+    "mvcc": True,  # Milestone 10 — row versions, snapshots, locks
 }
 
 _DESCRIPTION = """
@@ -144,6 +145,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(buffer.router, prefix=API_PREFIX)
     app.include_router(transactions.router, prefix=API_PREFIX)
     app.include_router(wal.router, prefix=API_PREFIX)
+    app.include_router(concurrency.router, prefix=API_PREFIX)
     app.include_router(pages.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(sql.router, prefix=API_PREFIX)

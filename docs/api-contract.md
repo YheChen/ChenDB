@@ -339,7 +339,89 @@ is scoped to one database in the workspace the server was pointed at, and it
 cannot touch anything the engine promised to keep — every committed row survives,
 because its commit record was `fsync`ed when it committed.
 
-Arriving later: `/locks` (10).
+### Milestone 10 — MVCC and concurrency
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/databases/{db}/locks` | the lock table and the wait-for graph |
+| `GET` | `/databases/{db}/sessions` | every console's transaction and snapshot |
+| `POST` | `/databases/{db}/vacuum` | reclaim versions no snapshot can want |
+
+Plus a **`?session=` query parameter** on `/query` and the three `/transactions`
+endpoints. That parameter is the whole of the multi-console feature from a
+client's point of view: two browser tabs passing different sessions get
+different transactions, see different rows, and can block each other.
+
+A session is *not* a resource the server allocates and hands back — it is a
+label saying which transaction a statement belongs to. Inventing a
+create/destroy lifecycle for a label would be ceremony with no state behind it,
+so there is no `POST /sessions`. Omitting the parameter means the default
+session, which is what every request before Milestone 10 was doing implicitly.
+
+It is in the query string rather than a cookie so it stays visible in a request
+log and in the explorer's own URL, and it is validated against the same
+pattern a database id is, for the same reason: it lands in a URL.
+
+```json
+{
+  "entries": [
+    { "resource": "users:4.3",
+      "holders": { "3": "exclusive" },
+      "waiters": [5] }
+  ],
+  "wait_for": [ { "waiter": 5, "blockers": [3] } ],
+  "stats": { "granted": 4, "released": 3, "waits": 1,
+             "timeouts": 0, "deadlocks": 0 },
+  "readers_blocked": 0
+}
+```
+
+**`readers_blocked` is always zero, and is shipped anyway.** A field that never
+changes looks like an oversight until you know it *must* be: under MVCC a reader
+takes no lock, so there is nothing that could block one. The API saying so is
+more useful than the API being silent.
+
+**`wait_for` is an adjacency list**, not a list of pairs and not a rendered
+picture. A cycle is the only thing anybody reads one of these for, and a client
+with the adjacency can find one.
+
+**Resources are `table:page.slot`** — one row. Not a page and not a table: page
+granularity would make two sessions inserting into the same heap page conflict,
+which is most inserts.
+
+```json
+{
+  "sessions": [
+    { "session": "alice", "transaction_id": 4, "state": "active",
+      "isolation_level": "read committed",
+      "snapshot": "xmin=3 xmax=5 active={3,4}",
+      "snapshots_taken": 1, "statements": 1,
+      "rows_created": 0, "rows_deleted": 0,
+      "locks_held": 0, "waiting_for": [] }
+  ],
+  "frozen_xid": 1, "next_xid": 5, "oldest_snapshot_xmin": 3
+}
+```
+
+**`snapshots_taken` is where the isolation level becomes observable.** One per
+transaction under repeatable read, one per statement under read committed —
+that is the entire difference between them.
+
+**`oldest_snapshot_xmin` is vacuum's horizon.** Nothing deleted at or above it
+can be reclaimed, so a single long-running transaction holds it down and stops
+vacuum making progress. Same mechanism as PostgreSQL's most common "why is my
+disk full".
+
+`POST /vacuum` reuses `CheckpointResponse`, because it answers the same question
+in the same units — how much came back — and a second near-identical model would
+only be two things to keep in step. `bytes_reclaimed` counts *versions*.
+
+### Row versions on the page inspector
+
+`SlotDetailModel` gained `xmin` and `xmax`. A slot that is `is_live` with a
+non-zero `xmax` is a **dead version**: physically present, invisible to any new
+reader, waiting for a vacuum. That is what a delete leaves behind since
+Milestone 10, and it is what PostgreSQL's page inspector shows too.
 
 ## Errors
 

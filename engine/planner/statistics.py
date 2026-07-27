@@ -71,7 +71,7 @@ from typing import TYPE_CHECKING, Any
 
 from engine.diagnostics.events import StatisticsGatheredEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
-from engine.serialization.record import decode_record
+from engine.serialization.record import decode_record, strip_tuple_header
 from engine.serialization.types import DataType
 
 if TYPE_CHECKING:
@@ -211,7 +211,11 @@ class StatisticsCatalog:
 
         for _, payload in heap.scan():
             row_count += 1
-            for position, value in enumerate(decode_record(info.schema, payload)):
+            # Every version, visible or not. Statistics describe what is on
+            # disk, and the planner is costing page reads — which a dead
+            # version costs just as much as a live one.
+            row = decode_record(info.schema, strip_tuple_header(payload))
+            for position, value in enumerate(row):
                 if value is None:
                     nulls[position] += 1
                     continue

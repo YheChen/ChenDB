@@ -39,6 +39,8 @@ import type {
   CrashResponse,
   RecoveryReportModel,
   WalResponse,
+  LockTableResponse,
+  SessionListResponse,
 } from "@/types/api";
 
 export const API_PREFIX = "/api/v1";
@@ -138,6 +140,18 @@ const json = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+/**
+ * ``?session=alice``, or nothing at all.
+ *
+ * Omitted rather than sent as ``default``, so a request from a single-console
+ * view looks in the log exactly as it did before Milestone 10 — the server's
+ * default and this one's absence have to mean the same thing, and the cheapest
+ * way to guarantee that is to have only one of them.
+ */
+function qs(session?: string): string {
+  return session ? `?session=${encodeURIComponent(session)}` : "";
+}
+
 export const api = {
   health: () => request<HealthResponse>("/health"),
 
@@ -185,9 +199,9 @@ export const api = {
   parseSql: (id: string, sql: string) =>
     request<ParseResponse>(`/databases/${id}/parse`, json({ sql })),
 
-  runQuery: (id: string, sql: string, maxRows?: number) =>
+  runQuery: (id: string, sql: string, maxRows?: number, session?: string) =>
     request<QueryResultModel[]>(
-      `/databases/${id}/query`,
+      `/databases/${id}/query${qs(session)}`,
       json({ sql, ...(maxRows ? { max_rows: maxRows } : {}) }),
     ),
 
@@ -249,6 +263,15 @@ export const api = {
   getBufferPool: (id: string) =>
     request<BufferPoolResponse>(`/databases/${id}/buffer-pool`),
 
+  getLocks: (id: string) =>
+    request<LockTableResponse>(`/databases/${id}/locks`),
+
+  getSessions: (id: string) =>
+    request<SessionListResponse>(`/databases/${id}/sessions`),
+
+  vacuum: (id: string) =>
+    request<CheckpointResponse>(`/databases/${id}/vacuum`, { method: "POST" }),
+
   getWal: (id: string, limit = 200) =>
     request<WalResponse>(`/databases/${id}/wal?limit=${limit}`),
 
@@ -256,30 +279,34 @@ export const api = {
     request<RecoveryReportModel>(`/databases/${id}/recovery`),
 
   checkpoint: (id: string) =>
-    request<CheckpointResponse>(`/databases/${id}/checkpoint`, { method: "POST" }),
+    request<CheckpointResponse>(`/databases/${id}/checkpoint`, {
+      method: "POST",
+    }),
 
   crash: (id: string) =>
     request<CrashResponse>(`/databases/${id}/crash`, { method: "POST" }),
 
-  getTransactions: (id: string) =>
-    request<TransactionListResponse>(`/databases/${id}/transactions`),
+  getTransactions: (id: string, session?: string) =>
+    request<TransactionListResponse>(
+      `/databases/${id}/transactions${qs(session)}`,
+    ),
 
-  beginTransaction: (id: string) =>
-    request<TransactionResultResponse>(`/databases/${id}/transactions`, {
-      method: "POST",
-    }),
-
-  commitTransaction: (id: string) =>
-    request<TransactionResultResponse>(`/databases/${id}/transactions/commit`, {
-      method: "POST",
-    }),
-
-  rollbackTransaction: (id: string) =>
+  beginTransaction: (id: string, session?: string) =>
     request<TransactionResultResponse>(
-      `/databases/${id}/transactions/rollback`,
-      {
-        method: "POST",
-      },
+      `/databases/${id}/transactions${qs(session)}`,
+      { method: "POST" },
+    ),
+
+  commitTransaction: (id: string, session?: string) =>
+    request<TransactionResultResponse>(
+      `/databases/${id}/transactions/commit${qs(session)}`,
+      { method: "POST" },
+    ),
+
+  rollbackTransaction: (id: string, session?: string) =>
+    request<TransactionResultResponse>(
+      `/databases/${id}/transactions/rollback${qs(session)}`,
+      { method: "POST" },
     ),
 
   listPages: (id: string) =>

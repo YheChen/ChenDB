@@ -19,7 +19,12 @@ from types import MappingProxyType
 from typing import Any, Final
 
 from engine.errors import ChenDBError
-from engine.serialization.record import RecordLayout, describe_record
+from engine.serialization.record import (
+    RecordLayout,
+    describe_record,
+    read_tuple_header,
+    strip_tuple_header,
+)
 from engine.serialization.schema import Schema
 from engine.storage.constants import INVALID_PAGE_ID, META_PAGE_ID, PageType
 from engine.storage.meta import META_HEADER_SIZE, MetaPage
@@ -90,6 +95,14 @@ class SlotDetail:
     raw_hex: str
     record: RecordLayout | None = None
     decode_error: str | None = None
+    xmin: int = 0
+    """The transaction that created this version. Zero for a catalog row, which
+    is not versioned — a rolled-back ``CREATE TABLE`` is undone by restoring the
+    page, so the catalog never needs a version it could be rolled back to."""
+    xmax: int = 0
+    """The transaction that deleted it, or 0. A non-zero ``xmax`` on a slot that
+    is still ``is_live`` is a *dead version*: physically present, invisible to
+    anyone new, and waiting for a vacuum."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,9 +363,16 @@ def inspect_page(
         payload = raw[info.offset : info.offset + info.length] if info.is_live else b""
         record: RecordLayout | None = None
         decode_error: str | None = None
+        xmin = xmax = 0
         if info.is_live and schema is not None:
             try:
-                record = describe_record(schema, payload)
+                # The tuple header is stripped before the schema sees it, and
+                # reported separately — a row inspector that could not show
+                # xmin and xmax would be hiding the only thing that explains
+                # why a row is or is not in a result.
+                header = read_tuple_header(payload)
+                record = describe_record(schema, strip_tuple_header(payload))
+                xmin, xmax = header.xmin, header.xmax
             except ChenDBError as exc:
                 decode_error = str(exc)
         slots.append(
@@ -364,6 +384,8 @@ def inspect_page(
                 raw_hex=payload.hex(),
                 record=record,
                 decode_error=decode_error,
+                xmin=xmin,
+                xmax=xmax,
             )
         )
 

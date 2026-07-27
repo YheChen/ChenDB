@@ -50,7 +50,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestone 10 \u2014 MVCC, locks, wait-for graph, deadlocks. NOT STARTED. See milestone_10_plan below.",
+    "next": "All ten milestones are complete. Nothing is queued. The edges of what was deliberately not built are listed at the end of each milestone doc, and docs/roadmap.md's 'Deliberately unscheduled' section covers the rest.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -98,6 +98,20 @@
         "recovery_1MiB_log_ms": 2.2
       },
       "boundary": "A committed transaction survives SIGKILL with no sync. An uncommitted one is rolled back on the next open, even after the pool stole its pages. Physical corruption is still only detected \u2014 a log cannot repair damage it has no record of."
+    },
+    "milestone_10": {
+      "state": "COMPLETE on branch milestone-10-mvcc; PR pending",
+      "shipped": "8-byte tuple header (xmin/xmax) on every user-table row; engine/concurrency/{snapshot,locks}.py with snapshot isolation, READ COMMITTED and REPEATABLE READ, row-granularity locks, wait-for graph and deadlock detection; TransactionManager holds one transaction per session; Database.vacuum; meta format version 5 with next_xid as the frozen horizon; GET /locks, GET /sessions, POST /vacuum plus a ?session= parameter on /query and /transactions; a two-console MVCC workspace. docs/milestone-10-mvcc.md, examples/milestone10_mvcc.py.",
+      "measured": {
+        "tuple_header_bytes": 8,
+        "overhead_on_a_20_byte_row": "29%",
+        "read_tuple_header_ns": 250,
+        "visible_ns": 83,
+        "scan_clean_ns_per_row": 1427,
+        "scan_half_dead_ns_per_live_row": 2043,
+        "lock_acquire_uncontended_ns": 958
+      },
+      "boundary": "Snapshot isolation, not serializable \u2014 write skew is possible. Statements do not run at the same instant; several transactions are open at once and genuinely conflict, but the engine still runs one statement at a time. No UPDATE, so version chains are one deep. No lock escalation, no autovacuum, and indexes do not carry visibility."
     }
   },
   "architecture_invariants": {
@@ -192,7 +206,15 @@
     "WAL record coalescing only applies to the immediately preceding STAGED record. Once flushed, a page carrying that LSN may be on disk and rewriting the record behind it would desynchronise them. This optimisation is the difference between a 197x and a 5x log.",
     "UndoLog.capture marks a page captured even when it has no room for the bytes. First-write-wins is a DECISION, and the WAL asks the same question through has(). Letting it lapse made the log record mid-transaction states each claiming to be the rollback target.",
     "Pager.abandon() / Database.abandon() / Workspace.crash() lose data on purpose \u2014 they are the crash button. Never call them from a normal path.",
-    "The direct Python API (db.insert, db.create_table) does NOT open an implicit transaction; only the SQL layer does. So a bare db.insert() is not committed and not durable until sync(). engine/database.py's docstring says so."
+    "The direct Python API (db.insert, db.create_table) does NOT open an implicit transaction; only the SQL layer does. So a bare db.insert() is not committed and not durable until sync(). engine/database.py's docstring says so.",
+    "Rows carry an 8-byte tuple header (xmin u32, xmax u32) BEFORE the null bitmap. Anything that reads a heap payload must strip_tuple_header() before decode_record(). Missing one produces 'record has N trailing bytes after decoding K columns' \u2014 that message means a missed strip, not a schema problem.",
+    "The catalog's own tables carry NO tuple header and are not versioned; Database.scan branches on info.is_system. A rolled-back CREATE TABLE is undone by restoring the page, so there is never a catalog row anybody wants an older version of.",
+    "read_page_lsn / snapshot horizons: 0 is a REAL transaction id boundary. meta.next_xid becomes frozen_xid on open, and a row with xmin >= that is invisible. If rows vanish after a reopen, next_xid was not persisted \u2014 it is stamped by Pager.on_checkpoint, which Database sets to _stamp_next_xid.",
+    "UndoLog.capture and the MVCC first-write-wins rule share the same `_captured` set. Marking a page captured must not depend on there being room for its bytes.",
+    "A delete no longer tombstones: it rewrites xmax in place via Page.overwrite, which REFUSES anything but an equal-length write because a record that changed size would have to move and invalidate every index entry pointing at its record id.",
+    "Database.in_session(name) swaps the current session for a block. The pager's on_before_write hook reads self._session lazily for exactly this reason \u2014 binding it at construction would freeze the session.",
+    "MILESTONE is major * 10 + minor, because 1.0.0 is Milestone 10 and there is no 0.10.0 that sorts after 0.9.0.",
+    "The lock manager's victim is the YOUNGEST transaction, and the victim is the one that raises \u2014 not the detector. Changing that would make the loser depend on thread scheduling."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -203,32 +225,5 @@
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py."
-  },
-  "milestone_10_plan": {
-    "goal": "More than one writer, and readers that do not block them.",
-    "engine": [
-      "Tuple headers gain xmin/xmax \u2014 format version 5. docs/roadmap.md already reserves this. Every row read grows a visibility test against a snapshot, which is the first thing since Milestone 1 to make the scan path itself more expensive.",
-      "engine/concurrency/: lock manager (shared/exclusive), wait-for graph, deadlock detection. LockEvent is already specified in docs/event-schema.md.",
-      "TransactionManager currently holds exactly ONE transaction and says so in its docstring. That is the central thing this milestone replaces.",
-      "ManagedDatabase._lock in engine/server/workspace.py serialises every request onto one engine thread. Multi-session consoles need that boundary rethought.",
-      "Isolation levels become real: TransactionEvent has no isolation_level field because with one writer it would read SERIALIZABLE forever. Add it here.",
-      "Group commit: several committers share one fsync. Measured ceiling today is ~11,300 commits/s, entirely the fsync \u2014 see docs/performance.md.",
-      "Page-granularity conflicts are the wall. Two transactions writing different rows of the same page conflict at page level today.",
-      "The WAL's before-images are the right data in the wrong place for MVCC read views \u2014 in memory, and discarded at commit. InnoDB reuses undo records for exactly this."
-    ],
-    "api": [
-      "GET /databases/{db}/locks \u2014 the lock table and the wait-for graph",
-      "Sessions: the API is currently one shared handle per database. Multi-session consoles need a session id in the path or a connection concept.",
-      "features.mvcc -> true; bump engine/__init__.py and pyproject.toml to 1.0.0 and MILESTONE follows automatically.",
-      "MILESTONE_FEATURES must gain an entry or the boundaries test fails."
-    ],
-    "visualizer": [
-      "Multi-session consoles, version chains, lock table, deadlock visualisation."
-    ],
-    "watch_out": [
-      "Database.checkpoint() refuses while a transaction is open. With concurrent transactions that becomes 'refuse while ANY is open', which may never be true \u2014 real systems keep the log back to the oldest active transaction's first record instead of truncating wholesale. That is the fix.",
-      "WriteAheadLog._last_lsn_of is keyed by transaction id and cleared on commit/abort; it is fine concurrently but is not thread-safe.",
-      "Transaction ids restart at 1 every process. Harmless today because recovery resets the log before any new transaction runs. With sessions that needs revisiting."
-    ]
   }
 }

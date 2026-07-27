@@ -56,7 +56,11 @@ from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import CatalogError, CorruptDatabaseError, SchemaError
 from engine.index.bplustree import BPlusTree
 from engine.index.key import encode_key
-from engine.serialization.record import decode_record, encode_record
+from engine.serialization.record import (
+    decode_record,
+    encode_record,
+    strip_tuple_header,
+)
 from engine.serialization.schema import Column, Schema
 from engine.serialization.types import DataType
 from engine.storage.constants import INVALID_PAGE_ID
@@ -692,7 +696,14 @@ class Catalog:
         rows_indexed = 0
         heap = self.heap_for(info.name)
         for record_id, payload in heap.scan():
-            values = decode_record(info.schema, payload)
+            # Every version, including ones no current snapshot can see. An
+            # index that skipped them would be wrong for a reader whose snapshot
+            # *can*, and the index scan re-checks visibility against the payload
+            # it fetches anyway. PostgreSQL's indexes work the same way — an
+            # index entry says "a version of this key lives here", not "a
+            # visible one does", which is why an index-only scan needs the
+            # visibility map.
+            values = decode_record(info.schema, strip_tuple_header(payload))
             tree.insert(
                 encode_key(values[position], info.schema[position].data_type), record_id
             )

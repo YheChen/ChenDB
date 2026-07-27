@@ -333,6 +333,46 @@ logging **deltas** rather than pages, which is what real systems do — see
 Linear in log size, which is what checkpoint frequency is for. A checkpoint on a
 2.5 MiB log takes 0.2 ms and takes it to zero.
 
+## MVCC — Milestone 10
+
+### Per row, on disk
+
+Eight bytes of tuple header. On a 34-byte row that is 24%, paid by every row
+whether or not anything ever reads concurrently. PostgreSQL's is 23 bytes.
+
+### Per row, on read
+
+| | |
+|---|---|
+| `read_tuple_header` | 250 ns |
+| `visible()` | 83 ns |
+
+The header is read **before** the row is decoded. That ordering is the only
+reason the read cost is bearable: an invisible version costs 250 ns of
+unpacking rather than a walk of every column.
+
+### What dead versions do to a scan
+
+| | Per row returned |
+|---|---|
+| 5,000 live rows | 1,427 ns |
+| 2,500 live + 2,500 dead | 2,043 ns (**+43%**) |
+| after vacuum | 1,496 ns |
+
+A reader pays for every dead version it walks past. That is the price of never
+blocking a writer, and `OperatorStats.rows_skipped` counts it — a number that
+grows and never falls is an overdue vacuum, seen from the plan view.
+
+### Locking
+
+| | |
+|---|---|
+| uncontended acquire | 958 ns |
+| re-taking one already held | 333 ns |
+
+The second is on the hot path: a transaction updating the same row twice must
+not wait for itself.
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |
@@ -343,6 +383,8 @@ Linear in log size, which is what checkpoint frequency is for. A checkpoint on a
 | Undo capture, first write to a page | one page copy | a rollback that restores bytes needs the bytes |
 | LSN stamp per page write | a second CRC32 over the page | the LSN is inside the checksum's range, and without it recovery cannot tell an applied change from an unapplied one |
 | One `fsync` per commit | ~60 µs | the only thing that distinguishes a finished transaction from an interrupted one after a power cut |
+| 8-byte tuple header per row | 24% of a small row | a reader that never waits for a writer needs to know which version it is looking at |
+| Visibility check per row scanned | ~330 ns | a dead version has to be walked past, and walking past it is cheaper than blocking |
 | Null bitmap always present | 1 byte per row per 8 columns | branch-free decoding |
 
 The checksum is the expensive one — it touches the whole page. PostgreSQL makes
@@ -362,19 +404,25 @@ the inspector.
 - **Queries are invalidated precisely.** An insert invalidates records, pages
   and the database summary — not the database *list*.
 
-## What Milestone 10 should change
+## Where the remaining time goes
 
-MVCC and a second writer change what the numbers even mean:
+Ten milestones in, the shape of a query's cost is:
 
-- **Group commit becomes possible, and the fsync stops being a per-transaction
-  cost.** With *n* concurrent committers sharing one flush the ceiling goes from
-  11,300 commits/s to 11,300 *flushes*/s, which is a different quantity.
-- **Page-granularity becomes the bottleneck.** Two transactions writing different
-  rows on the same page conflict at page level today. That is invisible with one
-  writer and is the first thing a second one hits.
-- **Read paths grow a visibility check.** Every row read has to test `xmin`/`xmax`
-  against a snapshot, which is per *row*, not per page — the first thing since
-  Milestone 1 to make the scan path itself more expensive.
-- **The undo log stops being throwaway.** InnoDB serves read views out of its
-  undo records; ChenDB discards its before-images at commit today, and keeping
-  them is what a version chain is.
+```
+  SELECT with a filter, 5,000 rows
+
+    ~1,400 ns per row   decode + predicate, in interpreted Python
+      ~330 ns per row   tuple header + visibility          (M10)
+       ~50 ns per row   amortised page read from the pool  (M7)
+```
+
+**The interpreter is the wall.** Milestone 6 measured the cost model at ~18.9 µs
+per cost unit and found it flat across a 650× range; Milestone 7 found the real
+cost of a page read was `validate()` rather than the syscall. Neither of those
+findings changes here, and the per-row constant has grown by about a quarter
+because every row now carries a version.
+
+Making this materially faster is not a matter of a better algorithm. It is
+vectorised execution, or a compiled inner loop, or not being in Python — and
+each of those trades the thing this project is for, which is that every line of
+it can be read.

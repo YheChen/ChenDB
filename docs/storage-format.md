@@ -46,11 +46,18 @@ PostgreSQL instead keeps cluster metadata in a separate `pg_control` file.
   56     4  next_object_id          u32 — shared table/index counter (v3)
   60     8  lsn                     u64 — last log record for this page (v4)
   68     8  checkpoint_lsn          u64 — LSN of the log file's byte 0   (v4)
-  76     4  flags                   u32 — reserved
-  80     4  checksum                u32 — CRC32 over bytes [0, 80)
+  76     4  next_xid                u32 — next transaction id            (v5)
+  80     4  flags                   u32 — reserved
+  84     4  checksum                u32 — CRC32 over bytes [0, 84)
  ─────────────────────────────────────────────────────────────────────────
-  84 bytes; the rest of the page is reserved and zero-filled.
+  88 bytes; the rest of the page is reserved and zero-filled.
 ```
+
+`next_xid` becomes the *frozen horizon* on open: every id below it belonged to a
+transaction that has finished, and because a rollback here physically removes
+its work, every row still on disk came from one that **committed**. That is
+ChenDB's entire commit log, in one number — PostgreSQL needs `pg_xact` and a
+freeze job instead, because it does not undo.
 
 `checkpoint_lsn` is here rather than in the log because it has to be readable
 *before* the log is opened: it says what LSN the log file's first byte
@@ -81,6 +88,7 @@ O(1).
 | 2 | 4 | Those three replaced by the two catalog heaps plus `next_table_id` |
 | 3 | 5 | `catalog_indexes_*` added; `next_table_id` → `next_object_id` |
 | 4 | 9 | `checkpoint_lsn` added; `lsn` stops being reserved and starts being written |
+| 5 | 10 | `next_xid` added; every record gains an 8-byte tuple header |
 
 There is no in-place upgrade. Every bump so far moved where the catalog lives,
 so reading an old file would mean carrying a reader per layout — worth it for a
@@ -204,14 +212,36 @@ policy question. PostgreSQL defers the same work to page pruning and `VACUUM`.
 ## Record format
 
 ```
- ┌──────────────┬─────────┬─────────┬─────┬─────────┐
- │ null bitmap  │ value 0 │ value 1 │ ... │ value n │
- │  ⌈cols/8⌉ B  │         │         │     │         │
- └──────────────┴─────────┴─────────┴─────┴─────────┘
+ ┌──────┬──────┬──────────────┬─────────┬─────────┬─────┬─────────┐
+ │ xmin │ xmax │ null bitmap  │ value 0 │ value 1 │ ... │ value n │
+ │ u32  │ u32  │  ⌈cols/8⌉ B  │         │         │     │         │
+ └──────┴──────┴──────────────┴─────────┴─────────┴─────┴─────────┘
 ```
 
-Bit *i* set means column *i* is NULL, and a NULL contributes **no bytes** to
-the value area. A row of five NULLs costs one byte.
+Bit *i* of the bitmap set means column *i* is NULL, and a NULL contributes
+**no bytes** to the value area. A row of five NULLs costs one byte.
+
+### The tuple header — 8 bytes (v5)
+
+`xmin` is the transaction that created this version; `xmax` is the one that
+deleted it, or zero. Those eight bytes are what make a row a *version*, and
+they are the whole of MVCC's storage cost — 24% on a small row, against
+PostgreSQL's 23-byte `HeapTupleHeaderData`.
+
+The header goes **first** so a reader can decide whether a version is visible
+before decoding any of it: an invisible row costs one `struct.unpack` rather
+than a walk of every column.
+
+A **delete rewrites `xmax` in place** and leaves everything else alone, which is
+why `Page.overwrite` exists and why it refuses anything but an equal-length
+write. The slot stays live and the row still decodes — a transaction whose
+snapshot predates the delete has to be able to read it — and the space comes
+back at `VACUUM`.
+
+The catalog's own tables carry **no** tuple header. They do not need versions:
+a rolled-back `CREATE TABLE` is undone by restoring the page, so there is never
+a catalog row anybody wants an older version of. PostgreSQL does the opposite,
+because it has no undo and no other way to take a failed DDL back.
 
 ### Value encodings
 

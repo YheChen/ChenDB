@@ -77,18 +77,49 @@ def test_heap_page_detail_decodes_records_and_their_field_offsets(db: Database):
     assert min(offsets) >= slot.record.null_bitmap_size
 
 
-def test_deleted_slots_are_reported_as_tombstones(db: Database):
+def test_a_deleted_row_is_a_live_slot_holding_a_dead_version(db: Database):
+    """Milestone 10 changed what a delete *is*, and this is where it shows.
+
+    Before MVCC, deleting cleared the slot and the inspector showed a tombstone.
+    Now it writes four bytes of ``xmax`` into the row's header and leaves
+    everything else alone — because a transaction whose snapshot predates the
+    delete still has to be able to read the row.
+
+    So the slot is still live, the record still decodes, and the *header* is the
+    only thing that says it is gone. That is exactly what PostgreSQL's page
+    inspector shows for a deleted tuple, and it is why both engines need a
+    vacuum to get the space back.
+    """
     record_id = db.insert("users", (1, "gone", None, True, 0.0))
     db.insert("users", (2, "stays", None, True, 0.0))
     db.delete("users", record_id)
 
     detail = db.page_detail(record_id.page_id)
-    tombstone = detail.slots[record_id.slot_id]
-    assert tombstone.is_live is False
-    assert tombstone.record is None
-    assert tombstone.raw_hex == ""
-    # The slot entry survives, so later record ids do not shift.
+    slot = detail.slots[record_id.slot_id]
+    assert slot.is_live is True, "the slot still points at bytes"
+    assert slot.record is not None, "and they still decode"
+    assert slot.xmax > 0, "but a transaction has deleted it"
+    assert slot.xmax > slot.xmin, "…and did so after it was created"
+
+    live = detail.slots[1]
+    assert live.xmax == 0
+
     assert len(detail.slots) == 2
+    assert db.count("users") == 1, "the reader sees one row"
+    assert db.version_count("users") == 2, "the page holds two versions"
+
+
+def test_vacuum_turns_a_dead_version_into_a_tombstone(db: Database):
+    # The space does come back — just not at delete time. Nothing else can
+    # reclaim it, because only a vacuum knows no snapshot still wants the row.
+    record_id = db.insert("users", (1, "gone", None, True, 0.0))
+    db.delete("users", record_id)
+    assert db.vacuum("users") == 1
+
+    slot = db.page_detail(record_id.page_id).slots[record_id.slot_id]
+    assert slot.is_live is False
+    assert slot.record is None
+    assert slot.raw_hex == ""
 
 
 def test_page_regions_tile_the_whole_page(db: Database):

@@ -62,13 +62,23 @@ against power loss.** ``tests/recovery/`` pins that down in both directions.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from engine.diagnostics.events import TransactionEvent, UndoRecordEvent
+from engine.concurrency.snapshot import (
+    DEFAULT_ISOLATION,
+    IsolationLevel,
+    Snapshot,
+)
+from engine.diagnostics.events import (
+    SnapshotEvent,
+    TransactionEvent,
+    UndoRecordEvent,
+)
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import TransactionError
 from engine.storage.pager import WriteIntent
@@ -77,7 +87,12 @@ from engine.transaction.undo import UndoLog
 if TYPE_CHECKING:
     from engine.transaction.undo import UndoRecord
 
+#: The session a caller gets when it does not name one. Everything written
+#: before Milestone 10 uses this and behaves exactly as it did.
+DEFAULT_SESSION: Final = "default"
+
 __all__ = [
+    "DEFAULT_SESSION",
     "Transaction",
     "TransactionManager",
     "TransactionState",
@@ -120,6 +135,18 @@ class Transaction:
     """True when the engine opened this, not the user. An implicit transaction
     commits when its statement or script ends; an explicit one waits for
     ``COMMIT``."""
+    session: str = "default"
+    """Which session owns it. One transaction per session at a time."""
+    isolation: IsolationLevel = DEFAULT_ISOLATION
+    snapshot: Snapshot | None = None
+    """The view it reads through. Re-taken per statement under READ COMMITTED,
+    kept for the transaction's life under REPEATABLE READ."""
+    snapshots_taken: int = 0
+    """How many times. Under REPEATABLE READ it is one; under READ COMMITTED it
+    is the statement count, which is the difference made countable."""
+    rows_created: int = 0
+    rows_deleted: int = 0
+    locks_held: int = 0
     undo: UndoLog = field(default_factory=UndoLog)
     state: TransactionState = TransactionState.ACTIVE
     statements: int = 0
@@ -147,96 +174,245 @@ class Transaction:
 
 
 class TransactionManager:
-    """Owns the one open transaction, and the history of the finished ones.
+    """Every open transaction, keyed by the session that opened it.
 
-    One at a time. The database-level write lock already serialises callers, so
-    there is nothing for a concurrency-control scheme to arbitrate — that is
-    Milestone 10's problem, and inventing a lock manager for a single writer
-    would be structure with no user.
+    Milestone 8 held exactly one and said so. Milestone 10 holds one *per
+    session*, which is a smaller change than it sounds: the engine still runs
+    one statement at a time, so nothing here has to arbitrate simultaneous
+    access to a page. What is new is that a transaction can stay open across
+    statements belonging to *other* sessions — and a lock it holds meanwhile is
+    what blocks them.
+
+    That is the honest shape of the concurrency this engine has. Two sessions
+    genuinely interleave, genuinely conflict, and genuinely deadlock; they do
+    not genuinely execute at the same instant. Claiming otherwise would mean
+    making every structure below this thread-safe, which is a different project.
+
+    Sessions are strings. A single-session caller never mentions one and gets
+    :data:`DEFAULT_SESSION`, so every pre-Milestone-10 call site still reads the
+    same and still means the same.
     """
 
-    __slots__ = ("_active", "_history", "_history_limit", "_next_id", "_tracer")
+    __slots__ = (
+        "_by_session",
+        "_frozen_xid",
+        "_history",
+        "_history_limit",
+        "_lock",
+        "_next_id",
+        "_running",
+        "_tracer",
+    )
 
     #: Finished transactions kept for the timeline. Bounded, because a long
     #: session would otherwise accumulate every transaction it ever ran — the
     #: same reason the execution store is bounded.
     HISTORY_LIMIT = 50
 
-    def __init__(self, *, tracer: Tracer | None = None) -> None:
+    def __init__(self, *, tracer: Tracer | None = None, frozen_xid: int = 0) -> None:
         self._tracer = tracer if tracer is not None else NULL_TRACER
-        self._active: Transaction | None = None
+        self._lock = threading.RLock()
+        #: The open transaction for each session that has one.
+        self._by_session: dict[str, Transaction] = {}
+        #: The same transactions, keyed by id — what a snapshot needs.
+        self._running: dict[int, Transaction] = {}
         self._history: list[Transaction] = []
         self._history_limit = self.HISTORY_LIMIT
-        self._next_id = 1
+        self._next_id = max(frozen_xid, 1)
+        self._frozen_xid = frozen_xid
 
     # -- state -------------------------------------------------------------
 
     @property
+    def frozen_xid(self) -> int:
+        """Ids below this committed before this process started.
+
+        Read from the meta page at open. It is the entire commit log — see
+        :mod:`engine.concurrency.snapshot` for why one number suffices here and
+        does not in PostgreSQL.
+        """
+        return self._frozen_xid
+
+    @frozen_xid.setter
+    def frozen_xid(self, value: int) -> None:
+        self._frozen_xid = value
+
+    @property
+    def next_xid(self) -> int:
+        return self._next_id
+
+    def running_ids(self) -> frozenset[int]:
+        """Ids of every transaction currently open, in any session."""
+        with self._lock:
+            return frozenset(self._running)
+
+    def running(self) -> tuple[Transaction, ...]:
+        with self._lock:
+            return tuple(self._running.values())
+
+    def sessions(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted(self._by_session))
+
+    def active_in(self, session: str = DEFAULT_SESSION) -> Transaction | None:
+        with self._lock:
+            return self._by_session.get(session)
+
+    @property
     def active(self) -> Transaction | None:
-        return self._active
+        """The default session's transaction.
+
+        Kept as a property so every call site written before sessions existed
+        still means what it meant. A multi-session caller uses
+        :meth:`active_in`.
+        """
+        return self.active_in()
+
+    def in_transaction_in(self, session: str = DEFAULT_SESSION) -> bool:
+        return self.active_in(session) is not None
 
     @property
     def in_transaction(self) -> bool:
-        return self._active is not None
+        return self.active is not None
+
+    @property
+    def any_open(self) -> bool:
+        """True when *any* session has a transaction open.
+
+        Distinct from :attr:`in_transaction`, and the distinction matters:
+        a checkpoint has to refuse while anybody's transaction is open, not
+        just the default session's.
+        """
+        with self._lock:
+            return bool(self._running)
 
     @property
     def in_explicit_transaction(self) -> bool:
-        return self._active is not None and not self._active.implicit
+        active = self.active
+        return active is not None and not active.implicit
 
     def history(self) -> tuple[Transaction, ...]:
         """Finished transactions, most recent last."""
-        return tuple(self._history)
+        with self._lock:
+            return tuple(self._history)
 
     def all_transactions(self) -> tuple[Transaction, ...]:
-        active = (self._active,) if self._active else ()
-        return (*self._history, *active)
+        with self._lock:
+            return (*self._history, *self._running.values())
 
     # -- lifecycle ---------------------------------------------------------
 
-    def begin(self, *, implicit: bool = False) -> Transaction:
-        """Open a transaction. Raises if one is already open and explicit."""
-        if self._active is not None:
-            if implicit:
-                # An implicit transaction inside an existing one is a no-op:
-                # the outer one already covers the work.
-                return self._active
-            if not self._active.implicit:
-                raise TransactionError(
-                    "a transaction is already open; ChenDB has no savepoints, "
-                    "so transactions do not nest"
+    def begin(
+        self,
+        *,
+        implicit: bool = False,
+        session: str = DEFAULT_SESSION,
+        isolation: IsolationLevel = DEFAULT_ISOLATION,
+    ) -> Transaction:
+        """Open a transaction for ``session``. Raises if it already has one."""
+        with self._lock:
+            existing = self._by_session.get(session)
+            if existing is not None:
+                if implicit:
+                    # An implicit transaction inside an existing one is a no-op:
+                    # the outer one already covers the work.
+                    return existing
+                if not existing.implicit:
+                    raise TransactionError(
+                        f"session {session!r} already has a transaction open; "
+                        f"ChenDB has no savepoints, so transactions do not nest"
+                    )
+                # BEGIN inside an implicit transaction adopts it, so a script
+                # reading `BEGIN; …; COMMIT;` behaves the way it looks.
+                existing.implicit = False
+                self._emit(existing, "begin")
+                return existing
+
+            transaction = Transaction(
+                transaction_id=self._next_id,
+                started_at_ns=time.monotonic_ns(),
+                implicit=implicit,
+                session=session,
+                isolation=isolation,
+            )
+            self._next_id += 1
+            self._by_session[session] = transaction
+            self._running[transaction.transaction_id] = transaction
+            self._emit(transaction, "begin")
+            return transaction
+
+    # -- snapshots ---------------------------------------------------------
+
+    def snapshot_for(self, transaction: Transaction) -> Snapshot:
+        """The view this transaction should read through, right now.
+
+        Under REPEATABLE READ the snapshot is taken once and kept; under READ
+        COMMITTED a new one is taken per statement. **That is the only
+        difference between the two levels**, and putting it in one branch here
+        rather than spreading it through the read path is the point of having a
+        snapshot object at all.
+        """
+        if (
+            transaction.snapshot is not None
+            and not transaction.isolation.per_statement
+        ):
+            return transaction.snapshot
+
+        with self._lock:
+            snapshot = Snapshot.take(
+                next_xid=self._next_id,
+                active=set(self._running),
+                frozen_xid=self._frozen_xid,
+                owner=transaction.transaction_id,
+            )
+        transaction.snapshot = snapshot
+        transaction.snapshots_taken += 1
+        if self._tracer.operator:
+            self._tracer.emit(
+                SnapshotEvent(
+                    transaction_id=transaction.transaction_id,
+                    isolation_level=transaction.isolation.value,
+                    xmin=snapshot.xmin,
+                    xmax=snapshot.xmax,
+                    active_count=len(snapshot.active),
                 )
-            # BEGIN inside an implicit transaction adopts it, so a script
-            # reading `BEGIN; …; COMMIT;` behaves the way it looks.
-            self._active.implicit = False
-            self._emit(self._active, "begin")
-            return self._active
+            )
+        return snapshot
 
-        transaction = Transaction(
-            transaction_id=self._next_id,
-            started_at_ns=time.monotonic_ns(),
-            implicit=implicit,
-        )
-        self._next_id += 1
-        self._active = transaction
-        self._emit(transaction, "begin")
-        return transaction
+    def oldest_snapshot_xmin(self) -> int:
+        """The lowest ``xmin`` any open transaction could still be reading at.
 
-    def mark_failed(self) -> None:
+        Vacuum's horizon: a version deleted by a transaction below this can no
+        longer be wanted by anybody, so its space is reclaimable. A single
+        long-running transaction holds this number down and stops vacuuming
+        making progress — which is PostgreSQL's most common "why is my disk
+        full" answer, and it is the same mechanism.
+        """
+        with self._lock:
+            live = [t.snapshot.xmin for t in self._running.values() if t.snapshot]
+            return min(live) if live else self._next_id
+
+    def mark_failed(self, session: str = DEFAULT_SESSION) -> None:
         """A statement raised. Nothing further may be accepted.
 
         Called from the SQL layer, which is the one place a statement's failure
         is observable. The embedded API does not need it: ``with
         db.transaction():`` already rolls back when the block raises.
         """
-        if self._active is not None and self._active.state is TransactionState.ACTIVE:
-            self._active.state = TransactionState.FAILED
-            self._emit(self._active, "failed")
+        active = self.active_in(session)
+        if active is not None and active.state is TransactionState.ACTIVE:
+            active.state = TransactionState.FAILED
+            self._emit(active, "failed")
+
+    def is_failed_in(self, session: str = DEFAULT_SESSION) -> bool:
+        active = self.active_in(session)
+        return active is not None and active.state is TransactionState.FAILED
 
     @property
     def is_failed(self) -> bool:
-        return self._active is not None and self._active.state is TransactionState.FAILED
+        return self.is_failed_in()
 
-    def commit(self) -> Transaction:
+    def commit(self, session: str = DEFAULT_SESSION) -> Transaction:
         """Accept the work. The undo log is discarded, not applied.
 
         Nothing is written here. The pages are already in the buffer pool, dirty
@@ -245,7 +421,7 @@ class TransactionManager:
         in ARIES terms, and it is only safe because a commit here does not claim
         to be durable. Milestone 9 is where commit means something on disk.
         """
-        transaction = self._require_active("COMMIT")
+        transaction = self._require_active("COMMIT", session)
         if transaction.state is TransactionState.FAILED:
             # The manager refuses; :meth:`Database.commit` catches this case
             # earlier and rolls back instead, which is what PostgreSQL does with
@@ -263,14 +439,16 @@ class TransactionManager:
         self._retire(transaction)
         return transaction
 
-    def rollback(self, apply: Callable[[int, bytes], None]) -> Transaction:
+    def rollback(
+        self, apply: Callable[[int, bytes], None], session: str = DEFAULT_SESSION
+    ) -> Transaction:
         """Undo the work by writing every before-image back, newest first.
 
         ``apply`` writes one page image; the manager does not know how. That
         keeps this module free of the pager and makes rollback testable against
         a dictionary.
         """
-        transaction = self._require_active("ROLLBACK")
+        transaction = self._require_active("ROLLBACK", session)
         self._emit(transaction, "rollback_started")
 
         restored = 0
@@ -296,21 +474,28 @@ class TransactionManager:
         self._retire(transaction)
         return transaction
 
-    def _require_active(self, what: str) -> Transaction:
-        if self._active is None:
+    def _require_active(self, what: str, session: str = DEFAULT_SESSION) -> Transaction:
+        active = self.active_in(session)
+        if active is None:
             raise TransactionError(f"{what} with no transaction open")
-        return self._active
+        return active
 
     def _retire(self, transaction: Transaction) -> None:
-        self._active = None
-        self._history.append(transaction)
-        if len(self._history) > self._history_limit:
-            del self._history[: len(self._history) - self._history_limit]
+        with self._lock:
+            self._by_session.pop(transaction.session, None)
+            self._running.pop(transaction.transaction_id, None)
+            self._history.append(transaction)
+            if len(self._history) > self._history_limit:
+                del self._history[: len(self._history) - self._history_limit]
 
     # -- the write hook ----------------------------------------------------
 
     def before_write(
-        self, page_id: int, current: Callable[[], bytes], reason: str = ""
+        self,
+        page_id: int,
+        current: Callable[[], bytes],
+        reason: str = "",
+        session: str = DEFAULT_SESSION,
     ) -> WriteIntent | None:
         """Capture ``page_id``'s current bytes, if a transaction needs them.
 
@@ -324,7 +509,7 @@ class TransactionManager:
         on-disk one — capture on exactly the same rule, so the page is read at
         most once either way.
         """
-        transaction = self._active
+        transaction = self.active_in(session)
         if transaction is None:
             return None
         if transaction.undo.has(page_id):
@@ -345,9 +530,10 @@ class TransactionManager:
             )
         return WriteIntent(transaction_id=transaction.transaction_id, before_image=image)
 
-    def note_statement(self) -> None:
-        if self._active is not None:
-            self._active.statements += 1
+    def note_statement(self, session: str = DEFAULT_SESSION) -> None:
+        active = self.active_in(session)
+        if active is not None:
+            active.statements += 1
 
     # -- diagnostics -------------------------------------------------------
 
@@ -366,5 +552,7 @@ class TransactionManager:
         )
 
     def __repr__(self) -> str:
-        state = f"active #{self._active.transaction_id}" if self._active else "idle"
+        with self._lock:
+            open_now = len(self._running)
+        state = f"{open_now} open" if open_now else "idle"
         return f"<TransactionManager {state} history={len(self._history)}>"

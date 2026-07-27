@@ -348,6 +348,12 @@ def execute_statement(
         controller=controller if controller is not None else NULL_CONTROLLER,
         max_rows=max_rows,
         planner_options=planner_options,
+        # Taken here, once per statement, and not inside the scan. Under READ
+        # COMMITTED that *is* the per-statement snapshot; under REPEATABLE READ
+        # the manager hands back the one the transaction already holds. Either
+        # way both scans in a plan see the same database, which they would not
+        # if each took its own.
+        snapshot=database.snapshot(),
     )
 
     started = time.perf_counter_ns()

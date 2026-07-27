@@ -50,6 +50,14 @@ from engine.server.schemas.catalog import (
     TableStorageModel,
     TableSummary,
 )
+from engine.server.schemas.concurrency import (
+    LockEntryModel,
+    LockStatsModel,
+    LockTableResponse,
+    SessionListResponse,
+    SessionModel,
+    WaitForEdge,
+)
 from engine.server.schemas.database import (
     ColumnModel,
     DatabaseDetail,
@@ -270,6 +278,8 @@ def slot_detail_to_api(slot: SlotDetail) -> SlotDetailModel:
         raw_hex=slot.raw_hex,
         record=record_layout_to_api(slot.record) if slot.record else None,
         decode_error=slot.decode_error,
+        xmin=slot.xmin,
+        xmax=slot.xmax,
     )
 
 
@@ -800,7 +810,9 @@ def transaction_to_api(
     )
 
 
-def transactions_to_api(manager: TransactionManager) -> TransactionListResponse:
+def transactions_to_api(
+    manager: TransactionManager, session: str = "default"
+) -> TransactionListResponse:
     """The timeline: what is open, and what has finished.
 
     Read from a manager rather than a snapshot, unlike the buffer pool mapper.
@@ -808,16 +820,16 @@ def transactions_to_api(manager: TransactionManager) -> TransactionListResponse:
     building the tuples, and every value copied out is an int, a bool or a
     frozen dataclass. There is no live object here to observe mid-mutation.
     """
-    active = manager.active
+    active = manager.active_in(session)
     return TransactionListResponse(
         active=(
             transaction_to_api(active, with_records=True) if active is not None else None
         ),
         history=[transaction_to_api(item) for item in manager.history()],
         history_limit=manager.HISTORY_LIMIT,
-        in_transaction=manager.in_transaction,
-        is_failed=manager.is_failed,
-        in_explicit_transaction=manager.in_explicit_transaction,
+        in_transaction=active is not None,
+        is_failed=manager.is_failed_in(session),
+        in_explicit_transaction=active is not None and not active.implicit,
         undo_bytes=active.undo_bytes if active is not None else 0,
     )
 
@@ -911,4 +923,73 @@ def recovery_to_api(report: RecoveryReport) -> RecoveryReportModel:
         duration_ns=report.duration_ns,
         phase_ns=dict(report.phase_ns),
         summary=report.summary(),
+    )
+
+
+def locks_to_api(table) -> LockTableResponse:
+    """The lock table, with the graph as an adjacency list.
+
+    ``readers_blocked`` is hard-coded to zero and shipped anyway. A field that
+    is always zero looks like an oversight until you know why it must be: under
+    MVCC a reader takes no lock, so there is nothing that *could* block one, and
+    the API saying so is more useful than the API being silent.
+    """
+    return LockTableResponse(
+        entries=[
+            LockEntryModel(
+                resource=entry.resource,
+                holders={str(txn): mode.value for txn, mode in entry.holders.items()},
+                waiters=[w.transaction_id for w in entry.waiters],
+            )
+            for entry in table.entries
+        ],
+        wait_for=[
+            WaitForEdge(waiter=waiter, blockers=sorted(blockers))
+            for waiter, blockers in sorted(table.wait_for.items())
+        ],
+        stats=LockStatsModel(
+            granted=table.stats.granted,
+            released=table.stats.released,
+            waits=table.stats.waits,
+            timeouts=table.stats.timeouts,
+            deadlocks=table.stats.deadlocks,
+        ),
+        readers_blocked=0,
+    )
+
+
+def sessions_to_api(manager, locks) -> SessionListResponse:
+    """Every session, whether or not it currently has a transaction.
+
+    A session with nothing open still appears — a two-console view that made a
+    console vanish between transactions would be unusable.
+    """
+    graph = locks.wait_for_graph()
+    sessions = []
+    for name in manager.sessions():
+        transaction = manager.active_in(name)
+        if transaction is None:
+            sessions.append(SessionModel(session=name, transaction_id=None))
+            continue
+        snapshot = transaction.snapshot
+        sessions.append(
+            SessionModel(
+                session=name,
+                transaction_id=transaction.transaction_id,
+                state=transaction.state.value,
+                isolation_level=transaction.isolation.value,
+                snapshot=snapshot.describe() if snapshot else None,
+                snapshots_taken=transaction.snapshots_taken,
+                statements=transaction.statements,
+                rows_created=transaction.rows_created,
+                rows_deleted=transaction.rows_deleted,
+                locks_held=len(locks.held_by(transaction.transaction_id)),
+                waiting_for=sorted(graph.get(transaction.transaction_id, ())),
+            )
+        )
+    return SessionListResponse(
+        sessions=sessions,
+        frozen_xid=manager.frozen_xid,
+        next_xid=manager.next_xid,
+        oldest_snapshot_xmin=manager.oldest_snapshot_xmin(),
     )

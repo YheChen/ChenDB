@@ -3,6 +3,7 @@
 from engine.server.routers import (
     buffer,
     catalog,
+    concurrency,
     databases,
     events,
     indexes,
@@ -16,6 +17,7 @@ from engine.server.routers import (
 __all__ = [
     "buffer",
     "catalog",
+    "concurrency",
     "databases",
     "events",
     "indexes",

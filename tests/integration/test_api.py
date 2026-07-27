@@ -57,7 +57,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     # The one place that pins the exact number. Every other suite asserts the
     # floor its own feature shipped at, so finishing a milestone edits one file.
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 9
+    assert body["milestone"] == 10
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
@@ -70,7 +70,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     assert body["features"]["buffer_pool"] is True
     assert body["features"]["transactions"] is True
     assert body["features"]["wal"] is True
-    assert body["features"]["mvcc"] is False
+    assert body["features"]["mvcc"] is True
 
 
 def test_health_does_not_leak_an_absolute_path(client: TestClient):
@@ -370,7 +370,13 @@ def test_heap_page_detail_decodes_slots_records_and_the_null_bitmap(seeded: Test
     assert body["free_start"] < body["free_end"] < body["page_size"]
 
 
-def test_a_deleted_slot_shows_as_a_tombstone(seeded: TestClient):
+def test_a_deleted_slot_shows_as_a_dead_version(seeded: TestClient):
+    """Since Milestone 10 a delete writes ``xmax``, it does not clear the slot.
+
+    The row stays readable so that an older snapshot still sees it, which means
+    the inspector shows a live slot whose header says it is gone. The space
+    comes back at vacuum, not at delete.
+    """
     rows = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records").json()["rows"]
     target = rows[0]["record_id"]
     seeded.delete(
@@ -378,10 +384,10 @@ def test_a_deleted_slot_shows_as_a_tombstone(seeded: TestClient):
     )
 
     body = seeded.get(f"{API_PREFIX}/databases/demo/pages/{target['page_id']}").json()
-    tombstone = body["slots"][target["slot_id"]]
-    assert tombstone["is_live"] is False
-    assert tombstone["record"] is None
-    assert body["summary"]["reclaimable_space"] > 0
+    slot = body["slots"][target["slot_id"]]
+    assert slot["is_live"] is True
+    assert slot["record"] is not None
+    assert slot["xmax"] > 0, "a transaction deleted it"
 
 
 def test_page_out_of_range_is_404(seeded: TestClient):

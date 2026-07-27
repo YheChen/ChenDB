@@ -7,7 +7,7 @@ identifies the file.  SQLite does the same thing with its 100-byte header at
 the start of page 1; PostgreSQL instead keeps cluster metadata in a separate
 ``pg_control`` file.
 
-Layout, format version 4 (84 bytes; the rest of the page is zero-filled)::
+Layout, format version 5 (88 bytes; the rest of the page is zero-filled)::
 
     off  size  field                   notes
     ---  ----  ----------------------  ------------------------------------
@@ -25,8 +25,9 @@ Layout, format version 4 (84 bytes; the rest of the page is zero-filled)::
      56     4  next_object_id          shared id counter          (M5)
      60     8  lsn                     last change to this page   (M9)
      68     8  checkpoint_lsn          LSN of the log file's byte 0  (M9)
-     76     4  flags                   reserved
-     80     4  checksum                CRC32 over bytes [0, 80)
+     76     4  next_xid                next transaction id to hand out (M10)
+     80     4  flags                   reserved
+     84     4  checksum                CRC32 over bytes [0, 84)
 
 Only these six pointers are needed to *start* reading; everything else — every
 table's heap, every index's root — is a row in a system table.  That is the
@@ -71,8 +72,8 @@ __all__ = [
     "stamp_meta_lsn",
 ]
 
-META_HEADER_FORMAT: Final[str] = "<16s11I2Q2I"
-META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 84
+META_HEADER_FORMAT: Final[str] = "<16s11I2Q3I"
+META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 88
 
 #: The checksum is the last field, so it covers everything before itself.
 _CHECKSUM_OFFSET: Final = META_HEADER_SIZE - 4
@@ -95,6 +96,11 @@ _UPGRADE_HINTS: Final[dict[int, str]] = {
         " Version 3 files predate the write-ahead log (Milestone 9). Upgrading "
         "would mean inventing a checkpoint_lsn for a file that never had one; "
         "recreate the database."
+    ),
+    4: (
+        " Version 4 files predate MVCC (Milestone 10): their rows have no "
+        "tuple header, so no transaction can be said to have created them. "
+        "Recreate the database."
     ),
 }
 
@@ -124,6 +130,20 @@ class MetaPage:
     """LSN of the last log record describing a change to this page."""
     checkpoint_lsn: int = 0
     """LSN corresponding to byte 0 of the log file. See the module docstring."""
+    next_xid: int = 0
+    """The next transaction id to hand out, as of the last meta write.
+
+    On open this becomes the *frozen* horizon: every id below it belonged to a
+    transaction that has finished, and because a rollback here physically
+    removes its work, every row still on disk came from one that **committed**.
+    That is ChenDB's entire commit log, in one number — see
+    :mod:`engine.concurrency.snapshot` for why PostgreSQL needs `pg_xact` and a
+    freeze job instead.
+
+    It can lag behind reality after a crash, because it is only forced to disk
+    at a checkpoint. Recovery closes the gap: the log carries every id that ran
+    since, so the horizon on open is the larger of this and one past the highest
+    id in the log."""
     flags: int = 0
 
     def to_bytes(self) -> bytes:
@@ -147,6 +167,7 @@ class MetaPage:
             self.next_object_id,
             self.lsn,
             self.checkpoint_lsn,
+            self.next_xid,
             self.flags,
             0,  # checksum placeholder, filled in below
         )
@@ -176,6 +197,7 @@ class MetaPage:
             next_object_id,
             lsn,
             checkpoint_lsn,
+            next_xid,
             flags,
             stored_checksum,
         ) = struct.unpack_from(META_HEADER_FORMAT, raw, 0)
@@ -214,6 +236,7 @@ class MetaPage:
             next_object_id=next_object_id,
             lsn=lsn,
             checkpoint_lsn=checkpoint_lsn,
+            next_xid=next_xid,
             flags=flags,
         )
 

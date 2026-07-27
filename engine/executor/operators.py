@@ -64,6 +64,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from engine.concurrency.snapshot import Snapshot, visible
 from engine.diagnostics.events import OperatorEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import RecordNotFoundError
@@ -73,7 +74,12 @@ from engine.executor.expression import describe_expression, evaluate, is_true
 from engine.index.bplustree import BPlusTree
 from engine.index.key import SMALLEST_VALUE_KEY, describe_key
 from engine.parser.ast import Expression
-from engine.serialization.record import Row, decode_record
+from engine.serialization.record import (
+    Row,
+    decode_record,
+    read_tuple_header,
+    strip_tuple_header,
+)
 from engine.serialization.schema import Schema
 from engine.storage.heap import HeapFile, RecordId
 
@@ -108,6 +114,20 @@ class ExecutionContext:
     """A :class:`~engine.planner.physical.PlannerOptions`, or ``None`` for the
     defaults. Typed loosely to keep the operator layer from importing the
     planner, which would make the dependency run the wrong way."""
+    snapshot: Snapshot | None = None
+    """The view this query reads through, from Milestone 10.
+
+    ``None`` means "every version" and is what the vacuum and the page
+    inspector want — not a default anybody executing a query should get, which
+    is why :func:`~engine.executor.engine.execute_statement` always supplies
+    one.
+
+    This field is the reason the docstring above says a later milestone could
+    add a transaction here without touching any operator. It was not quite
+    true: the two scans had to learn to skip a version, because filtering
+    invisible rows in a ``Filter`` above them would mean decoding every dead
+    row first.
+    """
 
 
 @dataclass(slots=True)
@@ -117,6 +137,10 @@ class OperatorStats:
     next_calls: int = 0
     input_rows: int = 0
     output_rows: int = 0
+    rows_skipped: int = 0
+    """Versions a scan walked past because this snapshot could not see them.
+    Non-zero means dead weight the vacuum has not reclaimed, and it is the
+    reader-side cost of never blocking a writer."""
     duration_ns: int = 0
     pages_read: int = 0
 
@@ -313,6 +337,23 @@ class ScanOperator(Operator):
         """Where the row most recently emitted came from. For the row inspector."""
         return self._last_record_id
 
+    def _visible_row(self, payload: bytes) -> Row | None:
+        """Decode a version, or ``None`` if this snapshot cannot see it.
+
+        The header check comes **before** the decode, and that ordering is the
+        only reason MVCC's read cost is bearable: an invisible version costs
+        eight bytes of unpacking rather than a walk of every column.
+
+        Shared by both scans, because "which versions can I see" is a property
+        of the reader and not of how it found the row.
+        """
+        header = read_tuple_header(payload)
+        snapshot = self.context.snapshot
+        if snapshot is not None and not visible(header, snapshot):
+            self.stats.rows_skipped += 1
+            return None
+        return decode_record(self._schema, strip_tuple_header(payload))
+
     def _on_close(self) -> None:
         self._last_record_id = None
 
@@ -355,13 +396,20 @@ class SeqScan(ScanOperator):
 
     def _produce(self) -> Row | None:
         assert self._rows is not None
-        try:
-            record_id, payload = next(self._rows)
-        except StopIteration:
-            return None
-        self.stats.input_rows += 1
-        self._last_record_id = record_id
-        return decode_record(self._schema, payload)
+        while True:
+            try:
+                record_id, payload = next(self._rows)
+            except StopIteration:
+                return None
+            self.stats.input_rows += 1
+            row = self._visible_row(payload)
+            if row is None:
+                # A version this snapshot cannot see. Counted as input and not
+                # as output, so the plan view shows the reader paying for dead
+                # weight — which is what an overdue vacuum looks like.
+                continue
+            self._last_record_id = record_id
+            return row
 
 
 class IndexScan(ScanOperator):
@@ -493,8 +541,11 @@ class IndexScan(ScanOperator):
                 # PostgreSQL performs when it finds a dead tuple through an index.
                 continue
             self._rows_fetched += 1
+            row = self._visible_row(payload)
+            if row is None:
+                continue
             self._last_record_id = record_id
-            return decode_record(self._schema, payload)
+            return row
 
 
 class Filter(Operator):

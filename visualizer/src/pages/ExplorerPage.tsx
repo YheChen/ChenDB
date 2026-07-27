@@ -14,6 +14,7 @@
  *   │  Buffer:    Counters      │ Workloads │ Frame grid        │
  *   │  Txns:      BEGIN/COMMIT  │ Undo log  │ Timeline          │
  *   │  WAL:       Checkpoint/Crash │ Recovery │ The log           │
+ *   │  MVCC:      two consoles     │ Locks    │ wait-for graph    │
  *   │                                                          │
  *   ├──────────────────────────────────────────────────────────┤
  *   │ Event timeline (shared by every workspace)               │
@@ -42,6 +43,7 @@ import { ExecutionWorkspace } from "@/features/execution/ExecutionWorkspace";
 import { BufferWorkspace } from "@/features/buffer/BufferWorkspace";
 import { TransactionWorkspace } from "@/features/transactions/TransactionWorkspace";
 import { WalWorkspace } from "@/features/wal/WalWorkspace";
+import { ConcurrencyWorkspace } from "@/features/concurrency/ConcurrencyWorkspace";
 import { IndexWorkspace } from "@/features/indexes/IndexWorkspace";
 import { SqlWorkspace } from "@/features/sql/SqlWorkspace";
 import {
@@ -65,7 +67,8 @@ type WorkspaceId =
   | "indexes"
   | "buffer"
   | "transactions"
-  | "wal";
+  | "wal"
+  | "mvcc";
 
 const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "storage", label: "Storage", feature: "storage" },
@@ -75,6 +78,7 @@ const WORKSPACES: { id: WorkspaceId; label: string; feature: string }[] = [
   { id: "buffer", label: "Buffer pool", feature: "buffer_pool" },
   { id: "transactions", label: "Transactions", feature: "transactions" },
   { id: "wal", label: "WAL", feature: "wal" },
+  { id: "mvcc", label: "MVCC", feature: "mvcc" },
 ];
 
 export function ExplorerPage() {
@@ -178,7 +182,9 @@ export function ExplorerPage() {
         label="Resize the workspace against the event timeline"
         className="min-h-0 flex-1"
         first={
-          workspace === "wal" && databaseId ? (
+          workspace === "mvcc" && databaseId ? (
+            <ConcurrencyWorkspace databaseId={databaseId} />
+          ) : workspace === "wal" && databaseId ? (
             <WalWorkspace
               databaseId={databaseId}
               onSelectPage={(pageId) => {
