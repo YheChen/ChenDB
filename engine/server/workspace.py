@@ -148,6 +148,11 @@ class ManagedDatabase:
         with self._lock:
             self._db.close()
 
+    def abandon(self) -> None:
+        """Drop the handle the way a crash would. See :meth:`Database.abandon`."""
+        with self._lock:
+            self._db.abandon()
+
 
 class Workspace:
     """Owns every open database and the directory they live in."""
@@ -290,6 +295,25 @@ class Workspace:
             raise DatabaseNotFound(f"no database {database_id!r} in this workspace")
         self.close(database_id)
         path.unlink()
+
+    def crash(self, database_id: str) -> None:
+        """Abandon a database without flushing, then forget the handle.
+
+        The next request reopens the file, which runs recovery. Nothing here
+        deletes anything: committed work survives because its commit record is
+        already on the disk, and everything else is what recovery decides.
+
+        This is destructive by design and exists for one reason — the explorer's
+        recovery view should show recovery *happening*, and there is no honest
+        way to do that with a clean shutdown.
+        """
+        with self._lock:
+            managed = self._open.pop(database_id, None)
+        if managed is None:
+            if not self.exists(database_id):
+                raise DatabaseNotFound(f"no database {database_id!r} in this workspace")
+            return
+        managed.abandon()
 
     def close_all(self) -> None:
         with self._lock:

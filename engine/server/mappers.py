@@ -97,12 +97,20 @@ from engine.server.schemas.transactions import (
     TransactionModel,
     UndoRecordModel,
 )
+from engine.server.schemas.wal import (
+    RecoveryReportModel,
+    WalRecordModel,
+    WalResponse,
+    WalStatsModel,
+)
 from engine.storage.buffer import PoolSnapshot
 from engine.storage.constants import INVALID_PAGE_ID
 from engine.storage.heap import RecordId
 from engine.storage.inspect import HeaderField, PageDetail, PageSummary, SlotDetail
 from engine.storage.pager import PagerStats
 from engine.transaction.manager import Transaction, TransactionManager
+from engine.wal.log import WriteAheadLog
+from engine.wal.recovery import RecoveryReport
 
 __all__ = [
     "ast_node_to_api",
@@ -811,4 +819,96 @@ def transactions_to_api(manager: TransactionManager) -> TransactionListResponse:
         is_failed=manager.is_failed,
         in_explicit_transaction=manager.in_explicit_transaction,
         undo_bytes=active.undo_bytes if active is not None else 0,
+    )
+
+
+def wal_record_to_api(record) -> WalRecordModel:
+    return WalRecordModel(
+        lsn=record.lsn,
+        prev_lsn=record.prev_lsn,
+        transaction_id=record.transaction_id,
+        record_type=record.record_type.name.lower(),
+        page_id=record.page_id,
+        size=record.size,
+        before_image_size=len(record.before_image),
+        after_image_size=len(record.after_image),
+    )
+
+
+def wal_to_api(
+    log: WriteAheadLog | None, *, limit: int, size_bytes: int
+) -> WalResponse:
+    """The log as a table, newest last.
+
+    Page images are dropped here and nowhere else — that is the point of having
+    a mapper. A record can carry two whole pages, so a thousand of them is
+    megabytes of base64 that no panel renders; the *sizes* go out instead,
+    because the sizes are what the reader is looking at.
+    """
+    if log is None:
+        return WalResponse(
+            enabled=False,
+            path="",
+            base_lsn=0,
+            next_lsn=0,
+            flushed_lsn=0,
+            buffered_bytes=0,
+            size_bytes=0,
+            records=[],
+            truncated_tail=False,
+            total_records=0,
+            stats=WalStatsModel(
+                records_appended=0,
+                records_coalesced=0,
+                bytes_appended=0,
+                flushes=0,
+                syncs=0,
+                mean_sync_ns=0.0,
+                checkpoints=0,
+                bytes_reclaimed=0,
+            ),
+        )
+
+    records, truncated = log.read_all()
+    stats = log.stats
+    return WalResponse(
+        enabled=True,
+        # The filename, never the path. The workspace boundary is the reason
+        # /health does the same with its own directory.
+        path=log.path.name,
+        base_lsn=log.base_lsn,
+        next_lsn=log.next_lsn,
+        flushed_lsn=log.flushed_lsn,
+        buffered_bytes=log.buffered_bytes,
+        size_bytes=size_bytes,
+        records=[wal_record_to_api(record) for record in records[-limit:]],
+        truncated_tail=truncated,
+        total_records=len(records),
+        stats=WalStatsModel(
+            records_appended=stats.records_appended,
+            records_coalesced=stats.records_coalesced,
+            bytes_appended=stats.bytes_appended,
+            flushes=stats.flushes,
+            syncs=stats.syncs,
+            mean_sync_ns=round(stats.mean_sync_ns, 1),
+            checkpoints=stats.checkpoints,
+            bytes_reclaimed=stats.bytes_reclaimed,
+        ),
+    )
+
+
+def recovery_to_api(report: RecoveryReport) -> RecoveryReportModel:
+    return RecoveryReportModel(
+        ran=report.ran,
+        records_scanned=report.records_scanned,
+        truncated_tail=report.truncated_tail,
+        winners=list(report.winners),
+        losers=list(report.losers),
+        pages_redone=report.pages_redone,
+        pages_skipped=report.pages_skipped,
+        pages_undone=report.pages_undone,
+        highest_lsn=report.highest_lsn,
+        duration_ns=report.duration_ns,
+        phase_ns=dict(report.phase_ns),
+        summary=report.summary(),
     )

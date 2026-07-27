@@ -82,6 +82,16 @@ export interface CatalogStatsModel {
   indexes_created: number;
 }
 
+export interface CheckpointResponse {
+  pages_flushed: number;
+  bytes_reclaimed: number;
+  log_size_before: number;
+  /** Zero — a checkpoint discards the log */
+  log_size_after: number;
+  base_lsn: number;
+  message: string;
+}
+
 export interface ColumnModel {
   name: string;
   type: "INTEGER" | "FLOAT" | "BOOLEAN" | "TEXT";
@@ -98,6 +108,16 @@ export interface ColumnSpec {
   primary_key?: boolean;
 }
 
+/** What the crash button did. */
+export interface CrashResponse {
+  message: string;
+  /** Recovery already ran: reopening the file is what triggers it, and the response would be a lie if it reported the pre-crash state. */
+  recovered: RecoveryReportModel;
+  /** Row count per table before the crash, so the caller can show what survived without having to have asked first */
+  rows_before: Record<string, number>;
+  rows_after: Record<string, number>;
+}
+
 export interface CreateDatabaseRequest {
   /** Workspace-relative identifier. Never a filesystem path. */
   database_id: string;
@@ -107,7 +127,7 @@ export interface CreateDatabaseRequest {
 
 /**
  * Programmatic index creation.
- *
+ * 
  * ``CREATE INDEX`` through ``POST /query`` is the primary path; this stays for
  * clients that would rather not build SQL strings, matching the table endpoint.
  */
@@ -120,7 +140,7 @@ export interface CreateIndexRequest {
 
 /**
  * Programmatic table creation.
- *
+ * 
  * ``CREATE TABLE`` through ``POST /query`` is the primary path from Milestone 3
  * onward; this stays for clients that would rather not build SQL strings.
  */
@@ -160,21 +180,7 @@ export interface DeleteRecordResponse {
   record_id: RecordIdModel;
 }
 
-export type EventCategory =
-  | "lifecycle"
-  | "storage"
-  | "record"
-  | "parser"
-  | "operator"
-  | "catalog"
-  | "index"
-  | "planner"
-  | "buffer_pool"
-  | "transaction"
-  | "wal"
-  | "recovery"
-  | "lock"
-  | "mvcc";
+export type EventCategory = "lifecycle" | "storage" | "record" | "parser" | "operator" | "catalog" | "index" | "planner" | "buffer_pool" | "transaction" | "wal" | "recovery" | "lock" | "mvcc";
 
 export interface EventsResponse {
   events: TraceRecordModel[];
@@ -237,7 +243,7 @@ export interface FieldLayoutModel {
 
 /**
  * One slot of the pool.
- *
+ * 
  * There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
  * lending it, so nothing can be holding one when it is reused and a pin count
  * would always read zero — a number that never prevents anything. See
@@ -292,7 +298,7 @@ export interface IndexListResponse {
 
 /**
  * One traced point lookup.
- *
+ * 
  * ``path`` is what the tree view highlights: the page ids from root to leaf.
  * ``pages_visited`` can exceed its length when duplicates spill across leaves
  * and the search has to step right — which is exactly the case worth seeing.
@@ -353,7 +359,7 @@ export interface InsertRecordsResponse {
 
 /**
  * One node of the physical plan: what it will cost, and what it did.
- *
+ * 
  * Estimated and actual sit side by side because the gap between them is the
  * single most useful thing a plan view can show. A plan that is slow is almost
  * always a plan whose row estimate was wrong, and no amount of staring at the
@@ -463,7 +469,7 @@ export interface ParseRequest {
 
 /**
  * Tokens, AST and error together — all three are partial-result friendly.
- *
+ * 
  * ``tokens`` can be non-empty while ``statements`` is empty and ``error`` is
  * set: that is a half-typed query, the normal state of one being written.
  */
@@ -581,6 +587,25 @@ export interface RecordsResponse {
   duration_ns: number;
 }
 
+export interface RecoveryReportModel {
+  /** False after a clean shutdown, because a clean shutdown ends with a checkpoint and leaves an empty log. So this means exactly 'the previous process did not close properly'. */
+  ran: boolean;
+  records_scanned: number;
+  truncated_tail: boolean;
+  /** Committed or aborted; their work stands */
+  winners: number[];
+  /** Caught in flight; their work was undone */
+  losers: number[];
+  pages_redone: number;
+  /** Records the page had already got. High relative to redone means the last checkpoint did its job. */
+  pages_skipped: number;
+  pages_undone: number;
+  highest_lsn: number;
+  duration_ns: number;
+  phase_ns: Record<string, number>;
+  summary: string;
+}
+
 export interface ResultColumnModel {
   name: string;
   /** SQL type, or null when an expression's type is not statically known */
@@ -588,8 +613,7 @@ export interface ResultColumnModel {
 }
 
 export interface ResumeRequest {
-  mode?:
-    "step" | "continue" | "until_row" | "until_page_read" | "until_operator";
+  mode?: "step" | "continue" | "until_row" | "until_page_read" | "until_operator";
   /** Required by until_operator; ignored otherwise */
   operator_id?: null | string;
 }
@@ -716,21 +740,7 @@ export interface TraceRecordModel {
   /** Monotonic per database; also the pagination cursor */
   seq: number;
   timestamp_ns: number;
-  category:
-    | "lifecycle"
-    | "storage"
-    | "record"
-    | "parser"
-    | "operator"
-    | "catalog"
-    | "index"
-    | "planner"
-    | "buffer_pool"
-    | "transaction"
-    | "wal"
-    | "recovery"
-    | "lock"
-    | "mvcc";
+  category: "lifecycle" | "storage" | "record" | "parser" | "operator" | "catalog" | "index" | "planner" | "buffer_pool" | "transaction" | "wal" | "recovery" | "lock" | "mvcc";
   level: "OFF" | "SUMMARY" | "OPERATOR" | "STORAGE" | "VERBOSE";
   /** Event class name, e.g. 'PageReadEvent' */
   event_type: string;
@@ -825,4 +835,59 @@ export interface UndoRecordModel {
   before_image_size: number;
   /** What was about to write the page — 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason. */
   reason: string;
+}
+
+/** One entry in the log. */
+export interface WalRecordModel {
+  /** This record's byte offset in the log stream */
+  lsn: number;
+  /** The same transaction's previous record, or 0 for its first. ARIES calls this the backward chain. */
+  prev_lsn: number;
+  /** 0 for engine bookkeeping outside any */
+  transaction_id: number;
+  record_type: "update" | "commit" | "abort" | "checkpoint";
+  page_id: number;
+  /** Bytes on disk, header and images together */
+  size: number;
+  /** Non-zero only on a transaction's first write to a page — first-write-wins, the same rule the in-memory undo log follows */
+  before_image_size: number;
+  after_image_size: number;
+}
+
+export interface WalResponse {
+  /** False for a handle opened without a log */
+  enabled: boolean;
+  /** Filename only — never a path from the host */
+  path: string;
+  /** The LSN of the log file's first byte. Non-zero after a checkpoint has truncated it, which is why the meta page has to carry it. */
+  base_lsn: number;
+  /** What the next appended record will get */
+  next_lsn: number;
+  /** Everything below this has reached the OS */
+  flushed_lsn: number;
+  /** Staged in memory, not yet written */
+  buffered_bytes: number;
+  /** The log file on disk */
+  size_bytes: number;
+  records: WalRecordModel[];
+  /** The last record in the file is incomplete. Normal after a crash — the process died part-way through a write. */
+  truncated_tail: boolean;
+  /** Before the response limit was applied */
+  total_records: number;
+  stats: WalStatsModel;
+}
+
+export interface WalStatsModel {
+  records_appended: number;
+  /** Appends that replaced a staged record for the same page instead of following it. Every one is a page image not written, and in a bulk insert it is almost all of them. */
+  records_coalesced: number;
+  bytes_appended: number;
+  /** Times the buffer reached the OS */
+  flushes: number;
+  /** Times it reached the disk. The expensive one. */
+  syncs: number;
+  /** Average fsync. One second divided by this is the hard ceiling on commits per second. */
+  mean_sync_ns: number;
+  checkpoints: number;
+  bytes_reclaimed: number;
 }

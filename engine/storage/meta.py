@@ -7,7 +7,7 @@ identifies the file.  SQLite does the same thing with its 100-byte header at
 the start of page 1; PostgreSQL instead keeps cluster metadata in a separate
 ``pg_control`` file.
 
-Layout, format version 3 (76 bytes; the rest of the page is zero-filled)::
+Layout, format version 4 (84 bytes; the rest of the page is zero-filled)::
 
     off  size  field                   notes
     ---  ----  ----------------------  ------------------------------------
@@ -23,9 +23,10 @@ Layout, format version 3 (76 bytes; the rest of the page is zero-filled)::
      48     4  catalog_indexes_first   chendb_indexes heap        (M5)
      52     4  catalog_indexes_last
      56     4  next_object_id          shared id counter          (M5)
-     60     8  lsn                     reserved for Milestone 9 (WAL)
-     68     4  flags                   reserved
-     72     4  checksum                CRC32 over bytes [0, 72)
+     60     8  lsn                     last change to this page   (M9)
+     68     8  checkpoint_lsn          LSN of the log file's byte 0  (M9)
+     76     4  flags                   reserved
+     80     4  checksum                CRC32 over bytes [0, 80)
 
 Only these six pointers are needed to *start* reading; everything else — every
 table's heap, every index's root — is a row in a system table.  That is the
@@ -33,6 +34,13 @@ whole point of the catalog: adding a table or an index is an insert, not a
 file-format change.  Milestone 5 still had to touch the format, but only because
 it added a new *system* table, which is exactly the kind of change that cannot
 bootstrap itself.
+
+``checkpoint_lsn`` is the one field Milestone 9 had to add, and it is here
+rather than in the log because it has to be readable *before* the log is opened:
+it says what LSN the log file's first byte corresponds to. A checkpoint truncates
+the log, so that is not zero after the first one, and without it LSNs would
+restart and page LSNs written earlier would compare greater than records written
+later — making redo skip work it had to do.
 
 ``next_object_id`` replaces version 2's ``next_object_id``.  Tables and indexes
 draw ids from one sequence, so an id identifies a catalog object without also
@@ -55,10 +63,16 @@ from engine.storage.constants import (
     PageType,
 )
 
-__all__ = ["META_HEADER_FORMAT", "META_HEADER_SIZE", "MetaPage"]
+__all__ = [
+    "META_HEADER_FORMAT",
+    "META_HEADER_SIZE",
+    "MetaPage",
+    "read_meta_lsn",
+    "stamp_meta_lsn",
+]
 
-META_HEADER_FORMAT: Final[str] = "<16s11IQ2I"
-META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 76
+META_HEADER_FORMAT: Final[str] = "<16s11I2Q2I"
+META_HEADER_SIZE: Final[int] = struct.calcsize(META_HEADER_FORMAT)  # 84
 
 #: The checksum is the last field, so it covers everything before itself.
 _CHECKSUM_OFFSET: Final = META_HEADER_SIZE - 4
@@ -76,6 +90,11 @@ _UPGRADE_HINTS: Final[dict[int, str]] = {
     2: (
         " Version 2 files predate the index catalog (Milestone 5) and cannot be "
         "upgraded in place; recreate the database."
+    ),
+    3: (
+        " Version 3 files predate the write-ahead log (Milestone 9). Upgrading "
+        "would mean inventing a checkpoint_lsn for a file that never had one; "
+        "recreate the database."
     ),
 }
 
@@ -102,6 +121,9 @@ class MetaPage:
     catalog_indexes_last: int = INVALID_PAGE_ID
     next_object_id: int = 0
     lsn: int = 0
+    """LSN of the last log record describing a change to this page."""
+    checkpoint_lsn: int = 0
+    """LSN corresponding to byte 0 of the log file. See the module docstring."""
     flags: int = 0
 
     def to_bytes(self) -> bytes:
@@ -124,6 +146,7 @@ class MetaPage:
             self.catalog_indexes_last,
             self.next_object_id,
             self.lsn,
+            self.checkpoint_lsn,
             self.flags,
             0,  # checksum placeholder, filled in below
         )
@@ -152,6 +175,7 @@ class MetaPage:
             catalog_indexes_last,
             next_object_id,
             lsn,
+            checkpoint_lsn,
             flags,
             stored_checksum,
         ) = struct.unpack_from(META_HEADER_FORMAT, raw, 0)
@@ -189,6 +213,7 @@ class MetaPage:
             catalog_indexes_last=catalog_indexes_last,
             next_object_id=next_object_id,
             lsn=lsn,
+            checkpoint_lsn=checkpoint_lsn,
             flags=flags,
         )
 
@@ -203,3 +228,32 @@ class MetaPage:
             f"pages={self.page_count} catalog={self.catalog_tables_first}/"
             f"{self.catalog_columns_first}>"
         )
+
+
+# -- LSN stamping ----------------------------------------------------------
+#
+# The meta page needs its own pair because it does not use the slotted-page
+# header: its LSN sits at offset 60 and its checksum at the end rather than the
+# start. Page 0 going through ``engine.storage.page.stamp_lsn`` by mistake
+# writes a u64 over ``format_version`` and ``page_size`` and a u32 over the
+# magic — which is caught immediately, but only because the magic is checked.
+
+_LSN_OFFSET: Final = 60
+_LSN: Final = struct.Struct("<Q")
+
+
+def stamp_meta_lsn(raw: bytes, lsn: int) -> bytes:
+    """Return an encoded meta page with its LSN set and checksum refreshed."""
+    buf = bytearray(raw)
+    _LSN.pack_into(buf, _LSN_OFFSET, lsn)
+    _CHECKSUM.pack_into(
+        buf, _CHECKSUM_OFFSET, zlib.crc32(memoryview(buf)[:_CHECKSUM_OFFSET])
+    )
+    return bytes(buf)
+
+
+def read_meta_lsn(raw: bytes) -> int:
+    """The LSN in an encoded meta page, without validating the rest of it."""
+    if len(raw) < META_HEADER_SIZE:
+        return 0
+    return int(_LSN.unpack_from(raw, _LSN_OFFSET)[0])

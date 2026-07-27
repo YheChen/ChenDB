@@ -70,6 +70,8 @@ __all__ = [
     "SLOT_SIZE",
     "Page",
     "SlotInfo",
+    "read_lsn",
+    "stamp_lsn",
 ]
 
 # checksum:u32  lsn:u64  page_type:u8  flags:u8
@@ -680,3 +682,41 @@ def validate_page_size(page_size: int) -> None:
 
 def _format_page_id(page_id: int) -> str:
     return "-" if page_id == INVALID_PAGE_ID else str(page_id)
+
+
+# -- LSN stamping ----------------------------------------------------------
+#
+# These work on raw bytes rather than on a :class:`Page`, because the pager
+# stamps a page's LSN *after* the page has been encoded: the LSN belongs to the
+# log record that carries the encoded image, so it cannot be known any earlier.
+# Decoding the page back into an object to set one field would cost a full slot
+# walk to accomplish two ``pack_into`` calls.
+
+
+def stamp_lsn(raw: bytes, lsn: int) -> bytes:
+    """Return ``raw`` with its LSN set and its checksum brought back into line.
+
+    The checksum covers everything after itself, and the LSN is inside that
+    range, so changing one means recomputing the other. That is a second CRC32
+    pass over the page on every write — measured at about 1 microsecond for
+    4 KiB, against ~13 microseconds for the insert that caused it. Avoiding it
+    would mean threading the LSN down into ``Page.to_bytes``, which would put
+    the log into every caller that builds a page.
+    """
+    buf = bytearray(raw)
+    _U64.pack_into(buf, _OFF_LSN, lsn)
+    _U32.pack_into(buf, _OFF_CHECKSUM, zlib.crc32(memoryview(buf)[_CHECKSUM_COVERAGE_START:]))
+    return bytes(buf)
+
+
+def read_lsn(raw: bytes) -> int:
+    """The LSN in an encoded page, without decoding the rest of it.
+
+    Recovery asks this of every page it is about to redo, so it runs once per
+    log record and must not pay for a slot-directory walk — nor may it raise on
+    a page the crash left invalid, which is exactly the page redo is there to
+    replace.
+    """
+    if len(raw) < PAGE_HEADER_SIZE:
+        return 0
+    return int(_U64.unpack_from(raw, _OFF_LSN)[0])

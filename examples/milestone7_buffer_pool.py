@@ -57,10 +57,7 @@ def main() -> int:
             db.create_table("users", SCHEMA)
             db.insert_many(
                 "users",
-                [
-                    (n, n % 1000, f"u{n:06d}@example.com")
-                    for n in range(ROW_COUNT)
-                ],
+                [(n, n % 1000, f"u{n:06d}@example.com") for n in range(ROW_COUNT)],
             )
             db.sync()
             pager, pool = db.pager, db.pager.buffer_pool
@@ -94,12 +91,16 @@ def main() -> int:
             crc = per_call_ns(lambda: [zlib.crc32(raw) for _ in range(20_000)], 20_000)
             build = per_call_ns(
                 lambda: [
-                    Page.from_bytes(page_id, raw, PAGE_SIZE, verify_checksum=False, validate=False)
+                    Page.from_bytes(
+                        page_id, raw, PAGE_SIZE, verify_checksum=False, validate=False
+                    )
                     for _ in range(20_000)
                 ],
                 20_000,
             )
-            page = Page.from_bytes(page_id, raw, PAGE_SIZE, verify_checksum=False, validate=False)
+            page = Page.from_bytes(
+                page_id, raw, PAGE_SIZE, verify_checksum=False, validate=False
+            )
             walk = per_call_ns(lambda: [page.validate() for _ in range(2_000)], 2_000)
             read = per_call_ns(
                 lambda: [pager._read_from_disk(page_id) for _ in range(20_000)],
@@ -108,7 +109,9 @@ def main() -> int:
             print(f"   pread, OS cached          {read:8.0f} ns")
             print(f"   CRC32 over the page       {crc:8.0f} ns")
             print(f"   build a Page object       {build:8.0f} ns")
-            print(f"   validate() - every slot   {walk:8.0f} ns   <-- {walk / crc:.0f}x the checksum")
+            print(
+                f"   validate() - every slot   {walk:8.0f} ns   <-- {walk / crc:.0f}x the checksum"
+            )
             print("\n   The first version of this milestone kept validate() on the read")
             print("   path and the pool was almost worthless: it removed the syscall")
             print("   and left the expensive half. validate() is now split - the O(1)")
@@ -126,8 +129,10 @@ def main() -> int:
             logical = pager.stats.page_writes - before[0]
             physical = pager.stats.physical_writes - before[1]
             print(f"   1,000 inserts:  {logical} logical writes, {physical} syscalls")
-            print(f"   {pool.stats.writes_absorbed:,} writes absorbed in total "
-                  f"({100 * (1 - physical / max(logical, 1)):.0f}% of this batch)")
+            print(
+                f"   {pool.stats.writes_absorbed:,} writes absorbed in total "
+                f"({100 * (1 - physical / max(logical, 1)):.0f}% of this batch)"
+            )
             print("\n   A page written two hundred times reaches the disk once. Before")
             print("   Milestone 7 that was two hundred syscalls - which is why an index")
             print("   build was so slow.")
@@ -147,8 +152,10 @@ def main() -> int:
                 tiny_pager = tiny.pager
                 tiny_pool = tiny_pager.buffer_pool
                 tiny_pages = list(tiny.heap_for("users").page_ids())
-                print(f"   the table is {len(tiny_pages)} pages; this pool holds "
-                      f"{tiny_pool.capacity}")
+                print(
+                    f"   the table is {len(tiny_pages)} pages; this pool holds "
+                    f"{tiny_pool.capacity}"
+                )
 
                 def hit_rate_for(fetch_pages: list[int], passes: int = 4) -> float:
                     tiny_pool.clear()
@@ -162,11 +169,14 @@ def main() -> int:
 
                 fits = tiny_pages[: small_frames - 2]
                 print(f"\n   working set of {len(fits)} pages (fits):")
-                print(f"     hit rate {hit_rate_for(fits):.1%}"
-                      f"  - loaded once, then served from memory")
+                print(
+                    f"     hit rate {hit_rate_for(fits):.1%}"
+                    f"  - loaded once, then served from memory"
+                )
                 print(f"\n   scanning all {len(tiny_pages)} pages (does not fit):")
-                print(f"     hit rate {hit_rate_for(tiny_pages):.1%}"
-                      f"  <-- sequential flooding")
+                print(
+                    f"     hit rate {hit_rate_for(tiny_pages):.1%}  <-- sequential flooding"
+                )
             print("\n   Every page a scan loads is evicted by the pages behind it before")
             print("   the next pass reaches it. LRU is the worst possible policy here,")
             print("   and it is why PostgreSQL confines large scans to a small ring")
@@ -210,8 +220,8 @@ def main() -> int:
             pager._tracer = tracer
             pool._tracer = tracer
             pool.clear()
-            db.rows("users")   # cold: every page a miss
-            db.rows("users")   # warm: the table fits, so every page a hit
+            db.rows("users")  # cold: every page a miss
+            db.rows("users")  # warm: the table fits, so every page a hit
 
             counts: dict[str, int] = {}
             tracer.level = TraceLevel.VERBOSE  # so hits are reported too

@@ -53,21 +53,50 @@ def db(tmp_path: Path):
 
 
 def digest(db: Database) -> str:
-    """A hash of every page the meta page claims. The strongest "unchanged".
+    """A hash of every page the meta page claims, ignoring LSNs.
 
-    The *referenced prefix*, not the whole file, and the difference is the one
-    thing rollback cannot undo: a transaction that extended the file leaves
-    those pages physically there. Restoring the meta page takes ``page_count``
-    back, so nothing references them and the next allocation reuses their ids —
-    but the bytes remain, exactly as they would after a crash between extending
-    the file and updating the meta page.
+    Two things are deliberately excluded, and each is a thing rollback does not
+    and cannot put back.
 
-    ``test_a_rollback_may_leave_trailing_pages`` asserts that directly, so this
-    helper is not quietly hiding it.
+    **Trailing pages.** The hash covers the *referenced prefix*, not the whole
+    file. A transaction that extended the file leaves those pages physically
+    there; restoring the meta page takes ``page_count`` back, so nothing
+    references them and the next allocation reuses their ids, but the bytes
+    remain. ``test_a_rollback_may_leave_trailing_pages`` asserts that directly,
+    so this helper is not quietly hiding it.
+
+    **The LSN and the checksum that covers it.** Since Milestone 9 every page
+    carries the LSN of the log record that last changed it, and a rollback *is*
+    a change — the restore has to be logged, or recovery could not tell whether
+    it reached the disk. So a rolled-back page comes back with the same contents
+    and a higher LSN, and demanding byte-for-byte equality would be demanding
+    that the rollback be unrecoverable.
+    ``test_a_rollback_moves_the_lsn_forward`` asserts the LSN really does move,
+    so that exclusion is not hiding anything either.
     """
     db.sync()
-    referenced = db.page_count * db.page_size
-    return hashlib.sha256(db.path.read_bytes()[:referenced]).hexdigest()
+    raw = db.path.read_bytes()[: db.page_count * db.page_size]
+    return hashlib.sha256(
+        b"".join(
+            _without_lsn(raw[n * db.page_size : (n + 1) * db.page_size], n)
+            for n in range(db.page_count)
+        )
+    ).hexdigest()
+
+
+def _without_lsn(page: bytes, page_id: int) -> bytes:
+    """One page with its LSN and checksum blanked.
+
+    The two layouts differ: the meta page keeps its LSN at offset 60 and its
+    checksum at 80, every other page at 4 and 0.
+    """
+    buf = bytearray(page)
+    if page_id == 0:
+        buf[60:68] = bytes(8)
+        buf[80:84] = bytes(4)
+    else:
+        buf[0:12] = bytes(12)
+    return bytes(buf)
 
 
 # -- the undo log -----------------------------------------------------------
@@ -98,13 +127,50 @@ def test_the_log_reports_what_it_is_holding():
     assert log.has(1) and not log.has(9)
 
 
-def test_an_undo_log_that_outgrows_memory_fails_rather_than_swapping():
-    # ChenDB keeps undo in memory; a real system spills it to disk. Refusing is
-    # the honest failure, and the message says which is missing.
+def test_an_undo_log_that_outgrows_memory_stops_caching():
+    """The ceiling bounds memory, not transaction size.
+
+    Before Milestone 9 this raised: the in-memory log was the only copy, so
+    running out of room meant the transaction could not be rolled back. The WAL
+    now holds the same before-images on disk under the same first-write-wins
+    rule, so overflowing is a cache miss rather than a failure — the log flags
+    itself and :meth:`Database.rollback` reads what it needs from the WAL.
+    """
     log = UndoLog()
-    with pytest.raises(TransactionError, match="undo log would exceed"):
-        for page_id in range(MAX_UNDO_BYTES // 4096 + 2):
-            log.capture(page_id, bytes(4096))
+    for page_id in range(MAX_UNDO_BYTES // 4096 + 2):
+        log.capture(page_id, bytes(4096))
+
+    assert log.overflowed
+    assert log.bytes_held <= MAX_UNDO_BYTES
+    assert log.page_count < MAX_UNDO_BYTES // 4096 + 2
+
+
+def test_a_rollback_past_the_cap_still_restores_every_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The fallback, end to end, with the ceiling lowered so it is reachable.
+
+    64 MiB of pages would take a while to write; 8 KiB does not, and exercises
+    exactly the same path — the in-memory log gives up after two pages and the
+    rest of the rollback comes off the disk.
+    """
+    monkeypatch.setattr("engine.transaction.undo.MAX_UNDO_BYTES", 2 * 512)
+
+    with Database.open(tmp_path / "spill.chendb", page_size=512) as db:
+        db.create_table("t", SCHEMA)
+        db.insert_many("t", [(n, f"row{n:04d}") for n in range(200)])
+        db.sync()
+        before = digest(db)
+
+        db.begin()
+        db.insert_many("t", [(1000 + n, f"new{n:04d}") for n in range(200)])
+        assert db.transactions.active.undo.overflowed, (
+            "the point of the test is that memory ran out"
+        )
+        db.rollback()
+
+        assert db.count("t") == 200
+        assert digest(db) == before, "the WAL had what memory dropped"
 
 
 def test_clearing_releases_everything():
@@ -354,6 +420,27 @@ def test_indexes_are_rolled_back_with_the_rows(db: Database):
     db.rollback()
     assert db.lookup("t_label", "findme") == []
     db.tree_for("t_label").verify()
+
+
+def test_a_rollback_moves_the_lsn_forward(db: Database):
+    """The restore is itself a logged change, and the page says so.
+
+    This is what :func:`digest` excludes, asserted directly. A rolled-back page
+    holds the same data at a higher LSN — because if it came back with its old
+    LSN, recovery would compare the log record for the restore against it, find
+    the page already ahead, and skip putting it back.
+    """
+    transaction = db.begin()
+    db.insert("t", (950, "a"))
+    # Ask the transaction which page it touched rather than guessing: the row
+    # lands on whichever heap page had room, not necessarily the first. Page 0
+    # is skipped because the meta page has its own layout and its own reader.
+    page_id = next(r.page_id for r in transaction.records() if r.page_id != 0)
+    before = db.pager.read_page(page_id).lsn
+    db.rollback()
+
+    after = db.pager.read_page(page_id).lsn
+    assert after > before, "the restore is a change, and carries its own LSN"
 
 
 # -- the context manager ----------------------------------------------------

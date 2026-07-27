@@ -260,7 +260,86 @@ serves one explorer looking at its own file. `GET` reports the open transaction
 on every call so the UI can show a persistent banner rather than letting one be
 forgotten.
 
-Arriving later: `/wal` (9), `/locks` (10).
+### Milestone 9 — the write-ahead log
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/databases/{db}/wal` | the records, the LSNs, and what fsync costs |
+| `GET` | `/databases/{db}/recovery` | what the last open had to repair |
+| `POST` | `/databases/{db}/checkpoint` | flush every dirty page, discard the log |
+| `POST` | `/databases/{db}/crash` | **destructive** — abandon the handle, then recover |
+
+```json
+{
+  "enabled": true, "path": "demo.chendb-wal",
+  "base_lsn": 0, "next_lsn": 281600, "flushed_lsn": 281600,
+  "buffered_bytes": 0, "size_bytes": 281600,
+  "records": [
+    { "lsn": 556, "prev_lsn": 0, "transaction_id": 1, "record_type": "update",
+      "page_id": 4, "size": 1068, "before_image_size": 512,
+      "after_image_size": 512 },
+    { "lsn": 1624, "prev_lsn": 556, "transaction_id": 1,
+      "record_type": "commit", "page_id": 0, "size": 44,
+      "before_image_size": 0, "after_image_size": 0 }
+  ],
+  "truncated_tail": false, "total_records": 66,
+  "stats": { "records_appended": 516, "records_coalesced": 22000,
+             "bytes_appended": 2203136, "flushes": 12, "syncs": 6,
+             "mean_sync_ns": 50123.0, "checkpoints": 0, "bytes_reclaimed": 0 }
+}
+```
+
+**Page images are not sent.** A record carries up to two of them, so a thousand
+records is eight megabytes of base64 that no panel renders. The *sizes* go out
+instead, because the sizes are the interesting part — and a non-zero
+`before_image_size` marks the transaction's first write to that page, which is
+first-write-wins visible on the wire.
+
+**`records` is a window.** `total_records` says how many there really are, so a
+view can say "the last 200 of 12,000" rather than implying it has them all.
+
+**`mean_sync_ns` is the number to look at.** One second divided by it is the
+hard ceiling on commits per second, and it has nothing in it about how much work
+each transaction did. That is what group commit exists to amortise.
+
+**`records_coalesced`** counts appends that replaced a staged record for the same
+page instead of following it. In a bulk insert it is ~98% of them; see
+`docs/milestone-09-wal.md` for why that is the difference between a 197× and a
+5× log.
+
+`/checkpoint` is refused with a 422 while a transaction is open: truncating the
+log would discard the before-images that transaction needs to roll back.
+
+### `POST /crash`
+
+**This endpoint destroys uncommitted work. That is what it is for.**
+
+It drops the database handle without flushing dirty pages, running a checkpoint,
+or rolling anything back — and the next request reopens the file, which runs
+recovery. It exists because the alternative is a recovery panel that *describes*
+recovery, and a reader has no reason to believe a description.
+
+```json
+{
+  "message": "handle abandoned without flushing; recovery recovered 66 record(s): 0 redone, 63 already current, 1 undone; 3 finished, 1 interrupted. 50 uncommitted row(s) did not survive.",
+  "recovered": { "ran": true, "losers": [4], "pages_undone": 1, "…": "…" },
+  "rows_before": { "users": 53 },
+  "rows_after": { "users": 3 }
+}
+```
+
+The response reports recovery as *already done*, not as pending: reopening is
+what triggers it, so reporting the pre-crash state and letting a later poll show
+the truth would make the response a lie. The row counts are gathered on both
+sides by the endpoint rather than left to the caller, because a caller that
+forgot to ask first would have nothing to compare against.
+
+What it can lose is exactly what a power cut would lose. It deletes no files, it
+is scoped to one database in the workspace the server was pointed at, and it
+cannot touch anything the engine promised to keep — every committed row survives,
+because its commit record was `fsync`ed when it committed.
+
+Arriving later: `/locks` (10).
 
 ## Errors
 

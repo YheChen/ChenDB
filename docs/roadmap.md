@@ -14,8 +14,8 @@ hidden in the UI until the engine behind it exists.
 | 6 | Logical + physical plans, statistics, cost model, `EXPLAIN` | Estimated vs actual, rejected alternatives | **done** |
 | 7 | Buffer pool, write-back, LRU eviction | Frame grid, counters, workload runner | **done** |
 | 8 | Transactions, undo log, rollback, atomic DDL | Transaction timeline, undo log, BEGIN/COMMIT/ROLLBACK | **done** |
-| 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, step-through recovery | next |
-| 10 | MVCC, locks, wait-for graph, deadlocks | Multi-session consoles, version chains, lock table | |
+| 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, recovery report | **done** |
+| 10 | MVCC, locks, wait-for graph, deadlocks | Multi-session consoles, version chains, lock table | next |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete.
 
@@ -29,7 +29,7 @@ Engine version tracks the milestone: `0.N.0` means Milestone N is complete.
 | 6 | — | — (statistics are in memory, not persisted — see `docs/milestone-06-planner.md`) |
 | 7 | — | — (the pool is memory; the file format is untouched) |
 | 8 | — | — (the undo log is memory; it dies with the process, which is why a crash mid-transaction is not atomic) |
-| 9 | — | `checkpoint_lsn`, `last_lsn`; page `lsn` starts being written |
+| 9 | — | **v4**: `checkpoint_lsn` — the LSN of the log file's first byte. Page `lsn` starts being written; the field had been reserved since Milestone 1. |
 | 10 | — | tuple headers gain `xmin`/`xmax` |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.

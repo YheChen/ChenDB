@@ -78,8 +78,13 @@ engine/
 │   ├── undo.py            UndoLog — page id → before-image, first write wins
 │   └── manager.py         begin / commit / rollback, and the write hook
 │
+├── wal/
+│   ├── record.py          one log entry: LSN, page id, before + after images
+│   ├── log.py             the file: append, flush, checkpoint, truncate
+│   └── recovery.py        analysis → redo → undo, on open
+│
 └── parser/ planner/ optimizer/ executor/
-    concurrency/ wal/                           ← Milestones 2, 6, 9, 10
+    concurrency/                                ← Milestones 2, 6, 10
 ```
 
 Each layer knows only the one beneath it:
@@ -115,9 +120,17 @@ no change to `engine/index/`.
               ▼
        Pager._write_at ───────▶ TransactionManager.before_write
               │                        │
+              ├───────▶ WriteAheadLog  │        the durable copy
               ▼                        ▼
-        BufferPool                  UndoLog     one snapshot per page
+        BufferPool                  UndoLog     the fast copy
+              │
+              └──▶ flush_through(lsn) ──▶ the log, before the page
 ```
+
+Milestone 9 hangs off the same single write path, and adds one constraint to the
+one below it: **a page may not reach the disk before the record describing it**.
+That line lives on the pool's write-through callback, and it is the only reason
+the pool did not have to change to become crash-safe.
 
 ## An insert, end to end
 

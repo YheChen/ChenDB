@@ -294,22 +294,41 @@ from one the user asked for. Most transactions in a session are implicit, and a
 timeline that did not say so would look like the user was running `BEGIN`
 constantly.
 
+### Milestone 9 — `wal`, `recovery`
+
+| Event | Level | Fields |
+|---|---|---|
+| `WalAppendEvent` | `STORAGE` | `lsn`, `transaction_id`, `record_type`, `page_id`, `prev_lsn`, `size` |
+| `WalFlushEvent` | `SUMMARY` | `up_to_lsn`, `bytes_written`, `duration_ns`, `synced` |
+| `CheckpointEvent` | `SUMMARY` | `lsn`, `pages_flushed`, `bytes_reclaimed`, `duration_ns` |
+| `RecoveryPhaseEvent` | `SUMMARY` | `phase`, `action`, `records_processed`, `duration_ns` |
+| `RecoveryActionEvent` | `OPERATOR` | `phase`, `lsn`, `page_id`, `decision`, `reason` |
+
+The append is `STORAGE` and the flush is `SUMMARY`, which is the wrong way round
+until you look at what each one is. There is one append per page write — the log
+is the busiest thing in the engine, and a summary-level trace of a bulk insert
+should not be mostly WAL. A flush is the **fsync**, and its duration is the
+number that decides how fast commits can possibly go; that belongs in a trace
+otherwise reporting only statements.
+
+`CheckpointEvent` reports `pages_flushed` rather than the planned
+`dirty_pages`/`active_transactions`. Those two were specified for a *fuzzy*
+checkpoint, which records what is dirty and what is running and lets both keep
+going. ChenDB's checkpoints are sharp — they flush everything and refuse to run
+while a transaction is open — so `active_transactions` would always be zero and
+`dirty_pages` would always be "all of them, and now none".
+
+`RecoveryPhaseEvent` is deliberately loud at `SUMMARY`: recovery running at all
+means the last process did not shut down cleanly, and that is something a user
+should see without having turned tracing up. `RecoveryActionEvent` is one per
+record, so it sits at `OPERATOR` — and `skip` matters as much as `redo`, because
+a skipped record is the last checkpoint having done its job.
+
 ## Planned events
 
 Specified here, implemented in the milestone that builds the component that
 emits them. Nothing below exists yet; stubbing them now would be dead code with
 no way to verify the field list is right.
-
-### Milestone 9 — `wal`, `recovery`
-
-```
-WalAppendEvent        lsn, transaction_id, record_type, page_id, prev_lsn, size
-WalFlushEvent         up_to_lsn, bytes_written, duration_ns
-CheckpointEvent       lsn, dirty_pages, active_transactions
-RecoveryPhaseEvent    phase: analysis|redo|undo, action: started|finished,
-                      records_processed, duration_ns
-RecoveryActionEvent   phase, lsn, page_id, decision: redo|skip|undo, reason
-```
 
 ### Milestone 10 — `lock`, `mvcc`
 

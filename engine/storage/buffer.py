@@ -398,9 +398,14 @@ class BufferPool:
             )
         return written
 
-    def clear(self) -> None:
-        """Flush and drop everything. For closing, and for tests."""
-        self.flush()
+    def clear(self, *, flush: bool = True) -> None:
+        """Drop everything, flushing first unless told not to.
+
+        ``flush=False`` is the crash simulation: dirty frames are discarded
+        rather than written, which is what happens when a process dies.
+        """
+        if flush:
+            self.flush()
         for frame in self._frames:
             frame.page_id = None
             frame.dirty = False

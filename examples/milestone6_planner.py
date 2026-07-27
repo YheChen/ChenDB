@@ -113,10 +113,18 @@ def main() -> int:
             # -- 3. the constants ------------------------------------------
             rule("3. What things cost, measured for this engine")
 
-            print(f"   PAGE_MISS_COST      {PAGE_MISS_COST:>6}   a pread the buffer pool could not serve")
-            print(f"   PAGE_HIT_COST       {PAGE_HIT_COST:>6}   the same page, already in a frame")
-            print(f"   CPU_TUPLE_COST      {CPU_TUPLE_COST:>6}   decode one record, in Python")
-            print(f"   CPU_PREDICATE_COST  {CPU_PREDICATE_COST:>6}   evaluate a predicate on a decoded row")
+            print(
+                f"   PAGE_MISS_COST      {PAGE_MISS_COST:>6}   a pread the buffer pool could not serve"
+            )
+            print(
+                f"   PAGE_HIT_COST       {PAGE_HIT_COST:>6}   the same page, already in a frame"
+            )
+            print(
+                f"   CPU_TUPLE_COST      {CPU_TUPLE_COST:>6}   decode one record, in Python"
+            )
+            print(
+                f"   CPU_PREDICATE_COST  {CPU_PREDICATE_COST:>6}   evaluate a predicate on a decoded row"
+            )
             print("\n   PostgreSQL's defaults put cpu_tuple_cost at 1/100th of a page")
             print("   read. Here it is 1/7th, because a page read hits the OS cache")
             print("   and a row costs interpreted Python. Copying the ratio would")
@@ -199,14 +207,18 @@ def main() -> int:
             # -- 7. staleness ----------------------------------------------
             rule("7. When the numbers go stale")
 
-            print(f"   before: {db.statistics.for_table('users').row_count} rows, "
-                  f"stale={db.statistics.is_stale('users')}")
+            print(
+                f"   before: {db.statistics.for_table('users').row_count} rows, "
+                f"stale={db.statistics.is_stale('users')}"
+            )
             db.insert_many(
                 "users", [(90_000 + n, 5, f"late{n}@x.com") for n in range(2000)]
             )
             after = db.statistics.for_table("users")
-            print(f"   after 2000 inserts: statistics still say {after.row_count} rows, "
-                  f"stale={db.statistics.is_stale('users')}")
+            print(
+                f"   after 2000 inserts: statistics still say {after.row_count} rows, "
+                f"stale={db.statistics.is_stale('users')}"
+            )
             print("\n   Stale statistics are still used - a slightly old estimate beats")
             print("   none, and recomputing per insert would cost a full scan per row.")
             print("   They are reported instead:")
