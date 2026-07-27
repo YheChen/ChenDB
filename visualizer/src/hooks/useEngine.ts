@@ -32,6 +32,8 @@ import type {
   TransactionListResponse,
   RecoveryReportModel,
   WalResponse,
+  LockTableResponse,
+  SessionListResponse,
 } from "@/types/api";
 
 export const queryKeys = {
@@ -53,6 +55,8 @@ export const queryKeys = {
   transactions: (id: string) => ["transactions", id] as const,
   wal: (id: string, limit: number) => ["wal", id, limit] as const,
   recovery: (id: string) => ["recovery", id] as const,
+  locks: (id: string) => ["locks", id] as const,
+  sessions: (id: string) => ["sessions", id] as const,
   pages: (id: string) => ["pages", id] as const,
   page: (id: string, pageId: number) => ["page", id, pageId] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -72,6 +76,8 @@ function invalidateDatabase(
     queryKeys.transactions(databaseId),
     ["wal", databaseId],
     queryKeys.recovery(databaseId),
+    queryKeys.locks(databaseId),
+    queryKeys.sessions(databaseId),
     queryKeys.indexes(databaseId),
     ["indexes", databaseId],
     ["index", databaseId],
@@ -239,11 +245,14 @@ export function useBufferPool(
  */
 export function useTransactions(
   id: string | null,
-  { refetchInterval = 1500 }: { refetchInterval?: number | false } = {},
+  {
+    refetchInterval = 1500,
+    session,
+  }: { refetchInterval?: number | false; session?: string } = {},
 ): UseQueryResult<TransactionListResponse> {
   return useQuery({
-    queryKey: queryKeys.transactions(id ?? ""),
-    queryFn: () => api.getTransactions(id!),
+    queryKey: [...queryKeys.transactions(id ?? ""), session ?? "default"],
+    queryFn: () => api.getTransactions(id!, session),
     enabled: Boolean(id),
     refetchInterval,
     // Unlike the pool, this keeps polling in a background tab. An open
@@ -263,7 +272,10 @@ export function useTransactions(
  */
 export function useWal(
   id: string | null,
-  { limit = 200, refetchInterval = 1500 }: { limit?: number; refetchInterval?: number | false } = {},
+  {
+    limit = 200,
+    refetchInterval = 1500,
+  }: { limit?: number; refetchInterval?: number | false } = {},
 ): UseQueryResult<WalResponse> {
   return useQuery({
     queryKey: queryKeys.wal(id ?? "", limit),
@@ -274,11 +286,47 @@ export function useWal(
 }
 
 /** What the last open had to repair. Static until the database is reopened. */
-export function useRecovery(id: string | null): UseQueryResult<RecoveryReportModel> {
+export function useRecovery(
+  id: string | null,
+): UseQueryResult<RecoveryReportModel> {
   return useQuery({
     queryKey: queryKeys.recovery(id ?? ""),
     queryFn: () => api.getRecovery(id!),
     enabled: Boolean(id),
+  });
+}
+
+/**
+ * The lock table and the wait-for graph.
+ *
+ * Polled fast — a lock that is held for two hundred milliseconds is invisible
+ * at a one-second refresh, and short-lived contention is most of what there is
+ * to see with two consoles driven by hand.
+ */
+export function useLocks(
+  id: string | null,
+  { refetchInterval = 600 }: { refetchInterval?: number | false } = {},
+): UseQueryResult<LockTableResponse> {
+  return useQuery({
+    queryKey: queryKeys.locks(id ?? ""),
+    queryFn: () => api.getLocks(id!),
+    enabled: Boolean(id),
+    refetchInterval,
+    refetchIntervalInBackground: true,
+  });
+}
+
+/** Every session's transaction, snapshot and lock count. */
+export function useSessions(
+  id: string | null,
+  { refetchInterval = 600 }: { refetchInterval?: number | false } = {},
+): UseQueryResult<SessionListResponse> {
+  return useQuery({
+    queryKey: queryKeys.sessions(id ?? ""),
+    queryFn: () => api.getSessions(id!),
+    enabled: Boolean(id),
+    refetchInterval,
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -293,15 +341,28 @@ export function useRecovery(id: string | null): UseQueryResult<RecoveryReportMod
  * showing rows that no longer exist, which is exactly the "fake frontend
  * simulation" this project refuses to ship.
  */
-export function useTransactionAction(databaseId: string | null) {
+export function useTransactionAction(
+  databaseId: string | null,
+  session?: string,
+) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (action: "begin" | "commit" | "rollback") => {
       const id = databaseId!;
-      if (action === "begin") return api.beginTransaction(id);
-      if (action === "commit") return api.commitTransaction(id);
-      return api.rollbackTransaction(id);
+      if (action === "begin") return api.beginTransaction(id, session);
+      if (action === "commit") return api.commitTransaction(id, session);
+      return api.rollbackTransaction(id, session);
     },
+    onSuccess: () => {
+      if (databaseId) invalidateDatabase(client, databaseId);
+    },
+  });
+}
+
+export function useVacuum(databaseId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.vacuum(databaseId!),
     onSuccess: () => {
       if (databaseId) invalidateDatabase(client, databaseId);
     },
@@ -411,11 +472,11 @@ export function useParseSql(databaseId: string) {
  * Run SQL. A mutation, not a query: executing is an action with side effects
  * (INSERT writes pages), so it must never be re-fetched automatically.
  */
-export function useRunQuery(databaseId: string) {
+export function useRunQuery(databaseId: string, session?: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ sql, maxRows }: { sql: string; maxRows?: number }) =>
-      api.runQuery(databaseId, sql, maxRows),
+      api.runQuery(databaseId, sql, maxRows, session),
     onSuccess: (results) => {
       // Only invalidate storage views when something was actually written.
       // A read-only SELECT changes nothing and should not cause a refetch storm.
