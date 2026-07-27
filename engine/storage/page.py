@@ -227,9 +227,7 @@ class Page:
         try:
             return PageType(raw)
         except ValueError as exc:
-            raise CorruptPageError(
-                f"page {self.page_id}: unknown page type {raw}"
-            ) from exc
+            raise CorruptPageError(f"page {self.page_id}: unknown page type {raw}") from exc
 
     @page_type.setter
     def page_type(self, value: PageType) -> None:
@@ -625,9 +623,7 @@ class Page:
 
         # Zero the old record region so stale bytes never leak into a hexdump
         # or, worse, into a page written back to disk.
-        self._buf[self.free_end : self._page_size] = bytes(
-            self._page_size - self.free_end
-        )
+        self._buf[self.free_end : self._page_size] = bytes(self._page_size - self.free_end)
 
         cursor = self._page_size
         for slot_id, payload in live:

@@ -66,7 +66,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -151,6 +151,7 @@ class Pager:
         "_closed",
         "_file",
         "_meta",
+        "_on_before_write",
         "_page_size",
         "_path",
         "_pool",
@@ -183,6 +184,9 @@ class Pager:
         self._verify_checksums = verify_checksums
         self._writes_since_sync = 0
         self._closed = False
+        #: Called before any page changes, so a transaction can keep a
+        #: before-image. Set by Database; None when nothing is watching.
+        self._on_before_write: Callable[[int, Callable[[], bytes], str], None] | None = None
 
         # Built before the file is touched, because loading the meta page
         # already goes through it.
@@ -255,6 +259,15 @@ class Pager:
         return self._stats
 
     @property
+    def on_before_write(self):
+        """The hook a transaction manager installs. See :meth:`_write_at`."""
+        return self._on_before_write
+
+    @on_before_write.setter
+    def on_before_write(self, hook) -> None:
+        self._on_before_write = hook
+
+    @property
     def buffer_pool(self) -> BufferPool:
         """The page cache. Read it for the frame grid; do not bypass it."""
         return self._pool
@@ -277,16 +290,41 @@ class Pager:
         return MetaPage.from_bytes(raw, verify_checksum=self._verify_checksums)
 
     def _write_meta(self) -> None:
-        self._write_at(META_PAGE_ID, self._meta.to_bytes())
+        self._write_at(META_PAGE_ID, self._meta.to_bytes(), reason="meta page")
+
+    def reload_meta(self) -> None:
+        """Re-read the meta page from the pool into memory.
+
+        Needed after a rollback: the meta page is a *decoded dataclass* held in
+        this object, so restoring its bytes underneath does not change
+        ``page_count``, ``free_list_head`` or ``next_object_id``. Everything
+        else in the engine reads pages, so everything else recovers for free —
+        this is the one piece of engine state that is not on a page it reads.
+        """
+        raw = self._pool.fetch(META_PAGE_ID)
+        self._meta = MetaPage.from_bytes(bytes(raw), verify_checksum=self._verify_checksums)
 
     def flush_meta(self) -> None:
         """Persist in-memory changes to the meta page."""
         self._write_meta()
 
     def _check_file_length(self) -> None:
+        """Refuse a file *shorter* than the meta page claims. Longer is fine.
+
+        The check is one-sided, and Milestone 8 is why. A rolled-back
+        transaction restores the meta page's ``page_count``, but the file was
+        already extended and cannot be un-extended safely — so a rolled-back
+        allocation leaves trailing pages nothing references. That is also
+        exactly the state a crash between extending the file and updating the
+        meta page leaves, and it is harmless: the pages are unreachable and the
+        next allocation reuses their ids.
+
+        Short is the dangerous direction and stays an error: it means a page the
+        meta page believes in is simply not there.
+        """
         size = self._path.stat().st_size
         expected = self._meta.page_count * self._page_size
-        if size != expected:
+        if size < expected:
             raise CorruptDatabaseError(
                 f"{self._path} is {size} bytes but the meta page claims "
                 f"{self._meta.page_count} pages of {self._page_size} bytes "
@@ -381,13 +419,31 @@ class Pager:
         """Bytes only, for callers that do not care where they came from."""
         return self._fetch(page_id)[0]
 
-    def _write_at(self, page_id: int, raw: bytes) -> None:
-        """Hand a page to the pool. The disk write happens later, if at all."""
+    def _write_at(
+        self, page_id: int, raw: bytes, reason: str = "", *, capture: bool = True
+    ) -> None:
+        """Hand a page to the pool. The disk write happens later, if at all.
+
+        **Every page change in the engine passes through here** — heap rows,
+        B+ tree nodes, both catalog tables, the meta page — which is what makes
+        this the one place a transaction needs to hook. Milestone 8 installs
+        ``on_before_write`` and gets undo for the whole engine at once, with no
+        subsystem knowing transactions exist.
+
+        ``capture=False`` is for the two callers that must save the before-image
+        themselves, earlier: :meth:`allocate_page` and :meth:`free_page` drop the
+        page from the pool before writing it, so by the time this runs the old
+        bytes are gone. A brand-new page passes ``capture=False`` because it has
+        no "before" at all — undoing its allocation is what restoring the meta
+        page does.
+        """
         if len(raw) != self._page_size:
             raise ValueError(
                 f"page {page_id}: refusing to write {len(raw)} bytes "
                 f"into a {self._page_size}-byte slot"
             )
+        if capture and self._on_before_write is not None:
+            self._on_before_write(page_id, lambda: self._pool.fetch(page_id), reason)
         started = time.perf_counter_ns()
         physical_before = self._stats.physical_writes
         self._pool.store(page_id, raw)
@@ -440,9 +496,7 @@ class Pager:
         """
         self._ensure_open()
         if page_id == META_PAGE_ID:
-            raise ValueError(
-                "page 0 is the meta page; use Pager.meta or Pager.read_raw(0)"
-            )
+            raise ValueError("page 0 is the meta page; use Pager.meta or Pager.read_raw(0)")
         self._check_page_id(page_id)
         raw, cached = self._fetch(page_id)
         return Page.from_bytes(
@@ -463,7 +517,25 @@ class Pager:
         if page.page_id == META_PAGE_ID:
             raise ValueError("cannot overwrite the meta page with a slotted page")
         self._check_page_id(page.page_id)
-        self._write_at(page.page_id, page.to_bytes())
+        self._write_at(page.page_id, page.to_bytes(), reason=page.page_type.name.lower())
+
+    def _extend_file_to(self, page_count: int) -> None:
+        """Make the file at least ``page_count`` pages long."""
+        needed = page_count * self._page_size
+        self._file.flush()
+        if os.fstat(self._file.fileno()).st_size < needed:
+            os.ftruncate(self._file.fileno(), needed)
+
+    def restore_page(self, page_id: int, image: bytes) -> None:
+        """Write a before-image back during a rollback, without capturing one.
+
+        Capture is deliberately off: the hook exists to save the *previous*
+        contents of a page about to change, and a rollback is not a change to be
+        undone — it is the undoing. Capturing here would have the transaction
+        save the very page it is restoring.
+        """
+        self._ensure_open()
+        self._write_at(page_id, image, reason="rollback", capture=False)
 
     # -- allocation --------------------------------------------------------
 
@@ -489,13 +561,41 @@ class Pager:
         else:
             page_id = self._meta.page_count
             self._meta.page_count += 1
+            # Extend the file *now*, before the meta page can be written
+            # claiming the page exists.
+            #
+            # The buffer pool made this necessary and it took a crash test to
+            # find. Before Milestone 7 a page and the meta page were both
+            # written immediately, in that order, so the file was never shorter
+            # than page_count. With write-back the two are independent, and the
+            # pool is free to evict the meta page first — leaving a file that
+            # claims more pages than it has, which _check_file_length correctly
+            # refuses to open.
+            #
+            # ftruncate rather than a write: it costs one syscall instead of a
+            # page of I/O, and the zeros it leaves are replaced when the page is
+            # actually flushed. A crash in between leaves a zero page that fails
+            # its checksum on read — detected, which is the contract until the
+            # WAL can repair it.
+            self._extend_file_to(self._meta.page_count)
 
         page = Page.create(page_id, page_type, self._page_size)
+        # A recycled page has a meaningful before-image — it is on the free
+        # list, and rolling back has to put it back there — so capture it
+        # *before* invalidate() discards it. A brand-new page has no before at
+        # all: it is past the old page_count and not yet in the file, so undoing
+        # its allocation is entirely a matter of restoring the meta page.
+        if recycled and self._on_before_write is not None:
+            self._on_before_write(
+                page_id,
+                lambda: self._pool.fetch(page_id),
+                "recycled from the free list",
+            )
         # Whatever was cached under this id is superseded wholesale. Dropping it
         # avoids writing bytes that are already dead — a recycled page would
         # otherwise be flushed once with its old contents.
         self._pool.invalidate(page_id)
-        self._write_at(page_id, page.to_bytes())
+        self._write_at(page_id, page.to_bytes(), reason="allocated", capture=False)
         self._write_meta()
 
         self._stats.allocations += 1
@@ -531,8 +631,13 @@ class Pager:
 
         page = Page.create(page_id, PageType.FREE, self._page_size)
         page.next_page_id = self._meta.free_list_head
+        # Capture before invalidate(), which drops the frame without writing
+        # it back: a page dirtied earlier in this transaction has a stale copy
+        # on disk, so re-reading it afterwards would save the wrong bytes.
+        if self._on_before_write is not None:
+            self._on_before_write(page_id, lambda: self._pool.fetch(page_id), "freed")
         self._pool.invalidate(page_id)
-        self._write_at(page_id, page.to_bytes())
+        self._write_at(page_id, page.to_bytes(), reason="freed", capture=False)
         self._meta.free_list_head = page_id
         self._write_meta()
 

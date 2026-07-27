@@ -192,7 +192,75 @@ The gap between `logical_reads` and `physical_reads` is the pool working. Those
 two counters are cumulative for the open handle, not for the pool, so they
 survive a `clear()`.
 
-Arriving later: `/transactions` (8), `/wal` (9), `/locks` (10).
+### Milestone 8 — transactions
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/databases/{db}/transactions` | the open transaction, its undo log, and finished history |
+| `POST` | `/databases/{db}/transactions` | `BEGIN` |
+| `POST` | `/databases/{db}/transactions/commit` | `COMMIT` |
+| `POST` | `/databases/{db}/transactions/rollback` | `ROLLBACK` |
+
+```json
+{
+  "active": {
+    "transaction_id": 12, "state": "active", "implicit": false,
+    "statements": 3, "pages_written": 41, "pages_held": 4,
+    "pages_restored": 0, "undo_bytes": 16384, "duration_ns": 8100000,
+    "records": [
+      { "sequence": 0, "page_id": 4, "before_image_size": 4096,
+        "reason": "heap insert" }
+    ]
+  },
+  "history": [
+    { "transaction_id": 11, "state": "committed", "implicit": true,
+      "statements": 1, "pages_written": 3, "pages_held": 0,
+      "pages_restored": 0, "undo_bytes": 0, "duration_ns": 210000,
+      "records": [] }
+  ],
+  "history_limit": 50,
+  "in_transaction": true, "is_failed": false, "in_explicit_transaction": true,
+  "undo_bytes": 16384
+}
+```
+
+**`records` is the active transaction only.** A finished one has released its
+undo log, so the field is always `[]` in `history` — reporting a stale copy
+would suggest a rollback was still possible.
+
+**`pages_held` is the number that matters.** It grows with distinct pages
+touched, not with rows written, which is what makes whole-page snapshots
+affordable. The gap between it and `pages_written` is first-write-wins doing its
+job, and the explorer renders exactly that comparison.
+
+**`state` may be `failed`**: open, but doomed. A statement in it raised, so only
+`COMMIT` and `ROLLBACK` are accepted and anything else is a 422 reading
+`current transaction is aborted, commands ignored until end of transaction
+block`. PostgreSQL's rule and PostgreSQL's wording.
+
+**`COMMIT` on a failed transaction rolls back**, and the response says so:
+`action` is `"rollback"`, not `"commit"`. `action` reports the *outcome*, since
+a caller that asked to commit and got a rollback needs telling in the field it
+switches on rather than only in prose it might not render.
+
+The three verbs exist as endpoints as well as SQL because the explorer's panel
+has buttons, and a button that secretly submitted `BEGIN;` through the query
+endpoint would make the query history lie about what the user ran. They are the
+same three manager calls either way, and either route can end a transaction the
+other one opened.
+
+`POST` rather than `PUT`: `BEGIN` is not idempotent. Sending it twice is a 422,
+because ChenDB has no savepoints and will not pretend to nest.
+
+**Statelessness.** HTTP has no session, so an explicit transaction opened by one
+request stays open across requests until some later request ends it — the state
+lives on the database handle. That is a footgun for a multi-client server, and
+it is acceptable here for the reason the whole workspace design is: this API
+serves one explorer looking at its own file. `GET` reports the open transaction
+on every call so the UI can show a persistent banner rather than letting one be
+forgotten.
+
+Arriving later: `/wal` (9), `/locks` (10).
 
 ## Errors
 

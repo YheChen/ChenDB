@@ -63,9 +63,8 @@ def seeded(client: TestClient) -> TestClient:
 
 def test_health_reports_the_buffer_pool(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 7
+    assert body["milestone"] >= 7, "the pool shipped in Milestone 7"
     assert body["features"]["buffer_pool"] is True
-    assert body["features"]["transactions"] is False
 
 
 # -- the frame grid ---------------------------------------------------------
@@ -77,9 +76,7 @@ def test_every_frame_is_reported_including_the_free_ones(client: TestClient):
     body = pool(client)
     assert len(body["frames"]) == body["capacity"]
     assert body["capacity"] >= 16
-    assert [frame["frame_id"] for frame in body["frames"]] == list(
-        range(body["capacity"])
-    )
+    assert [frame["frame_id"] for frame in body["frames"]] == list(range(body["capacity"]))
 
 
 def test_a_free_frame_has_no_page(client: TestClient):
@@ -95,8 +92,7 @@ def test_working_fills_frames_with_real_page_ids(seeded: TestClient):
     assert body["resident"] > 1
 
     real_pages = {
-        summary["page_id"]
-        for summary in seeded.get(f"{BASE}/pages").json()["pages"]
+        summary["page_id"] for summary in seeded.get(f"{BASE}/pages").json()["pages"]
     }
     assert all(frame["page_id"] in real_pages for frame in resident)
 

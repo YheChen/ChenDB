@@ -6,15 +6,15 @@ shows you what it is doing while it does it.
 The engine is real: a file of fixed-size pages, slotted heap pages, binary
 record encoding, checksums, a page allocator with a free list, a SQL front end,
 a volcano executor, a persistent catalog, disk-backed B+ tree indexes, a
-cost-based planner and a buffer pool. The
+cost-based planner, a buffer pool and transactions with rollback. The
 visualizer is not a mock — every byte it renders was read back from the actual
 file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M7     database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M8     database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  [ Storage ]  [ SQL ]  [ Execution ]  [ Indexes ]                        │
+│  [ Storage ] [ SQL ] [ Execution ] [ Indexes ] [ Buffer ] [ Txns ]       │
 ├──────────────────┬───────────────────────────────────────────────────────┤
 │  INDEXES         │  POINT LOOKUP   [ 42            ]  Search             │
 │  users_age       │  found yes   matches 13   pages read 4   height 3     │
@@ -38,7 +38,7 @@ file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Milestones 1–7 of 10 are complete.** Nothing is stubbed ahead of time: a
+**Milestones 1–8 of 10 are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -57,7 +57,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 0.7.0 — Milestone 7 (storage + SQL + execution + catalog + indexes + planner + buffer pool)
+ChenDB 0.8.0 — Milestone 8 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -131,15 +131,22 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Records** | INTEGER / FLOAT / BOOLEAN / TEXT · null bitmap · schema-driven encode and decode |
 | **Heap** | linked page chain · O(1) append · lazy scan · tombstone deletes |
 | **Persistence** | survives process death; `SIGKILL` tests prove it |
-| **Diagnostics** | 5 trace levels · 23 event types · bounded retention · provably result-neutral |
+| **Diagnostics** | 5 trace levels · 37 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **Execution** | volcano operators (scan / filter / project) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk |
+| **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
+| **Planner** | logical and physical plans · statistics · a cost model calibrated by measurement · `EXPLAIN` |
+| **Buffer pool** | write-back · exact LRU · counters for every frame |
+| **Transactions** | `BEGIN` / `COMMIT` / `ROLLBACK` · page-level undo log · implicit transactions · atomic DDL |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
 
-Not yet built: indexes, a buffer pool, transactions, WAL, MVCC. Those are
-Milestones 5 through 10.
+Not yet built: a write-ahead log and MVCC — Milestones 9 and 10. Which means
+transactions are atomic against **errors**, not against **power loss**: a
+rollback in-process is always correct, and a crash mid-transaction is not
+undone. `tests/recovery/` asserts both directions rather than leaving it to the
+prose.
 
 ---
 
@@ -269,6 +276,7 @@ change the system observed.
 | `python examples/milestone5_indexes.py` | narrated walkthrough of the B+ tree |
 | `python examples/milestone6_planner.py` | narrated walkthrough of the planner |
 | `python examples/milestone7_buffer_pool.py` | narrated walkthrough of the buffer pool |
+| `python examples/milestone8_transactions.py` | narrated walkthrough of transactions and rollback |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
@@ -290,6 +298,7 @@ change the system observed.
 | [Milestone 5](docs/milestone-05-btree-index.md) | order-preserving keys, the B+ tree, and when an index loses |
 | [Milestone 6](docs/milestone-06-planner.md) | statistics, a cost model calibrated by measurement, and EXPLAIN |
 | [Milestone 7](docs/milestone-07-buffer-pool.md) | the page cache, and why the win was not the syscall |
+| [Milestone 8](docs/milestone-08-transactions.md) | physical undo, why it made DDL atomic for free, and where atomicity stops |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

@@ -92,11 +92,17 @@ from engine.server.schemas.sql import (
     StatementModel,
     TokenModel,
 )
+from engine.server.schemas.transactions import (
+    TransactionListResponse,
+    TransactionModel,
+    UndoRecordModel,
+)
 from engine.storage.buffer import PoolSnapshot
 from engine.storage.constants import INVALID_PAGE_ID
 from engine.storage.heap import RecordId
 from engine.storage.inspect import HeaderField, PageDetail, PageSummary, SlotDetail
 from engine.storage.pager import PagerStats
+from engine.transaction.manager import Transaction, TransactionManager
 
 __all__ = [
     "ast_node_to_api",
@@ -233,9 +239,7 @@ def field_layout_to_api(field: FieldLayout) -> FieldLayoutModel:
 
 def _bitmap_bits(bitmap: bytes, column_count: int) -> list[bool]:
     """Expand the packed null bitmap into one boolean per column."""
-    return [
-        bool(bitmap[index // 8] >> (index % 8) & 1) for index in range(column_count)
-    ]
+    return [bool(bitmap[index // 8] >> (index % 8) & 1) for index in range(column_count)]
 
 
 def record_layout_to_api(layout: RecordLayout) -> RecordLayoutModel:
@@ -393,9 +397,7 @@ def parse_outcome_to_api(outcome: ParseOutcome) -> ParseResponse:
     return ParseResponse(
         sql=outcome.sql,
         ok=outcome.ok,
-        tokens=[
-            token_to_api(index, token) for index, token in enumerate(outcome.tokens)
-        ],
+        tokens=[token_to_api(index, token) for index, token in enumerate(outcome.tokens)],
         ast=AstTreeModel(
             nodes=nodes,
             root_ids=[statement.node_id for statement in outcome.statements],
@@ -521,9 +523,7 @@ def query_result_to_api(result: QueryResult) -> QueryResultModel:
         columns=[result_column_to_api(column) for column in result.columns],
         rows=[_json_row(row) for row in result.rows],
         record_ids=[record_id_to_api(rid) for rid in result.record_ids],
-        plan=plan_to_api(result.plan, result.planned)
-        if result.plan is not None
-        else None,
+        plan=plan_to_api(result.plan, result.planned) if result.plan is not None else None,
         rows_returned=stats.rows_returned,
         rows_affected=stats.rows_affected,
         rows_scanned=stats.rows_scanned,
@@ -752,4 +752,63 @@ def buffer_pool_to_api(snapshot: PoolSnapshot, pager: PagerStats) -> BufferPoolR
         physical_reads=pager.physical_reads,
         logical_writes=pager.page_writes,
         physical_writes=pager.physical_writes,
+    )
+
+
+def transaction_to_api(
+    transaction: Transaction, *, with_records: bool = False
+) -> TransactionModel:
+    """One transaction.
+
+    ``with_records`` is off by default because a finished transaction has no
+    records to give — the undo log is released the moment it commits or aborts —
+    and because an active one can hold thousands of them. The list view asks for
+    them on the active transaction only.
+    """
+    records = (
+        [
+            UndoRecordModel(
+                sequence=record.sequence,
+                page_id=record.page_id,
+                before_image_size=record.size,
+                reason=record.reason,
+            )
+            for record in transaction.records()
+        ]
+        if with_records
+        else []
+    )
+    return TransactionModel(
+        transaction_id=transaction.transaction_id,
+        state=transaction.state.value,  # type: ignore[arg-type]
+        implicit=transaction.implicit,
+        statements=transaction.statements,
+        pages_written=transaction.pages_written,
+        pages_held=transaction.pages_held,
+        pages_restored=transaction.pages_restored,
+        undo_bytes=transaction.undo_bytes,
+        duration_ns=transaction.duration_ns,
+        records=records,
+    )
+
+
+def transactions_to_api(manager: TransactionManager) -> TransactionListResponse:
+    """The timeline: what is open, and what has finished.
+
+    Read from a manager rather than a snapshot, unlike the buffer pool mapper.
+    That is safe for a different reason: the caller holds the engine lock while
+    building the tuples, and every value copied out is an int, a bool or a
+    frozen dataclass. There is no live object here to observe mid-mutation.
+    """
+    active = manager.active
+    return TransactionListResponse(
+        active=(
+            transaction_to_api(active, with_records=True) if active is not None else None
+        ),
+        history=[transaction_to_api(item) for item in manager.history()],
+        history_limit=manager.HISTORY_LIMIT,
+        in_transaction=manager.in_transaction,
+        is_failed=manager.is_failed,
+        in_explicit_transaction=manager.in_explicit_transaction,
+        undo_bytes=active.undo_bytes if active is not None else 0,
     )

@@ -50,6 +50,7 @@ from engine.errors import (
     ExecutionError,
     IndexingError,
     QueryCancelledError,
+    TransactionError,
 )
 from engine.executor.binder import (
     BoundInsert,
@@ -72,10 +73,13 @@ from engine.executor.operators import (
 )
 from engine.parser.ast import (
     AnalyzeStatement,
+    BeginStatement,
+    CommitStatement,
     CreateIndexStatement,
     CreateTableStatement,
     ExplainStatement,
     InsertStatement,
+    RollbackStatement,
     SelectStatement,
     Statement,
 )
@@ -102,6 +106,7 @@ from engine.planner.physical import (
 )
 from engine.serialization.record import Row
 from engine.storage.heap import RecordId
+from engine.transaction.manager import TransactionState
 
 if TYPE_CHECKING:
     from engine.database import Database
@@ -349,22 +354,34 @@ def execute_statement(
     reads_before = database.stats.page_reads
     writes_before = database.stats.page_writes
     context.controller.mark_running()
+    _check_transaction_usable(statement, database)
+    database.transactions.note_statement()
 
-    match statement:
-        case CreateTableStatement():
-            result = _execute_create_table(statement, database)
-        case CreateIndexStatement():
-            result = _execute_create_index(statement, database)
-        case AnalyzeStatement():
-            result = _execute_analyze(statement, database)
-        case ExplainStatement():
-            result = _execute_explain(statement, database, context, max_rows)
-        case InsertStatement():
-            result = _execute_insert(statement, database, context)
-        case SelectStatement():
-            result = _execute_select(statement, database, context)
-        case _:
-            raise ExecutionError(f"cannot execute {statement.node_type}")
+    try:
+        match statement:
+            case CreateTableStatement():
+                result = _execute_create_table(statement, database)
+            case CreateIndexStatement():
+                result = _execute_create_index(statement, database)
+            case AnalyzeStatement():
+                result = _execute_analyze(statement, database)
+            case BeginStatement() | CommitStatement() | RollbackStatement():
+                result = _execute_transaction(statement, database)
+            case ExplainStatement():
+                result = _execute_explain(statement, database, context, max_rows)
+            case InsertStatement():
+                result = _execute_insert(statement, database, context)
+            case SelectStatement():
+                result = _execute_select(statement, database, context)
+            case _:
+                raise ExecutionError(f"cannot execute {statement.node_type}")
+    except Exception:
+        # The transaction is now doomed, whether or not this call owns it.
+        # ``execute_script`` will unwind one it opened itself; for one the
+        # client opened in an earlier request, this is what stops a later
+        # COMMIT from keeping the work that ran before the failure.
+        database.transactions.mark_failed()
+        raise
 
     result.stats.duration_ns = time.perf_counter_ns() - started
     result.stats.pages_read = database.stats.page_reads - reads_before
@@ -469,9 +486,73 @@ def _execute_create_index(
     )
 
 
-def _execute_analyze(
-    statement: AnalyzeStatement, database: Database
-) -> QueryResult:
+def _check_transaction_usable(statement: Statement, database: Database) -> None:
+    """Refuse anything but COMMIT and ROLLBACK once a statement has failed.
+
+    PostgreSQL's rule, and its wording. Without it the failed state would be
+    advisory: a client could carry on inserting after an error and the
+    transaction would look healthy again by the time it committed.
+    """
+    if not database.transactions.is_failed:
+        return
+    if isinstance(statement, CommitStatement | RollbackStatement):
+        return
+    raise BindingError(
+        "current transaction is aborted, commands ignored until end of transaction block",
+        start=statement.span.start,
+        end=statement.span.end,
+        line=statement.span.line,
+        column=statement.span.column,
+    )
+
+
+def _execute_transaction(statement: Statement, database: Database) -> QueryResult:
+    """``BEGIN`` / ``COMMIT`` / ``ROLLBACK``.
+
+    A ``TransactionError`` becomes a positioned ``BindingError`` so the editor
+    can underline the offending ``COMMIT`` rather than reporting a bare engine
+    error with no idea where it came from.
+    """
+    try:
+        match statement:
+            case BeginStatement():
+                transaction = database.begin()
+                message = f"transaction {transaction.transaction_id} started"
+            case CommitStatement():
+                transaction = database.commit()
+                if transaction.state is TransactionState.ABORTED:
+                    # COMMIT after a failed statement is a rollback. Say so
+                    # rather than reporting success for work that is gone.
+                    message = (
+                        f"transaction {transaction.transaction_id} rolled back: "
+                        f"a statement in it failed "
+                        f"({transaction.pages_restored} page(s) restored)"
+                    )
+                else:
+                    message = (
+                        f"transaction {transaction.transaction_id} committed "
+                        f"({transaction.statements} statement(s), "
+                        f"{transaction.pages_written} page write(s))"
+                    )
+            case _:
+                transaction = database.rollback()
+                message = (
+                    f"transaction {transaction.transaction_id} rolled back "
+                    f"({transaction.pages_restored} page(s) restored)"
+                )
+    except TransactionError as exc:
+        raise BindingError(
+            str(exc),
+            start=statement.span.start,
+            end=statement.span.end,
+            line=statement.span.line,
+            column=statement.span.column,
+        ) from None
+
+    return QueryResult(statement_kind=statement.node_type, message=message)
+
+
+def _execute_analyze(statement: AnalyzeStatement, database: Database) -> QueryResult:
     name = statement.table.name if statement.table else None
     try:
         gathered = database.analyze(name)
@@ -501,9 +582,7 @@ def _execute_analyze(
 #: The columns EXPLAIN returns. Rows rather than a bespoke response shape, so
 #: every client that can already display a SELECT can display an EXPLAIN —
 #: which is exactly why PostgreSQL's EXPLAIN returns a one-column result set.
-_EXPLAIN_COLUMNS: tuple[ResultColumn, ...] = (
-    ResultColumn("QUERY PLAN", None),
-)
+_EXPLAIN_COLUMNS: tuple[ResultColumn, ...] = (ResultColumn("QUERY PLAN", None),)
 
 
 def _execute_explain(
@@ -560,17 +639,26 @@ def _explain_lines(planned: PlannedQuery, actual: QueryResult | None) -> list[st
         ]
 
     lines.append("")
-    lines.append(f"Statistics: {planned.statistics.row_count} rows, "
-                 f"{planned.statistics.page_count} pages"
-                 + (" (STALE — the table has been written to since ANALYZE)"
-                    if planned.statistics_are_stale else ""))
+    lines.append(
+        f"Statistics: {planned.statistics.row_count} rows, "
+        f"{planned.statistics.page_count} pages"
+        + (
+            " (STALE — the table has been written to since ANALYZE)"
+            if planned.statistics_are_stale
+            else ""
+        )
+    )
     if planned.rewrites:
         lines.append(f"Rewrites applied: {', '.join(planned.rewrites)}")
     if len(planned.alternatives) > 1:
         lines.append("Alternatives considered:")
         for alternative in planned.alternatives:
             marker = "->" if alternative.chosen else "  "
-            reason = f"  [{alternative.rejected_because}]" if alternative.rejected_because else ""
+            reason = (
+                f"  [{alternative.rejected_because}]"
+                if alternative.rejected_because
+                else ""
+            )
             lines.append(
                 f"  {marker} {alternative.description}  "
                 f"cost={alternative.cost.total:.1f} rows={alternative.cost.rows:.0f}{reason}"
@@ -670,9 +758,7 @@ def _execute_select(
     stats.rows_returned = len(rows)
     stats.rows_scanned = scan.stats.input_rows if scan else 0
     stats.rows_rejected = sum(
-        operator.rows_rejected
-        for operator in _walk(plan)
-        if isinstance(operator, Filter)
+        operator.rows_rejected for operator in _walk(plan) if isinstance(operator, Filter)
     )
 
     return QueryResult(
@@ -695,15 +781,36 @@ def execute_script(
     controller: StepController | None = None,
     max_rows: int = DEFAULT_MAX_ROWS,
     planner_options: PlannerOptions = DEFAULT_PLANNER_OPTIONS,
+    atomic: bool = True,
 ) -> list[QueryResult]:
-    """Parse and run every statement in ``sql``, in order.
+    """Parse and run every statement in ``sql``, in order — all or nothing.
 
-    There are no transactions yet, so a script that fails half-way leaves the
-    statements before the failure applied. Milestone 8 makes that atomic.
+    Since Milestone 8 a script that fails half-way leaves the database as it
+    was. The whole script runs in one implicit transaction, committed when the
+    last statement finishes and rolled back if any of them raises.
+
+    That is deliberately **not** the SQL standard, which autocommits each
+    statement. It is what this function's docstring promised from Milestone 3
+    onward, and it is the more useful default for a script: half-applied setup
+    is rarely what anyone wants. A client that needs per-statement autocommit
+    sends one statement at a time, which is what the query API does not do and
+    what ``atomic=False`` is for.
+
+    A script that manages transactions itself still works, and takes ownership
+    when it does. ``BEGIN`` adopts the implicit transaction rather than nesting,
+    and from that point the script's own ``COMMIT`` ends it — a script of just
+    ``BEGIN;`` leaves a transaction open, which is what PostgreSQL does with the
+    same text in one simple-query message. A ``COMMIT`` part-way through ends
+    the transaction, so the statements after it run in a fresh implicit one.
+
+    A failure still rolls back, explicit or not. ChenDB has no "aborted but
+    open" state to park a transaction in the way PostgreSQL does, and leaving a
+    half-failed transaction open would strand a client that never sends
+    ``ROLLBACK``.
     """
-    results: list[QueryResult] = []
-    for statement in parse(sql, tracer=tracer):
-        results.append(
+    statements = parse(sql, tracer=tracer)
+    if not atomic:
+        return [
             execute_statement(
                 statement,
                 database,
@@ -712,7 +819,39 @@ def execute_script(
                 max_rows=max_rows,
                 planner_options=planner_options,
             )
-        )
+            for statement in statements
+        ]
+
+    outer = database.transactions.active
+    if outer is None:
+        database.begin(implicit=True)
+    results: list[QueryResult] = []
+    try:
+        for statement in statements:
+            results.append(
+                execute_statement(
+                    statement,
+                    database,
+                    tracer=tracer,
+                    controller=controller,
+                    max_rows=max_rows,
+                    planner_options=planner_options,
+                )
+            )
+    except BaseException:
+        # Only unwind what this call started. A caller that had its own
+        # transaction open keeps it, and decides for itself.
+        if outer is None and database.transactions.active is not None:
+            database.rollback()
+        raise
+
+    # Auto-commit only what is still *ours*. A ``BEGIN`` in the script turned
+    # the implicit transaction explicit, which means the client has taken
+    # ownership and is going to send its own COMMIT — possibly in a later
+    # request. Committing it here would make a lone ``BEGIN;`` a no-op.
+    active = database.transactions.active
+    if outer is None and active is not None and active.implicit:
+        database.commit()
     return results
 
 

@@ -74,8 +74,12 @@ engine/
 │   ├── system.py          the system tables' own schemas, compiled in
 │   └── catalog.py         Catalog — tables and indexes, with a cache
 │
+├── transaction/
+│   ├── undo.py            UndoLog — page id → before-image, first write wins
+│   └── manager.py         begin / commit / rollback, and the write hook
+│
 └── parser/ planner/ optimizer/ executor/
-    transaction/ concurrency/ wal/              ← Milestones 2–10
+    concurrency/ wal/                           ← Milestones 2, 6, 9, 10
 ```
 
 Each layer knows only the one beneath it:
@@ -96,6 +100,24 @@ That layering is what makes each milestone an *insertion* rather than a
 rewrite. Milestone 7's buffer pool slides between `HeapFile` and `Pager`
 without either of them changing, because the heap only ever asks for "the page
 with this id" and the pager only ever answers with bytes.
+
+Milestone 8's transactions are the same trick from the other direction. Every
+write in the engine funnels through one method on the pager, so a single hook
+there captures a before-image of any page about to change — and because the
+undo log works in **pages rather than rows**, it never learns what a heap
+record, a B+ tree node or a catalog row is. `CREATE TABLE` became atomic with
+no change to `engine/catalog/`, and every index operation became undoable with
+no change to `engine/index/`.
+
+```
+     HeapFile / BPlusTree / Catalog          none of them know
+              │
+              ▼
+       Pager._write_at ───────▶ TransactionManager.before_write
+              │                        │
+              ▼                        ▼
+        BufferPool                  UndoLog     one snapshot per page
+```
 
 ## An insert, end to end
 

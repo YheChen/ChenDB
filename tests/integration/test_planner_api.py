@@ -61,7 +61,7 @@ def plan_of(client: TestClient, sql: str) -> dict:
 
 def test_health_reports_the_planner(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 7
+    assert body["milestone"] >= 6, "the planner shipped in Milestone 6"
     assert body["features"]["planner"] is True
     assert body["features"]["buffer_pool"] is True
 
@@ -145,9 +145,12 @@ def test_an_index_alternative_names_its_index(seeded: TestClient):
     plan = plan_of(seeded, "SELECT id FROM users WHERE bucket = 5")
     index = next(a for a in plan["alternatives"] if a["access_path"] == "PhysicalIndexScan")
     assert index["index_name"] == "users_bucket"
-    assert next(
-        a for a in plan["alternatives"] if a["access_path"] == "PhysicalSeqScan"
-    )["index_name"] is None
+    assert (
+        next(a for a in plan["alternatives"] if a["access_path"] == "PhysicalSeqScan")[
+            "index_name"
+        ]
+        is None
+    )
 
 
 def test_a_query_with_no_index_has_one_alternative(seeded: TestClient):

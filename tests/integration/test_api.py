@@ -30,14 +30,22 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 @pytest.fixture
 def seeded(client: TestClient) -> TestClient:
     """A client with a ``demo`` database holding a ``users`` table and 3 rows."""
-    client.post(f"{API_PREFIX}/databases", json={"database_id": "demo", "page_size": PAGE_SIZE})
+    client.post(
+        f"{API_PREFIX}/databases", json={"database_id": "demo", "page_size": PAGE_SIZE}
+    )
     client.post(
         f"{API_PREFIX}/databases/demo/tables",
         json={"name": "users", "columns": USERS_COLUMNS},
     )
     client.post(
         f"{API_PREFIX}/databases/demo/tables/users/records",
-        json={"rows": [[1, "ada@example.com", 36], [2, "alan@example.com", None], [3, "grace@example.com", 45]]},
+        json={
+            "rows": [
+                [1, "ada@example.com", 36],
+                [2, "alan@example.com", None],
+                [3, "grace@example.com", 45],
+            ]
+        },
     )
     return client
 
@@ -46,8 +54,10 @@ def seeded(client: TestClient) -> TestClient:
 
 
 def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
+    # The one place that pins the exact number. Every other suite asserts the
+    # floor its own feature shipped at, so finishing a milestone edits one file.
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 7
+    assert body["milestone"] == 8
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
@@ -58,6 +68,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     assert body["features"]["indexes"] is True
     assert body["features"]["planner"] is True
     assert body["features"]["buffer_pool"] is True
+    assert body["features"]["transactions"] is True
     assert body["features"]["mvcc"] is False
 
 
@@ -168,7 +179,9 @@ def test_unknown_request_fields_are_rejected(client: TestClient):
 
 
 def test_create_table_returns_the_schema_and_storage(client: TestClient):
-    client.post(f"{API_PREFIX}/databases", json={"database_id": "demo", "page_size": PAGE_SIZE})
+    client.post(
+        f"{API_PREFIX}/databases", json={"database_id": "demo", "page_size": PAGE_SIZE}
+    )
     response = client.post(
         f"{API_PREFIX}/databases/demo/tables",
         json={"name": "users", "columns": USERS_COLUMNS},
@@ -177,7 +190,11 @@ def test_create_table_returns_the_schema_and_storage(client: TestClient):
     body = response.json()
     assert body["name"] == "users"
     assert body["is_system"] is False
-    assert [column["name"] for column in body["schema"]["columns"]] == ["id", "email", "age"]
+    assert [column["name"] for column in body["schema"]["columns"]] == [
+        "id",
+        "email",
+        "age",
+    ]
     assert body["schema"]["null_bitmap_size"] == 1
     assert body["schema"]["fixed_row_size"] is None  # TEXT makes rows variable
     assert body["storage"]["row_count"] == 0
@@ -225,7 +242,8 @@ def test_an_invalid_column_type_is_rejected(client: TestClient):
 
 def test_insert_reports_addresses_and_cost(seeded: TestClient):
     response = seeded.post(
-        f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[4, "x@y.z", 1]]}
+        f"{API_PREFIX}/databases/demo/tables/users/records",
+        json={"rows": [[4, "x@y.z", 1]]},
     )
     assert response.status_code == 201
     body = response.json()
@@ -252,14 +270,17 @@ def test_scan_paginates(seeded: TestClient):
     first = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records?limit=2").json()
     assert first["returned"] == 2 and first["has_more"] is True
 
-    second = seeded.get(f"{API_PREFIX}/databases/demo/tables/users/records?offset=2&limit=2").json()
+    second = seeded.get(
+        f"{API_PREFIX}/databases/demo/tables/users/records?offset=2&limit=2"
+    ).json()
     assert second["returned"] == 1 and second["has_more"] is False
     assert second["rows"][0]["values"][0] == 3
 
 
 def test_type_errors_are_reported_per_column(seeded: TestClient):
     response = seeded.post(
-        f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [["not-an-int", "a@b.c", 1]]}
+        f"{API_PREFIX}/databases/demo/tables/users/records",
+        json={"rows": [["not-an-int", "a@b.c", 1]]},
     )
     assert response.status_code == 422
     assert "'id'" in response.json()["detail"]["message"]
@@ -274,7 +295,9 @@ def test_not_null_violations_are_reported(seeded: TestClient):
 
 
 def test_wrong_arity_is_reported(seeded: TestClient):
-    response = seeded.post(f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[1]]})
+    response = seeded.post(
+        f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[1]]}
+    )
     assert response.status_code == 422
 
 
@@ -408,9 +431,14 @@ def test_trace_level_can_be_read_and_changed(seeded: TestClient):
     updated = seeded.put(f"{API_PREFIX}/databases/demo/trace", json={"level": "OFF"})
     assert updated.status_code == 200 and updated.json()["level"] == "OFF"
 
-    seeded.events_before = seeded.get(f"{API_PREFIX}/databases/demo/events?limit=2000").json()
+    seeded.events_before = seeded.get(
+        f"{API_PREFIX}/databases/demo/events?limit=2000"
+    ).json()
     before = seeded.events_before["stats"]["total_recorded"]
-    seeded.post(f"{API_PREFIX}/databases/demo/tables/users/records", json={"rows": [[99, "q@r.s", 1]]})
+    seeded.post(
+        f"{API_PREFIX}/databases/demo/tables/users/records",
+        json={"rows": [[99, "q@r.s", 1]]},
+    )
     after = seeded.get(f"{API_PREFIX}/databases/demo/events?limit=1").json()["stats"]
     assert after["total_recorded"] == before, "OFF must record nothing"
 

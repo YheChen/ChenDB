@@ -49,11 +49,38 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
+
+MILESTONE = int(__version__.split(".")[1])
+"""Highest completed milestone, derived rather than declared.
+
+It used to be written out in three places — here, the CLI banner and the
+server's ``/health`` — and the CLI's copy sat one milestone behind for a whole
+release because nothing failed when it drifted. The roadmap already says
+``0.N.0`` means Milestone N, so the version is the single source and this is
+arithmetic on it."""
+
+MILESTONE_FEATURES: tuple[str, ...] = (
+    "storage",
+    "SQL",
+    "execution",
+    "catalog",
+    "indexes",
+    "planner",
+    "buffer pool",
+    "transactions",
+)
+"""What the engine can do, in the order the milestones added it.
+
+Prose for banners, not a capability check — the API's ``/health`` has structured
+flags for that. One entry per shipped milestone, so ``len()`` is a cheap
+assertion that this list and :data:`MILESTONE` agree."""
 
 __all__ = [
     "DEFAULT_PAGE_SIZE",
+    "MILESTONE",
+    "MILESTONE_FEATURES",
     "BPlusTree",
     "Catalog",
     "ChenDBError",

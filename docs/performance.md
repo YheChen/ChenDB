@@ -215,6 +215,59 @@ sequential scan in Milestone 6 and is an index scan now.
 
 ---
 
+## Transactions — Milestone 8
+
+The undo log sits on the path of **every page write in the engine**, so the
+question is what it costs when it is doing nothing. Measured against a 41 ns
+loop floor:
+
+| Call | Median | What it does |
+|---|---|---|
+| `before_write`, no transaction open | 42 ns | one `is None` check |
+| `before_write`, page already captured | 84 ns | one set lookup |
+
+An insert costs about 13 µs, so the hook is under 1% either way. It is the same
+rule the event system follows: **machinery that is always on has to be nearly
+free when it is off.**
+
+The current page image is passed as a **callable rather than bytes**, so the
+page is only read when a snapshot is actually going to be kept. Thanks to
+first-write-wins that is the minority of writes by a wide margin.
+
+### The undo log is measured in pages, not rows
+
+```
+  20,000 rows inserted inside one transaction
+
+    page writes seen      20,352
+    before-images kept        91      <- 223x fewer
+    undo log                 364 KiB
+    rollback                 111 us
+```
+
+A page is captured the first time it changes and never again, so the log grows
+with *distinct pages touched*. A logical undo log would have held 20,000
+records; this one held 91 snapshots. That ratio is the entire reason whole-page
+snapshots are affordable — see `docs/milestone-08-transactions.md`.
+
+### Rollback
+
+| Rows in the transaction | Pages held | Rollback |
+|---|---|---|
+| 100 | 4 | 10.3 µs |
+| 1,000 | 8 | 11.0 µs |
+| 5,000 | 25 | 27.1 µs |
+| 20,000 | 91 | 111 µs |
+
+Nearly all of the small numbers is fixed overhead — reloading the meta page and
+invalidating the catalog and statistics caches. The marginal cost is about 1 µs
+per page: one memory copy plus one write through the buffer pool.
+
+Compare PostgreSQL, where a rollback is O(1) because nothing is undone at all —
+aborted tuples stay in the heap, invisible, until `VACUUM`. That is MVCC paying
+for itself, and it is the trade ChenDB makes in the other direction until
+Milestone 10.
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |
@@ -222,6 +275,8 @@ sequential scan in Milestone 6 and is an index scan now.
 | CRC32 per page | one pass over the page on read and write | a torn write becomes a loud error instead of wrong answers |
 | `validate()` on read | O(slots) | catches a corrupt header before it corrupts memory |
 | Meta write per allocation | one extra page write | the free list and page count must survive a crash |
+| `ftruncate` per new page | one syscall, no I/O | the pool may evict the meta page before the pages it references; the file must never be shorter than it claims |
+| Undo capture, first write to a page | one page copy | a rollback that restores bytes needs the bytes |
 | Null bitmap always present | 1 byte per row per 8 columns | branch-free decoding |
 
 The checksum is the expensive one — it touches the whole page. PostgreSQL makes
@@ -241,17 +296,21 @@ the inspector.
 - **Queries are invalidated precisely.** An insert invalidates records, pages
   and the database summary — not the database *list*.
 
-## What Milestone 7 should change
+## What Milestone 9 should change
 
-The buffer pool is the first milestone whose entire justification is
-performance, so these are the numbers to beat:
+The WAL is what makes a commit mean something on disk, so these are the numbers
+to watch:
 
-- Repeated point lookups on the same page: *n* reads today, 1 read + *n*−1
-  cache hits after.
-- A scan run twice: 2*p* reads today, *p* + *p* hits after.
-- Insert-heavy workloads: one write per row today; a dirty page written once
-  per eviction after.
-
-`PageReadEvent.source` already distinguishes `"disk"` from `"buffer_pool"`, so
-the visualizer will be able to colour hits and misses on day one of that
-milestone.
+- **Commit becomes a write.** Today it is a state change and costs nothing; with
+  a log it costs one append plus, at some interval, one `fsync`. Group commit is
+  the standard answer and the reason to measure batches rather than single
+  commits.
+- **`sync` should stop being the durability point.** A no-force policy means
+  committing without flushing every dirty page, so a commit-heavy workload
+  should get *faster* in wall-clock terms even though it does more I/O calls.
+- **Undo can leave memory.** `MAX_UNDO_BYTES` caps a transaction at 64 MiB
+  today. Spilling to the log removes the ceiling; the thing to measure is what
+  a transaction larger than memory costs.
+- **`_extend_file_to` becomes redundant.** A log that records the allocation can
+  repair a short file during recovery, so the pager stops paying a syscall per
+  new page to prevent one.

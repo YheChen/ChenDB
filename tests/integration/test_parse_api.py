@@ -38,7 +38,7 @@ def nodes_by_id(body: dict) -> dict[int, dict]:
 
 def test_health_reports_sql_parsing(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 7
+    assert body["milestone"] >= 2, "parsing shipped in Milestone 2"
     assert body["features"]["sql"] is True
 
 
@@ -50,9 +50,7 @@ def test_parse_is_separate_from_query(client: TestClient):
     """
     bad = {"sql": "SELECT * FROM"}
     assert client.post(PARSE, json=bad).status_code == 200
-    assert (
-        client.post(f"{API_PREFIX}/databases/demo/query", json=bad).status_code == 422
-    )
+    assert client.post(f"{API_PREFIX}/databases/demo/query", json=bad).status_code == 422
 
 
 # -- happy path ------------------------------------------------------------
@@ -319,6 +317,7 @@ def test_parsing_still_reads_no_pages(client: TestClient):
     time, so /parse remains free of I/O. That is why the SQL workspace can parse
     on every keystroke.
     """
+
     def page_reads() -> int:
         return client.get(f"{API_PREFIX}/databases/demo").json()["stats"]["page_reads"]
 

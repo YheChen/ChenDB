@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from engine import MILESTONE
 from engine import __version__ as engine_version
 from engine.errors import ChenDBError
 from engine.server.config import ServerConfig, load_config
@@ -28,6 +29,7 @@ from engine.server.routers import (
     pages,
     query,
     sql,
+    transactions,
 )
 from engine.server.schemas.common import ApiError, HealthResponse
 from engine.server.workspace import Workspace
@@ -37,25 +39,25 @@ __all__ = ["API_PREFIX", "API_VERSION", "MILESTONE", "create_app"]
 API_VERSION = "v1"
 API_PREFIX = f"/api/{API_VERSION}"
 
-#: Highest completed milestone. The frontend reads this from /health and hides
-#: panels for anything not built yet, rather than showing dead controls.
-MILESTONE = 7
-
+#: Highest completed milestone, re-exported from :mod:`engine` so the API, the
+#: CLI and the version string cannot disagree. The frontend reads this from
+#: /health and hides panels for anything not built yet, rather than showing dead
+#: controls.
 #: Advertised capabilities. Each flips to true in the milestone that ships it.
 FEATURES: dict[str, bool] = {
     "storage": True,
     "page_inspector": True,
     "diagnostics": True,
     "event_stream": True,
-    "sql": True,           # Milestone 2 — parsing only, no execution
-    "execution": True,     # Milestone 3 — volcano operators + step mode
-    "catalog": True,       # Milestone 4 — real system tables
-    "indexes": True,       # Milestone 5 — B+ trees, CREATE INDEX, tree view
-    "planner": True,       # Milestone 6 — cost model, EXPLAIN, alternatives
-    "buffer_pool": True,   # Milestone 7 — frames, write-back, LRU
-    "transactions": False, # Milestone 8
-    "wal": False,          # Milestone 9
-    "mvcc": False,         # Milestone 10
+    "sql": True,  # Milestone 2 — parsing only, no execution
+    "execution": True,  # Milestone 3 — volcano operators + step mode
+    "catalog": True,  # Milestone 4 — real system tables
+    "indexes": True,  # Milestone 5 — B+ trees, CREATE INDEX, tree view
+    "planner": True,  # Milestone 6 — cost model, EXPLAIN, alternatives
+    "buffer_pool": True,  # Milestone 7 — frames, write-back, LRU
+    "transactions": True,  # Milestone 8 — undo log, BEGIN/COMMIT/ROLLBACK
+    "wal": False,  # Milestone 9
+    "mvcc": False,  # Milestone 10
 }
 
 _DESCRIPTION = """
@@ -115,9 +117,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         """
         return JSONResponse(
             status_code=http_status_for(exc),
-            content=ApiError(
-                error=type(exc).__name__, message=str(exc)
-            ).model_dump(),
+            content=ApiError(error=type(exc).__name__, message=str(exc)).model_dump(),
         )
 
     @app.get(
@@ -141,6 +141,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(catalog.router, prefix=API_PREFIX)
     app.include_router(indexes.router, prefix=API_PREFIX)
     app.include_router(buffer.router, prefix=API_PREFIX)
+    app.include_router(transactions.router, prefix=API_PREFIX)
     app.include_router(pages.router, prefix=API_PREFIX)
     app.include_router(events.router, prefix=API_PREFIX)
     app.include_router(sql.router, prefix=API_PREFIX)

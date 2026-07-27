@@ -428,8 +428,7 @@ class Catalog:
 
         if is_system_table(name):
             raise CatalogError(
-                f"{name!r} is reserved: names beginning {'chendb_'!r} belong to "
-                f"the engine"
+                f"{name!r} is reserved: names beginning {'chendb_'!r} belong to the engine"
             )
         if self.get_table(name) is not None:
             raise CatalogError(f"table {name!r} already exists")
@@ -535,9 +534,7 @@ class Catalog:
                 continue
             heap.delete(record_id)
             heap.insert(
-                encode_record(
-                    TABLES_TABLE_SCHEMA, (info.table_id, info.name, first, last)
-                )
+                encode_record(TABLES_TABLE_SCHEMA, (info.table_id, info.name, first, last))
             )
             break
 
@@ -561,9 +558,7 @@ class Catalog:
         indexes = list(self._index_map().values())
         if table is not None:
             folded = self.require_table(table).name.casefold()
-            indexes = [
-                index for index in indexes if index.table_name.casefold() == folded
-            ]
+            indexes = [index for index in indexes if index.table_name.casefold() == folded]
         return sorted(indexes, key=lambda index: index.name.casefold())
 
     def get_index(self, name: str) -> IndexInfo | None:
@@ -572,7 +567,9 @@ class Catalog:
         index = self._index_map().get(name.casefold())
         if index is not None:
             self._stats.cache_hits += 1
-        self._emit_lookup(name, found=index is not None, cached=index is not None, kind="index")
+        self._emit_lookup(
+            name, found=index is not None, cached=index is not None, kind="index"
+        )
         return index
 
     def require_index(self, name: str) -> IndexInfo:
@@ -696,7 +693,9 @@ class Catalog:
         heap = self.heap_for(info.name)
         for record_id, payload in heap.scan():
             values = decode_record(info.schema, payload)
-            tree.insert(encode_key(values[position], info.schema[position].data_type), record_id)
+            tree.insert(
+                encode_key(values[position], info.schema[position].data_type), record_id
+            )
             rows_indexed += 1
 
         self.indexes_heap.insert(
@@ -814,10 +813,23 @@ class Catalog:
         return self._stats
 
     def invalidate(self) -> None:
-        """Drop the cache. For tests that mutate the catalog behind its back."""
+        """Drop every cached thing, so the next read comes from the pages.
+
+        For tests that mutate the catalog behind its back, and — since
+        Milestone 8 — after a rollback, where the pages have changed underneath
+        every cached object at once.
+
+        The three system heaps go too. They look immutable but are not: a
+        ``HeapFile`` remembers its ``last_page_id`` for O(1) append, and a
+        rolled-back insert that extended one would leave that pointing at a page
+        the catalog no longer claims.
+        """
         self._cache.clear()
         self._index_cache = None
         self._trees.clear()
+        self._tables_heap = None
+        self._columns_heap = None
+        self._indexes_heap = None
 
     def _emit_lookup(
         self, name: str, *, found: bool, cached: bool, kind: str = "table"
@@ -825,9 +837,7 @@ class Catalog:
         if not self._tracer.storage:
             return
         self._tracer.emit(
-            CatalogLookupEvent(
-                object_type=kind, name=name, found=found, from_cache=cached
-            )
+            CatalogLookupEvent(object_type=kind, name=name, found=found, from_cache=cached)
         )
 
     def __iter__(self) -> Iterator[TableInfo]:
