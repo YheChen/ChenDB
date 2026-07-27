@@ -352,10 +352,7 @@ class TransactionManager:
         rather than spreading it through the read path is the point of having a
         snapshot object at all.
         """
-        if (
-            transaction.snapshot is not None
-            and not transaction.isolation.per_statement
-        ):
+        if transaction.snapshot is not None and not transaction.isolation.per_statement:
             return transaction.snapshot
 
         with self._lock:

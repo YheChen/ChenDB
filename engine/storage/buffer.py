@@ -422,8 +422,7 @@ class BufferPool:
         the engine lock — the same rule every other diagnostics view follows.
         """
         recency = {
-            page_id: position
-            for position, page_id in enumerate(reversed(self._resident))
+            page_id: position for position, page_id in enumerate(reversed(self._resident))
         }
         now = time.monotonic_ns()
         return PoolSnapshot(

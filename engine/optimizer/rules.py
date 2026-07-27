@@ -247,13 +247,19 @@ def _remove_trivial_filter(plan: LogicalNode) -> LogicalNode:
             return _remove_trivial_filter(child)
         case LogicalFilter(predicate=predicate, child=child):
             rewritten = _remove_trivial_filter(child)
-            return plan if rewritten is child else LogicalFilter(
-                plan.node_id, predicate, rewritten
+            return (
+                plan
+                if rewritten is child
+                else LogicalFilter(plan.node_id, predicate, rewritten)
             )
         case LogicalProject(child=child):
             rewritten = _remove_trivial_filter(child)
-            return plan if rewritten is child else LogicalProject(
-                plan.node_id, plan.projections, plan.output_columns, rewritten
+            return (
+                plan
+                if rewritten is child
+                else LogicalProject(
+                    plan.node_id, plan.projections, plan.output_columns, rewritten
+                )
             )
     return plan
 
@@ -304,13 +310,19 @@ def _merge_adjacent_filters(plan: LogicalNode) -> LogicalNode:
             )
         case LogicalFilter(predicate=predicate, child=child):
             rewritten = _merge_adjacent_filters(child)
-            return plan if rewritten is child else LogicalFilter(
-                plan.node_id, predicate, rewritten
+            return (
+                plan
+                if rewritten is child
+                else LogicalFilter(plan.node_id, predicate, rewritten)
             )
         case LogicalProject(child=child):
             rewritten = _merge_adjacent_filters(child)
-            return plan if rewritten is child else LogicalProject(
-                plan.node_id, plan.projections, plan.output_columns, rewritten
+            return (
+                plan
+                if rewritten is child
+                else LogicalProject(
+                    plan.node_id, plan.projections, plan.output_columns, rewritten
+                )
             )
     return plan
 

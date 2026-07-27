@@ -182,11 +182,7 @@ def test_splits_are_reported_as_events(pager: Pager):
     sink = RingBufferSink(capacity=4096)
     subject = BPlusTree.create(pager, name="ev", tracer=Tracer(sink, TraceLevel.STORAGE))
     fill(subject, range(200))
-    splits = [
-        item.event
-        for item in sink.snapshot()
-        if item.event_type == "NodeSplitEvent"
-    ]
+    splits = [item.event for item in sink.snapshot() if item.event_type == "NodeSplitEvent"]
     assert splits, "a 256-byte page must have split"
     assert any(event.is_root_split for event in splits)
     assert all(event.new_page_id != event.page_id for event in splits)
@@ -248,9 +244,7 @@ def test_duplicates_do_not_break_the_ordered_scan(tree: BPlusTree):
         (50, 49, True, True, []),
     ],
 )
-def test_range_bounds(
-    tree: BPlusTree, low, high, include_low, include_high, expected
-):
+def test_range_bounds(tree: BPlusTree, low, high, include_low, include_high, expected):
     fill(tree, range(100))
     got = [
         decode_key(k, DataType.INTEGER)

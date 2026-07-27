@@ -57,10 +57,7 @@ def db(tmp_path):
         handle.create_table("t", SCHEMA)
         handle.insert_many(
             "t",
-            [
-                (n, None if n % 7 == 0 else n % BUCKETS, f"row{n:05d}")
-                for n in range(ROWS)
-            ],
+            [(n, None if n % 7 == 0 else n % BUCKETS, f"row{n:05d}") for n in range(ROWS)],
         )
         handle.create_index("t_bucket", "t", "bucket")
         yield handle
@@ -287,9 +284,7 @@ def test_the_pool_is_visible_in_the_estimate(db: Database):
     wide = index_scan_cost(
         stats, matching_rows=stats.row_count, height=3, entries_per_leaf=200
     )
-    all_misses = (
-        3 + stats.row_count / 200 + stats.row_count
-    ) * PAGE_MISS_COST
+    all_misses = (3 + stats.row_count / 200 + stats.row_count) * PAGE_MISS_COST
     assert wide.io < all_misses * 0.6
 
 
@@ -439,9 +434,7 @@ def test_an_absorbed_predicate_leaves_no_filter(db: Database):
 
 
 def test_a_partly_absorbed_predicate_keeps_the_rest(db: Database):
-    statement = parse_statement(
-        "SELECT id FROM t WHERE bucket = 5 AND label = 'row00005'"
-    )
+    statement = parse_statement("SELECT id FROM t WHERE bucket = 5 AND label = 'row00005'")
     bound = bind_select(statement, db.catalog)
     planned = plan_query(bound, db)
     types = [node.node_type for node in _walk(planned.root)]

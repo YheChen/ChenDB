@@ -125,9 +125,7 @@ def test_sequence_numbers_increase_across_frames(client: TestClient):
         websocket.receive_json()
         for batch in range(2):
             insert(client, 4, start=batch * 4)
-            seqs.extend(
-                event["seq"] for event in drain_events(websocket, until=8)
-            )
+            seqs.extend(event["seq"] for event in drain_events(websocket, until=8))
 
     assert len(seqs) >= 8
     assert seqs == sorted(seqs)
@@ -174,17 +172,16 @@ def test_a_client_that_never_reads_cannot_block_the_engine(client: TestClient):
         for batch in range(4):
             response = client.post(
                 f"{API_PREFIX}/databases/demo/tables/t/records",
-                json={
-                    "rows": [
-                        [batch * 100 + i, f"row-{i}"] for i in range(100)
-                    ]
-                },
+                json={"rows": [[batch * 100 + i, f"row-{i}"] for i in range(100)]},
             )
             assert response.status_code == 201, "a silent WebSocket blocked an insert"
 
-    assert client.get(f"{API_PREFIX}/databases/demo/tables/t/records?limit=1000").json()[
-        "returned"
-    ] == 400
+    assert (
+        client.get(f"{API_PREFIX}/databases/demo/tables/t/records?limit=1000").json()[
+            "returned"
+        ]
+        == 400
+    )
 
 
 def test_a_disconnected_client_does_not_block_later_queries(client: TestClient):

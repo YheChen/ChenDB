@@ -185,8 +185,7 @@ def test_column_order_comes_from_position_not_physical_order(catalog: Catalog):
     """
     wide = Schema(
         tuple(
-            Column(f"c{index}", DataType.INTEGER, nullable=index > 0)
-            for index in range(20)
+            Column(f"c{index}", DataType.INTEGER, nullable=index > 0) for index in range(20)
         )
     )
     catalog.create_table("wide", wide)

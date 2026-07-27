@@ -203,9 +203,7 @@ class MetaPage:
         ) = struct.unpack_from(META_HEADER_FORMAT, raw, 0)
 
         if magic != MAGIC:
-            raise CorruptDatabaseError(
-                f"bad magic {magic!r}: not a ChenDB database file"
-            )
+            raise CorruptDatabaseError(f"bad magic {magic!r}: not a ChenDB database file")
         if format_version != FORMAT_VERSION:
             hint = _UPGRADE_HINTS.get(format_version, "")
             raise CorruptDatabaseError(

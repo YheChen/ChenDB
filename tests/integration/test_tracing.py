@@ -23,8 +23,8 @@ def build(path: Path, schema: Schema, level: TraceLevel) -> tuple[Database, Ring
 
 def workload(db: Database) -> list[tuple]:
     """Insert, point-read, delete, scan — one of each traced operation."""
-    record_ids = db.insert_many("users",
-        [(i, f"user-{i}", i % 90, i % 2 == 0, i / 3) for i in range(ROW_COUNT)]
+    record_ids = db.insert_many(
+        "users", [(i, f"user-{i}", i % 90, i % 2 == 0, i / 3) for i in range(ROW_COUNT)]
     )
     for record_id in record_ids[:10]:
         db.get("users", record_id)  # the only source of VERBOSE-level RecordReadEvents
@@ -33,9 +33,7 @@ def workload(db: Database) -> list[tuple]:
     return db.rows("users")
 
 
-def test_results_are_identical_at_every_trace_level(
-    tmp_path: Path, users_schema: Schema
-):
+def test_results_are_identical_at_every_trace_level(tmp_path: Path, users_schema: Schema):
     baseline: list[tuple] | None = None
     for level in TraceLevel:
         path = tmp_path / f"{level.name.lower()}.chendb"
@@ -121,9 +119,7 @@ def test_storage_level_emits_the_expected_event_families(
     }
 
 
-def test_page_read_events_report_the_real_file_offset(
-    tmp_path: Path, users_schema: Schema
-):
+def test_page_read_events_report_the_real_file_offset(tmp_path: Path, users_schema: Schema):
     db, sink = build(tmp_path / "offsets.chendb", users_schema, TraceLevel.STORAGE)
     with db:
         db.insert("users", (1, "x", None, True, 0.0))
@@ -139,9 +135,7 @@ def test_page_read_events_report_the_real_file_offset(
         assert event.duration_ns >= 0
 
 
-def test_retention_is_bounded_and_losses_are_reported(
-    tmp_path: Path, users_schema: Schema
-):
+def test_retention_is_bounded_and_losses_are_reported(tmp_path: Path, users_schema: Schema):
     sink = RingBufferSink(capacity=50)
     db = Database.open(
         tmp_path / "bounded.chendb",

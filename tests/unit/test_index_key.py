@@ -42,7 +42,21 @@ def keys(values, data_type):
     [
         (
             DataType.INTEGER,
-            [INT64_MIN, -(2**40), -70000, -257, -256, -255, -1, 0, 1, 255, 256, 2**40, INT64_MAX],
+            [
+                INT64_MIN,
+                -(2**40),
+                -70000,
+                -257,
+                -256,
+                -255,
+                -1,
+                0,
+                1,
+                255,
+                256,
+                2**40,
+                INT64_MAX,
+            ],
         ),
         (
             DataType.FLOAT,
@@ -68,9 +82,7 @@ def keys(values, data_type):
 )
 def test_encoded_order_matches_value_order(data_type: DataType, values: list):
     encoded = keys(values, data_type)
-    assert encoded == sorted(encoded), (
-        f"{data_type.sql_name} keys do not sort by memcmp"
-    )
+    assert encoded == sorted(encoded), f"{data_type.sql_name} keys do not sort by memcmp"
 
 
 @pytest.mark.parametrize(

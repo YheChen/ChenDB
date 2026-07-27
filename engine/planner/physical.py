@@ -363,14 +363,14 @@ def _enumerate(
             low, high, include_low, include_high, absorbed = bounds
 
             absorbed_selectivity = estimate_selectivity(
-                _rebuild_conjunction([conjuncts[position] for position in sorted(absorbed)]),
+                _rebuild_conjunction(
+                    [conjuncts[position] for position in sorted(absorbed)]
+                ),
                 stats,
             )
             matching = max(stats.row_count * absorbed_selectivity, 1.0)
             tree = database.tree_for(info.name)
-            condition = _describe_condition(
-                low, high, include_low, include_high, info
-            )
+            condition = _describe_condition(low, high, include_low, include_high, info)
             candidates.append(
                 _Candidate(
                     leaf=PhysicalIndexScan(
@@ -403,7 +403,9 @@ def _enumerate(
 
 
 def _penalise(cost: Cost, enabled: bool) -> Cost:
-    return cost if enabled else Cost(io=cost.io + DISABLE_COST, cpu=cost.cpu, rows=cost.rows)
+    return (
+        cost if enabled else Cost(io=cost.io + DISABLE_COST, cpu=cost.cpu, rows=cost.rows)
+    )
 
 
 def _why_rejected(cost: float, winner: float) -> str:
@@ -461,9 +463,7 @@ def _build(
             below = _build(child, chosen, stats, namer)
             return PhysicalProject(
                 node_id=namer.next("project"),
-                estimated=project_cost(
-                    below.estimated.rows, expressions=len(projections)
-                ),
+                estimated=project_cost(below.estimated.rows, expressions=len(projections)),
                 projections=projections,
                 output_columns=plan.output_columns,
                 child=below,

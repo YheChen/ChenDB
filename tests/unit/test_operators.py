@@ -129,7 +129,9 @@ def test_a_scan_reports_where_each_row_came_from(db: Database):
 
 def test_filter_passes_only_rows_whose_predicate_is_true(db: Database):
     context = ExecutionContext()
-    plan = Filter("f", context, child=scan_of(db, context), predicate=predicate("age >= 18"))
+    plan = Filter(
+        "f", context, child=scan_of(db, context), predicate=predicate("age >= 18")
+    )
     assert [row[0] for row in plan] == [1, 3]
 
 
@@ -138,7 +140,9 @@ def test_filter_drops_a_null_predicate_exactly_like_a_false_one(db: Database):
     # pass, which is required SQL behaviour and the most common source of
     # surprise for people reading query results.
     context = ExecutionContext()
-    plan = Filter("f", context, child=scan_of(db, context), predicate=predicate("age >= 18"))
+    plan = Filter(
+        "f", context, child=scan_of(db, context), predicate=predicate("age >= 18")
+    )
     ids = [row[0] for row in plan]
     assert 2 not in ids
     assert plan.rows_rejected == 2  # the NULL row and edgar, who is 17
@@ -146,7 +150,9 @@ def test_filter_drops_a_null_predicate_exactly_like_a_false_one(db: Database):
 
 def test_filter_counts_what_it_rejected(db: Database):
     context = ExecutionContext()
-    plan = Filter("f", context, child=scan_of(db, context), predicate=predicate("age > 100"))
+    plan = Filter(
+        "f", context, child=scan_of(db, context), predicate=predicate("age > 100")
+    )
     assert list(plan) == []
     assert plan.stats.input_rows == len(ROWS)
     assert plan.rows_rejected == len(ROWS)
@@ -241,9 +247,7 @@ def test_operator_events_show_next_going_down_and_rows_coming_up(db: Database):
     tracer = Tracer(sink, TraceLevel.OPERATOR)
     execute_script("SELECT name FROM users WHERE age >= 18", db, tracer=tracer)
 
-    events = [
-        item.event for item in sink.snapshot() if item.event_type == "OperatorEvent"
-    ]
+    events = [item.event for item in sink.snapshot() if item.event_type == "OperatorEvent"]
     opens = [e.operator_id for e in events if e.action == "opened"]
     # open() recurses into children first, so the leaf opens first.
     assert opens == ["scan_1", "filter_1", "project_1"]
@@ -360,9 +364,7 @@ def test_continue_runs_to_completion_without_pausing(db: Database):
         query.controller.wait_for_pause_or_end(timeout=5)
         steps_before = query.controller.steps_taken
         query.controller.resume(ResumeMode.CONTINUE)
-        assert (
-            query.controller.wait_for_pause_or_end(timeout=5) is ExecutionState.FINISHED
-        )
+        assert query.controller.wait_for_pause_or_end(timeout=5) is ExecutionState.FINISHED
         assert query.controller.steps_taken == steps_before
 
 

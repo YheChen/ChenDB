@@ -257,9 +257,7 @@ def test_a_range_predicate_becomes_a_bounded_index_scan(seeded: TestClient):
     result = run(seeded, "SELECT id FROM users WHERE age >= 10 AND age <= 12")[0]
     scan = next(n for n in result["plan"]["nodes"] if n["operator_type"] == "IndexScan")
     assert ">= 10" in scan["detail"] and "<= 12" in scan["detail"]
-    assert result["rows_returned"] == len(
-        [n for n in range(300) if 10 <= n % 40 <= 12]
-    )
+    assert result["rows_returned"] == len([n for n in range(300) if 10 <= n % 40 <= 12])
 
 
 def test_a_partly_indexed_conjunction_keeps_the_rest_as_a_filter(seeded: TestClient):

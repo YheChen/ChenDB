@@ -251,9 +251,7 @@ def index_scan_cost(
 
 def filter_cost(input_rows: float, *, selectivity: float) -> Cost:
     """Evaluate a predicate once per input row. No I/O of its own."""
-    return Cost(
-        io=0.0, cpu=input_rows * CPU_PREDICATE_COST, rows=input_rows * selectivity
-    )
+    return Cost(io=0.0, cpu=input_rows * CPU_PREDICATE_COST, rows=input_rows * selectivity)
 
 
 def project_cost(input_rows: float, *, expressions: int) -> Cost:
@@ -270,9 +268,7 @@ def project_cost(input_rows: float, *, expressions: int) -> Cost:
 # --------------------------------------------------------------------------
 
 
-def estimate_selectivity(
-    predicate: Expression | None, stats: TableStatistics
-) -> float:
+def estimate_selectivity(predicate: Expression | None, stats: TableStatistics) -> float:
     """The fraction of rows ``predicate`` is expected to admit, in ``[0, 1]``.
 
     Everything the planner gets wrong, it gets wrong here.

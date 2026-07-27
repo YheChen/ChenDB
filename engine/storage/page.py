@@ -732,7 +732,9 @@ def stamp_lsn(raw: bytes, lsn: int) -> bytes:
     """
     buf = bytearray(raw)
     _U64.pack_into(buf, _OFF_LSN, lsn)
-    _U32.pack_into(buf, _OFF_CHECKSUM, zlib.crc32(memoryview(buf)[_CHECKSUM_COVERAGE_START:]))
+    _U32.pack_into(
+        buf, _OFF_CHECKSUM, zlib.crc32(memoryview(buf)[_CHECKSUM_COVERAGE_START:])
+    )
     return bytes(buf)
 
 

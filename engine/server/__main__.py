@@ -32,9 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[level.name.lower() for level in TraceLevel],
         help="trace level new databases open at",
     )
-    parser.add_argument(
-        "--reload", action="store_true", help="restart on source changes"
-    )
+    parser.add_argument("--reload", action="store_true", help="restart on source changes")
     return parser
 
 

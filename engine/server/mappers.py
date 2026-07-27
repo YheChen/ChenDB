@@ -847,9 +847,7 @@ def wal_record_to_api(record) -> WalRecordModel:
     )
 
 
-def wal_to_api(
-    log: WriteAheadLog | None, *, limit: int, size_bytes: int
-) -> WalResponse:
+def wal_to_api(log: WriteAheadLog | None, *, limit: int, size_bytes: int) -> WalResponse:
     """The log as a table, newest last.
 
     Page images are dropped here and nowhere else — that is the point of having

@@ -90,9 +90,7 @@ def run_query(
     db: Database, sql: str, options: PlannerOptions = LET_THE_PLANNER_CHOOSE
 ) -> tuple[int, int, str]:
     """Run one SELECT; return rows, pages read, and the access path used."""
-    result = execute_script(
-        sql, db, planner_options=options, max_rows=NO_ROW_CEILING
-    )[0]
+    result = execute_script(sql, db, planner_options=options, max_rows=NO_ROW_CEILING)[0]
     path = "?"
     stack = [result.plan] if result.plan else []
     while stack:
@@ -172,6 +170,7 @@ def main() -> int:
 
         header("Point lookup — one row out of 20,000")
         for label, db in (("no index", plain), ("index", indexed)):
+
             def lookup(db: Database = db) -> int:
                 total = 0
                 for n in range(LOOKUPS):

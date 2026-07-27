@@ -324,9 +324,7 @@ class ScanOperator(Operator):
 
     @property
     def output_columns(self) -> tuple[ResultColumn, ...]:
-        return tuple(
-            ResultColumn(column.name, column.data_type) for column in self._schema
-        )
+        return tuple(ResultColumn(column.name, column.data_type) for column in self._schema)
 
     @property
     def table_name(self) -> str:

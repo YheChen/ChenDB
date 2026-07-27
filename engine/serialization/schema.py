@@ -85,9 +85,7 @@ class Schema:
                 raise SchemaError(f"duplicate column name {column.name!r}")
             seen.add(key)
         if sum(1 for column in self.columns if column.primary_key) > 1:
-            raise SchemaError(
-                "composite primary keys are not supported yet (Milestone 5)"
-            )
+            raise SchemaError("composite primary keys are not supported yet (Milestone 5)")
 
     @classmethod
     def of(cls, *columns: Column) -> Schema:
@@ -115,9 +113,7 @@ class Schema:
         for index, column in enumerate(self.columns):
             if column.name.casefold() == key:
                 return index
-        raise SchemaError(
-            f"no column named {name!r}; have {', '.join(self.column_names)}"
-        )
+        raise SchemaError(f"no column named {name!r}; have {', '.join(self.column_names)}")
 
     def column(self, name: str) -> Column:
         return self.columns[self.index_of(name)]

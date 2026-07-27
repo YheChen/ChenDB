@@ -119,18 +119,13 @@ def get_catalog(managed: DatabaseDep) -> CatalogResponse:
 # -- tables ----------------------------------------------------------------
 
 
-@router.get(
-    "/tables", response_model=list[TableSummary], summary="List tables"
-)
+@router.get("/tables", response_model=list[TableSummary], summary="List tables")
 def list_tables(
     managed: DatabaseDep,
     include_system: Annotated[bool, Query()] = False,
 ) -> list[TableSummary]:
     with managed.use() as db:
-        return [
-            _summary_of(db, info)
-            for info in db.tables(include_system=include_system)
-        ]
+        return [_summary_of(db, info) for info in db.tables(include_system=include_system)]
 
 
 @router.post(

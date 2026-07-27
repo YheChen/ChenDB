@@ -728,7 +728,9 @@ class Pager:
             )
         intent: WriteIntent | None = None
         if capture and self._on_before_write is not None:
-            intent = self._on_before_write(page_id, lambda: self._pool.fetch(page_id), reason)
+            intent = self._on_before_write(
+                page_id, lambda: self._pool.fetch(page_id), reason
+            )
         if self._wal is not None:
             raw = self._log_change(page_id, raw, intent)
         started = time.perf_counter_ns()
@@ -747,9 +749,7 @@ class Pager:
                 )
             )
 
-    def _log_change(
-        self, page_id: int, raw: bytes, intent: WriteIntent | None
-    ) -> bytes:
+    def _log_change(self, page_id: int, raw: bytes, intent: WriteIntent | None) -> bytes:
         """Log this change and stamp the record's LSN into the page.
 
         The order matters and is not the obvious one. The page has to *carry*

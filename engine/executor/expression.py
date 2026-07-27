@@ -282,9 +282,7 @@ def _modulo(left: Any, right: Any) -> Any:
 
 def _require_boolean(value: Any, what: str) -> None:
     if not isinstance(value, bool):
-        raise EvaluationError(
-            f"{what} needs a boolean operand, got {_type_name(value)}"
-        )
+        raise EvaluationError(f"{what} needs a boolean operand, got {_type_name(value)}")
 
 
 def _require_number(value: Any, what: str) -> None:

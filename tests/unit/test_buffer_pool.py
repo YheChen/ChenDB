@@ -419,9 +419,7 @@ def test_a_page_read_reports_where_it_came_from(db: Database):
     db.rows("t")
     db.rows("t")
     sources = {
-        item.event.source
-        for item in sink.snapshot()
-        if item.event_type == "PageReadEvent"
+        item.event.source for item in sink.snapshot() if item.event_type == "PageReadEvent"
     }
     assert sources == {"disk", "buffer_pool"}, (
         "the source field was in the schema from Milestone 1 for this moment"
