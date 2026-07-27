@@ -49,17 +49,20 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
-MILESTONE = int(__version__.split(".")[1])
+MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
 """Highest completed milestone, derived rather than declared.
 
 It used to be written out in three places — here, the CLI banner and the
 server's ``/health`` — and the CLI's copy sat one milestone behind for a whole
-release because nothing failed when it drifted. The roadmap already says
-``0.N.0`` means Milestone N, so the version is the single source and this is
-arithmetic on it."""
+release because nothing failed when it drifted. So it is arithmetic on the
+version instead, and ``test_architecture_boundaries`` pins the two together.
+
+The roadmap's rule is ``0.N.0`` means Milestone N, which runs out at Milestone
+10 — there is no ``0.10.0`` that sorts after ``0.9.0`` under semver. So the
+tenth is ``1.0.0``, and the arithmetic carries: major * 10 + minor."""
 
 MILESTONE_FEATURES: tuple[str, ...] = (
     "storage",
@@ -71,6 +74,7 @@ MILESTONE_FEATURES: tuple[str, ...] = (
     "buffer pool",
     "transactions",
     "write-ahead log",
+    "MVCC",
 )
 """What the engine can do, in the order the milestones added it.
 

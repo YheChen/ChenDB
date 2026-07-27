@@ -156,12 +156,17 @@ def test_importing_the_engine_pulls_in_no_third_party_package():
 # tests are what stop the derivation quietly coming apart again.
 
 
-def test_the_milestone_is_the_version_minor():
+def test_the_milestone_is_derived_from_the_version():
+    """``0.N.0`` is Milestone N, and ``1.0.0`` is Milestone 10.
+
+    The roadmap's rule runs out at ten, because there is no ``0.10.0`` that
+    sorts after ``0.9.0``. The arithmetic carries it across the boundary rather
+    than special-casing it.
+    """
     import engine
 
-    assert int(engine.__version__.split(".")[1]) == engine.MILESTONE, (
-        "the roadmap says 0.N.0 means Milestone N"
-    )
+    major, minor, _ = (int(part) for part in engine.__version__.split("."))
+    assert major * 10 + minor == engine.MILESTONE
 
 
 def test_the_packaged_version_matches_the_engine():

@@ -36,6 +36,15 @@ from engine.server.schemas.query import (
     ResumeRequest,
     StepRequest,
 )
+from engine.transaction.manager import DEFAULT_SESSION
+
+#: What a session may be called. Same shape as a database id and for the same
+#: reason: it lands in a URL and in a log line, so it has to be boring.
+SESSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"
+
+#: What a session may be called. Same shape as a database id and for the same
+#: reason: it lands in a URL and in a log line, so it has to be boring.
+SESSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"
 
 router = APIRouter(prefix="/databases/{database_id}", tags=["query"])
 executions_router = APIRouter(prefix="/executions", tags=["query"])
@@ -62,7 +71,10 @@ def _fail(exc: Exception) -> HTTPException:
     summary="Run SQL and return the results",
 )
 def run_query(
-    payload: QueryRequest, managed: DatabaseDep, request: Request
+    payload: QueryRequest,
+    managed: DatabaseDep,
+    request: Request,
+    session: Annotated[str, Query(pattern=SESSION_PATTERN)] = DEFAULT_SESSION,
 ) -> list[QueryResultModel]:
     """Execute every statement in ``sql``, returning one result each.
 
@@ -71,10 +83,16 @@ def run_query(
 
     Unlike ``/parse``, a failure here *is* a failed request — 422 with the source
     position attached — because there is no useful partial answer to return.
+
+    ``session`` says whose transaction this statement belongs to. Two consoles
+    on one database pass different ones and get different transactions, which
+    can then see different data and block each other — the whole of Milestone
+    10 from the client's side. Omitting it means the default session, which is
+    what every request before Milestone 10 was doing implicitly.
     """
     max_rows = payload.max_rows or request.app.state.config.max_rows_per_query
     try:
-        with managed.use() as db:
+        with managed.use() as db, db.in_session(session):
             results = execute_script(
                 payload.sql, db, tracer=managed.tracer, max_rows=max_rows
             )

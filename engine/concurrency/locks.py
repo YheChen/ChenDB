@@ -345,7 +345,9 @@ class LockManager:
             if resources:
                 self._stats.released += len(resources)
                 self._emit(
-                    LockRequest(transaction_id, f"{len(resources)} lock(s)", LockMode.EXCLUSIVE),
+                    LockRequest(
+                        transaction_id, f"{len(resources)} lock(s)", LockMode.EXCLUSIVE
+                    ),
                     "released",
                 )
             # Wake everyone: which waiter can now proceed depends on modes, and
@@ -476,7 +478,9 @@ class LockManager:
         )
 
     def __repr__(self) -> str:
-        return f"<LockManager resources={len(self._table)} deadlocks={self._stats.deadlocks}>"
+        return (
+            f"<LockManager resources={len(self._table)} deadlocks={self._stats.deadlocks}>"
+        )
 
 
 @dataclass(slots=True)

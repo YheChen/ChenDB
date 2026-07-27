@@ -357,6 +357,34 @@ export interface InsertRecordsResponse {
   duration_ns: number;
 }
 
+/** One resource, everyone holding it, and everyone queued behind them. */
+export interface LockEntryModel {
+  /** 'table:page.slot' — a single row. Not a page and not a table: page granularity would make two sessions inserting into the same heap page conflict, which is most inserts. */
+  resource: string;
+  /** Transaction id (as a string, because JSON objects have string keys) to the mode it holds */
+  holders: Record<string, "shared" | "exclusive">;
+  /** Transactions blocked on this, in order */
+  waiters: number[];
+}
+
+export interface LockStatsModel {
+  granted: number;
+  released: number;
+  /** Requests that had to block. Against `granted` this is how much contention there actually is, rather than how much the design permits. */
+  waits: number;
+  timeouts: number;
+  deadlocks: number;
+}
+
+export interface LockTableResponse {
+  entries: LockEntryModel[];
+  /** The graph. A cycle in it is a deadlock — that is the definition, not a heuristic — and it is always empty by the time you read it, because the detector breaks cycles as they form. */
+  wait_for: WaitForEdge[];
+  stats: LockStatsModel;
+  /** Always zero, and reported so the zero is visible. Under MVCC a reader takes no lock at all; every entry above is a writer. */
+  readers_blocked?: number;
+}
+
 /**
  * One node of the physical plan: what it will cost, and what it did.
  * 
@@ -632,6 +660,34 @@ export interface SchemaModel {
   fixed_row_size: null | number;
 }
 
+export interface SessionListResponse {
+  sessions: SessionModel[];
+  /** Transaction ids below this committed before this process started. ChenDB's entire commit log, in one number. */
+  frozen_xid: number;
+  next_xid: number;
+  /** Vacuum's horizon. A long-running transaction holds this down and stops dead versions being reclaimed — the same mechanism behind PostgreSQL's most common 'why is my disk full'. */
+  oldest_snapshot_xmin: number;
+}
+
+/** One console's worth of state. */
+export interface SessionModel {
+  session: string;
+  /** Null when nothing is open */
+  transaction_id: null | number;
+  state?: null | string;
+  isolation_level?: null | string;
+  /** xmin, xmax and the active set, rendered */
+  snapshot?: null | string;
+  /** One under REPEATABLE READ however many statements ran; one per statement under READ COMMITTED. The difference between the levels, made countable. */
+  snapshots_taken?: number;
+  statements?: number;
+  rows_created?: number;
+  rows_deleted?: number;
+  locks_held?: number;
+  /** Transactions this one is blocked on */
+  waiting_for?: number[];
+}
+
 export interface SetTraceLevelRequest {
   level: "OFF" | "SUMMARY" | "OPERATOR" | "STORAGE" | "VERBOSE";
 }
@@ -644,6 +700,10 @@ export interface SlotDetailModel {
   raw_hex: string;
   record?: RecordLayoutModel | null;
   decode_error?: null | string;
+  /** The transaction that created this version. Zero for a catalog row, which is not versioned. */
+  xmin?: number;
+  /** The transaction that deleted it, or 0. Non-zero on a slot that is still live means a **dead version**: physically there, invisible to anyone new, and waiting for a vacuum. */
+  xmax?: number;
 }
 
 /** A lex or parse failure, positioned for an editor marker. */
@@ -835,6 +895,11 @@ export interface UndoRecordModel {
   before_image_size: number;
   /** What was about to write the page — 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason. */
   reason: string;
+}
+
+export interface WaitForEdge {
+  waiter: number;
+  blockers: number[];
 }
 
 /** One entry in the log. */
