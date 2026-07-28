@@ -132,3 +132,38 @@ expect(
   respond to arrows, Home and End.
 - **Bounded rendering.** Cap what goes into the DOM (`HexView` renders at most
   8 KiB) and say so when truncating.
+
+## If the panel has a "try it" button
+
+Any SQL the panel will run on the user's behalf goes in
+`visualizer/src/lib/demoSql.ts`, not inline in the component.
+
+```ts
+export const WORKLOADS: Workload[] = [
+  { id: "scan", label: "Scan once", hint: "…", sql: (table) => `SELECT * FROM ${table};` },
+];
+```
+
+Two reasons, and both are bugs this project has already shipped:
+
+- **Build it from the open table, never from a guessed column name.**
+  `demoRows.ts` has `insertRow`, `literalFor` and `notNullColumn` for exactly
+  this. A hardcoded `VALUES (1, 'x')` works until someone's table has three
+  columns, and then the button reports `row has 2 values but 3 columns` —
+  the demonstration failing for a reason that has nothing to do with what it
+  was demonstrating.
+- **The catalogue is enumerable, so it gets tested.**
+  `tests/integration/test_demo_sql.py` asks Node to evaluate that module and
+  runs every statement in it against a real engine. A button that produces SQL
+  the parser refuses fails CI by name. One shipped and sat in the UI for a
+  whole milestone before that existed.
+
+State what the statement should do — `parses`, `runs: "ok" | "error" | "skip"`,
+and which fixture it needs. A demo that is *supposed* to fail is as much a
+claim as one that works.
+
+Check it with:
+
+```bash
+make demo-sql
+```

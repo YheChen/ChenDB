@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type * as monacoNs from "monaco-editor/esm/vs/editor/editor.api";
 import { Button, Panel } from "@/components/primitives";
 import { CHENDB_SQL, configureMonaco } from "@/lib/monaco";
+import { EXAMPLES } from "@/lib/demoSql";
 import { formatDuration } from "@/lib/format";
 import type { ParseResponse, SqlErrorModel } from "@/types/api";
 
@@ -25,48 +26,6 @@ function expectedList(error: SqlErrorModel): string[] {
 }
 
 configureMonaco();
-
-const EXAMPLES: { label: string; sql: string }[] = [
-  {
-    label: "CREATE TABLE",
-    sql: `CREATE TABLE users (
-  id     INTEGER PRIMARY KEY,
-  email  TEXT NOT NULL,
-  age    INTEGER,
-  active BOOLEAN
-);`,
-  },
-  {
-    label: "INSERT",
-    sql: `INSERT INTO users (id, email, age, active) VALUES
-  (1, 'ada@example.com', 36, TRUE),
-  (2, 'alan@example.com', NULL, FALSE);`,
-  },
-  {
-    label: "SELECT with WHERE",
-    sql: `SELECT email, age * 2 AS doubled
-FROM users
-WHERE age >= 18 AND email IS NOT NULL;`,
-  },
-  {
-    label: "Operator precedence",
-    sql: `-- Parses as: a = 1 OR (b = 2 AND c = 3)
-SELECT * FROM t WHERE a = 1 OR b = 2 AND c = 3;`,
-  },
-  {
-    label: "Quoted identifier",
-    sql: `-- "select" is reserved; quoting makes it a name
-SELECT "select" FROM "order";`,
-  },
-  {
-    label: "A syntax error",
-    sql: `SELECT name FROM`,
-  },
-  {
-    label: "Not implemented yet",
-    sql: `SELECT * FROM users ORDER BY age;`,
-  },
-];
 
 export function SqlEditor({
   sql,

@@ -178,12 +178,18 @@ def test_the_packaged_version_matches_the_engine():
     assert pyproject["project"]["version"] == engine.__version__
 
 
-def test_the_feature_list_has_one_entry_per_milestone():
+def test_the_feature_list_never_outruns_the_milestone():
     import engine
 
-    assert len(engine.MILESTONE_FEATURES) == engine.MILESTONE, (
-        "the CLI banner enumerates what shipped; a missing entry means a "
-        "milestone landed without the banner being told"
+    # It was `==` for eleven milestones. Milestone 12 shipped CI, which is a
+    # guarantee about the engine rather than something the engine can do, and
+    # "storage + SQL + … + CI" is not a sentence a banner should print. So the
+    # list is allowed to lag — but never to lead, which would mean a feature
+    # was announced before it existed.
+    assert len(engine.MILESTONE_FEATURES) <= engine.MILESTONE
+    assert len(engine.MILESTONE_FEATURES) >= engine.MILESTONE - 1, (
+        "the CLI banner enumerates what shipped; a missing entry usually means "
+        "a milestone landed without the banner being told"
     )
 
 

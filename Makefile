@@ -10,7 +10,7 @@ NPM     := npm --prefix visualizer
 
 .DEFAULT_GOAL := help
 .PHONY: help install engine server ui test test-engine test-api test-ui \
-        lint typecheck bench example types clean
+        lint typecheck bench example examples types demo-sql ci clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -32,6 +32,8 @@ server:  ## Start the HTTP + WebSocket API on 127.0.0.1:8000
 ui:  ## Start the visualizer on localhost:5173
 	$(NPM) run dev
 
+ci: lint typecheck test examples  ## Everything CI runs, in the same order
+
 test: test-engine test-ui  ## Run every test
 
 test-engine:  ## Python tests (engine, API, recovery)
@@ -42,6 +44,9 @@ test-api:  ## API and WebSocket tests only
 
 test-ui:  ## Frontend component tests
 	$(NPM) test
+
+demo-sql:  ## Print every SQL statement the visualizer's buttons produce
+	node scripts/emit_demo_sql.ts
 
 lint:  ## Ruff over the Python sources
 	$(BIN)/ruff check engine tests benchmarks examples scripts
@@ -55,6 +60,12 @@ bench:  ## Measure diagnostics and storage overhead
 
 example:  ## Narrated walkthrough of the storage engine
 	$(BIN)/python examples/milestone1_storage.py
+
+examples:  ## Run every narrated walkthrough, as CI does
+	@for f in examples/*.py; do \
+		printf '%-44s' "$$f"; \
+		$(PYTHON) "$$f" > /dev/null && echo ok || { echo FAILED; exit 1; }; \
+	done
 
 types:  ## Regenerate TypeScript types from the OpenAPI schema
 	$(BIN)/python scripts/generate_api_types.py

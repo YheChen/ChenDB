@@ -29,35 +29,8 @@ import {
   Spinner,
 } from "@/components/primitives";
 import { useBufferPool, useCatalog, useRunQuery } from "@/hooks/useEngine";
+import { WORKLOADS } from "@/lib/demoSql";
 import { FrameGrid, PoolCounters } from "./FrameGrid";
-
-type Workload = {
-  id: string;
-  label: string;
-  hint: string;
-  sql: (table: string) => string;
-};
-
-const WORKLOADS: Workload[] = [
-  {
-    id: "scan",
-    label: "Scan once",
-    hint: "Reads every page. If the table is bigger than the pool, this evicts everything as it goes — and gains nothing from having done so.",
-    sql: (table) => `SELECT * FROM ${table};`,
-  },
-  {
-    id: "scan-twice",
-    label: "Scan twice",
-    hint: "The second pass hits every page — if the table fits. If it does not, the hit rate barely moves: that is sequential flooding.",
-    sql: (table) => `SELECT * FROM ${table};\nSELECT * FROM ${table};`,
-  },
-  {
-    id: "repeat",
-    label: "Scan ten times",
-    hint: "A working set that fits is loaded once and served nine times from memory.",
-    sql: (table) => Array.from({ length: 10 }, () => `SELECT * FROM ${table};`).join("\n"),
-  },
-];
 
 export function BufferWorkspace({
   databaseId,

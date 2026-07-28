@@ -32,91 +32,14 @@ import {
   useTable,
   useVacuum,
 } from "@/hooks/useEngine";
-import { insertRow, literalFor } from "@/lib/demoRows";
+import { insertRow } from "@/lib/demoRows";
+import { walkthroughs } from "@/lib/demoSql";
 import { formatCount } from "@/lib/format";
-import type { TableDetail } from "@/types/api";
 import { LockCounters, LockTable } from "./LockTable";
 import { SessionConsole } from "./SessionConsole";
 
 const ALICE = "alice";
 const BOB = "bob";
-
-type Walkthrough = {
-  id: string;
-  label: string;
-  hint: string;
-  alice: string;
-  bob: string;
-};
-
-/**
- * Scripts built from the table that is actually open, never from a guess.
- *
- * These used to hardcode `WHERE id = 1`, which is fine until the open table has
- * no `id` — and the walkthrough then failed in a way that looked like the
- * engine misbehaving rather than the button being wrong. See `demoRows.ts`.
- */
-const WALKTHROUGHS: (table: TableDetail) => Walkthrough[] = (table) => {
-  const name = table.name;
-  const walkthroughs: Walkthrough[] = [
-    {
-      id: "invisible",
-      label: "A reader does not wait",
-      hint: "Run bob's BEGIN and INSERT, then alice's SELECT. Alice returns immediately and does not see the row — she read an older version rather than waiting for the newer one. Then commit bob and run alice again.",
-      bob: insertRow(table, 9001),
-      alice: `SELECT * FROM ${name};`,
-    },
-    {
-      id: "repeatable",
-      label: "Two levels, two answers",
-      hint: "Open alice's transaction, run her SELECT, then have bob insert and commit, then run alice's SELECT again. Under read committed she sees the new row; the same sequence under repeatable read would not.",
-      alice: `SELECT * FROM ${name};`,
-      bob: insertRow(table, 9002),
-    },
-  ];
-
-  // An UPDATE needs a column to write to. Every table has one, but the type
-  // does not say so, and inventing a name here is exactly the bug this file
-  // used to have.
-  const target = updateTarget(table);
-  if (target) {
-    walkthroughs.push(
-      {
-        id: "versions",
-        label: "One row, two versions",
-        hint: `BEGIN bob, run his UPDATE, then run alice's SELECT: she reads the OLD ${target.name}, because both versions are on the page at once and bob's is not committed. Commit bob and run alice again to see the new one. Then look at rows vs versions on the Storage tab, and press Vacuum.`,
-        alice: `SELECT * FROM ${name};`,
-        bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 7777)};`,
-      },
-      {
-        id: "locks",
-        label: "A writer locks, a reader does not",
-        hint: `BEGIN bob and run his UPDATE without committing. The lock table below fills with one exclusive lock per version he touched — two per row, the old one and the new. Now run alice's SELECT: it returns instantly, holds 0 locks, and "readers blocked" stays 0. That is the whole claim of MVCC, in one panel.`,
-        alice: `SELECT * FROM ${name};`,
-        bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 200)};`,
-      },
-      {
-        id: "rollback",
-        label: "A rollback leaves nothing behind",
-        hint: "BEGIN bob, run his UPDATE, and check rows vs versions on the Storage tab: rows unchanged, versions up by one per row. Now ROLLBACK and look again — the new versions are gone, not merely dead, and Vacuum has nothing to do. ChenDB undoes by restoring pages, which is why it needs no commit log; PostgreSQL, which does not undo, needs both CLOG and a vacuum pass for the rows an aborted transaction left.",
-        alice: `SELECT * FROM ${name};`,
-        bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 300)};`,
-      },
-    );
-  }
-  return walkthroughs;
-};
-
-/**
- * A column worth writing a demonstration value into.
- *
- * Not the primary key if anything else is available: setting every row's `id`
- * to the same number makes the table nonsense, and a reader trying to follow
- * the version chain then cannot tell the rows apart.
- */
-function updateTarget(table: TableDetail) {
-  return table.columns.find((column) => !column.primary_key) ?? table.columns[0];
-}
 
 export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
   const [note, setNote] = useState<string | null>(null);
@@ -214,7 +137,7 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
             {/* Disabled rather than hidden while the schema loads, and
                 disabled rather than guessing if there is no table to use. */}
             {detail.data ? (
-              WALKTHROUGHS(detail.data).map((walkthrough) => (
+              walkthroughs(detail.data).map((walkthrough) => (
                 <Button
                   key={walkthrough.id}
                   title={walkthrough.hint}
