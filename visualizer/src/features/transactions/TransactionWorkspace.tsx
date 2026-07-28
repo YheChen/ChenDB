@@ -31,48 +31,11 @@ import {
   useTransactionAction,
   useTransactions,
 } from "@/hooks/useEngine";
-import { insertRow, notNullColumn } from "@/lib/demoRows";
-import type { TableDetail, TransactionModel } from "@/types/api";
+import { TRANSACTION_DEMOS } from "@/lib/demoSql";
+import type { TransactionModel } from "@/types/api";
 import { formatBytes, formatCount } from "@/lib/format";
 import { TransactionTimeline } from "./TransactionTimeline";
 import { UndoLogPanel } from "./UndoLogPanel";
-
-type Demo = {
-  id: string;
-  label: string;
-  hint: string;
-  /** Built from the table's real schema, so it works whatever the columns are. */
-  sql: (table: TableDetail) => string;
-  /** Why this demo cannot run against this table, or null when it can. */
-  blockedBy?: (table: TableDetail) => string | null;
-};
-
-const DEMOS: Demo[] = [
-  {
-    id: "half-way",
-    label: "Break it half-way",
-    hint: "Two good rows, then one with NULL in a NOT NULL column. The first two really are written — watch the undo log grow — and then taken back. Before Milestone 8 they would have stayed.",
-    blockedBy: (table) =>
-      notNullColumn(table)
-        ? null
-        : `Every column of ${table.name} is nullable, so there is no constraint here to violate.`,
-    sql: (table) => {
-      const doomed = notNullColumn(table)!;
-      return [
-        insertRow(table, 910_001),
-        insertRow(table, 910_002),
-        insertRow(table, 910_003, doomed.name),
-      ].join("\n");
-    },
-  },
-  {
-    id: "ddl",
-    label: "Create a table, then roll back",
-    hint: "CREATE TABLE writes rows into two system tables and allocates a heap page. The undo log works in pages, so it takes all of that back without knowing what any of it meant. Roll back and watch the table vanish from Storage.",
-    sql: () =>
-      "BEGIN;\nCREATE TABLE rolled_back_demo (id INTEGER PRIMARY KEY, note TEXT);",
-  },
-];
 
 export function TransactionWorkspace({
   databaseId,
@@ -193,7 +156,7 @@ export function TransactionWorkspace({
           ) : (
             <>
               <div className="flex flex-wrap gap-1.5">
-                {DEMOS.map((demo) => {
+                {TRANSACTION_DEMOS.map((demo) => {
                   const blocked = demo.blockedBy?.(table) ?? null;
                   return (
                     <Button

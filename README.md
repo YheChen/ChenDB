@@ -1,5 +1,7 @@
 # ChenDB
 
+[![CI](https://github.com/YheChen/ChenDB/actions/workflows/ci.yml/badge.svg)](https://github.com/YheChen/ChenDB/actions/workflows/ci.yml)
+
 A relational database engine written from scratch in Python, and a web app that
 shows you what it is doing while it does it.
 
@@ -14,7 +16,7 @@ back from the actual file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M11    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M12    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -40,7 +42,7 @@ back from the actual file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Eleven milestones are complete.** Nothing is stubbed ahead of time: a
+**Twelve milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -59,7 +61,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.1.0 — Milestone 11 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE)
+ChenDB 1.2.0 — Milestone 12 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -301,6 +303,8 @@ change the system observed.
 | `python examples/milestone9_wal.py` | narrated walkthrough of the log, checkpoints and recovery |
 | `python examples/milestone10_mvcc.py` | narrated walkthrough of snapshots, locks and deadlocks |
 | `python examples/milestone11_dml.py` | narrated walkthrough of `UPDATE`, `DELETE` and the Halloween problem |
+| `make ci` | lint, typecheck, both test suites and every example — CI's order |
+| `make demo-sql` | every SQL statement the explorer's buttons will produce |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
@@ -326,6 +330,7 @@ change the system observed.
 | [Milestone 9](docs/milestone-09-wal.md) | write-ahead logging, ARIES recovery, and a 197× log made 5× |
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
 | [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
+| [Milestone 12](docs/milestone-12-ci.md) | CI, and running every demo button against the real engine |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

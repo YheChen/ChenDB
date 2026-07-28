@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -80,8 +80,13 @@ MILESTONE_FEATURES: tuple[str, ...] = (
 """What the engine can do, in the order the milestones added it.
 
 Prose for banners, not a capability check — the API's ``/health`` has structured
-flags for that. One entry per shipped milestone, so ``len()`` is a cheap
-assertion that this list and :data:`MILESTONE` agree."""
+flags for that.
+
+It ran one entry per milestone for eleven milestones and then stopped, because
+Milestone 12 added continuous integration: a guarantee about the other eleven
+rather than a twelfth thing the engine can do. Listing it here would put "CI" in
+a banner that reads "storage + SQL + execution + …", which is a category error.
+So the invariant is ``len() <= MILESTONE`` and the gap is deliberate."""
 
 __all__ = [
     "DEFAULT_PAGE_SIZE",

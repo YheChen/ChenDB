@@ -1,0 +1,120 @@
+# Everything `make test` and `make lint` do, on every push and pull request.
+#
+# There was no CI for eleven milestones, and the cost of that is measurable:
+# `make lint` runs *two* tools and the second one was red the entire time,
+# because running `ruff check` by hand looks like linting and is only half of
+# it. Nothing that a human has to remember to run counts as a check.
+#
+# The jobs are split by what they need rather than by what they are, so a
+# failure names its own cause. `engine` proves the "no runtime dependencies"
+# claim by running on a bare interpreter with nothing installed — if that job
+# passes and the others do not, the engine is fine and the server is not.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push supersedes the run in flight for the same branch.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "24"
+
+jobs:
+  engine:
+    name: Engine on a bare interpreter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # No pip install. The engine's only claim to standing alone is that it
+      # imports and runs with nothing on the path but the standard library, and
+      # the only way to check that is not to install anything.
+      - name: Import the engine with nothing installed
+        run: python -c "import engine; print(engine.__version__, engine.MILESTONE)"
+
+      - name: Every narrated example
+        run: |
+          for example in examples/*.py; do
+            echo "--- $example"
+            python "$example" > /dev/null
+          done
+
+  python:
+    name: Python tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # The demo-SQL guard shells out to node to read the visualizer's
+      # catalogue. Without this it would skip, which is the one outcome a guard
+      # must never do quietly.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: pip install -e '.[server,dev]'
+
+      - name: ruff check
+        run: ruff check engine tests benchmarks examples scripts
+
+      - name: ruff format --check
+        run: ruff format --check engine tests benchmarks examples scripts
+
+      - name: pytest
+        # CHENDB_REQUIRE_NODE turns the demo-SQL guard's "node is missing, skip"
+        # into a failure. A guard that goes quiet is worse than no guard, and
+        # every demo button in the visualizer is checked by that one suite.
+        env:
+          CHENDB_REQUIRE_NODE: "1"
+        run: pytest -q
+
+      - name: The committed TypeScript matches the live schema
+        run: |
+          python scripts/generate_api_types.py
+          git diff --exit-code -- docs/openapi.json visualizer/src/types/api.ts \
+            || { echo "::error::api.ts is stale — run 'make types' and commit"; exit 1; }
+
+  frontend:
+    name: Frontend typecheck, tests and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: visualizer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: visualizer/package-lock.json
+
+      - run: npm ci
+
+      - name: tsc
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm test
+
+      # The build is its own check: `tsc --noEmit` will not catch a bad import
+      # path that Vite resolves differently, and a visualizer that typechecks
+      # but does not bundle is still broken.
+      - name: vite build
+        run: npm run build

@@ -20,6 +20,7 @@ import { SplitPane } from "@/components/SplitPane";
 import { Panel } from "@/components/primitives";
 import { useRunQuery } from "@/hooks/useEngine";
 import { api, type ResumeModeName } from "@/lib/api";
+import { EXECUTION_INITIAL_SQL } from "@/lib/demoSql";
 import { SqlEditor } from "@/features/sql/SqlEditor";
 import type { ExecutionDetail, QueryResultModel } from "@/types/api";
 import { AlternativesPanel, PlanTree } from "./PlanTree";
@@ -27,20 +28,6 @@ import { ResultsPanel } from "./ResultsPanel";
 import { StepControls } from "./StepControls";
 
 const STORAGE_KEY = "chendb.query";
-
-const INITIAL_SQL = `-- ⌘↵ runs this. "Start stepping" walks it one operation at a time.
--- Note alan: a NULL age makes \`age >= 18\` unknown, and unknown is not TRUE,
--- so the filter drops that row.
-
-CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL, age INTEGER);
-
-INSERT INTO users VALUES
-  (1, 'ada@example.com',   36),
-  (2, 'alan@example.com',  NULL),
-  (3, 'grace@example.com', 45),
-  (4, 'edgar@example.com', 17);
-
-SELECT email, age * 2 AS doubled FROM users WHERE age >= 18;`;
 
 export function ExecutionWorkspace({
   databaseId,
@@ -53,9 +40,9 @@ export function ExecutionWorkspace({
 }) {
   const [sql, setSql] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) ?? INITIAL_SQL;
+      return localStorage.getItem(STORAGE_KEY) ?? EXECUTION_INITIAL_SQL;
     } catch {
-      return INITIAL_SQL;
+      return EXECUTION_INITIAL_SQL;
     }
   });
   const [results, setResults] = useState<QueryResultModel[] | undefined>();

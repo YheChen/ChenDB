@@ -17,14 +17,20 @@ the UI until the engine behind it exists.
 | 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, recovery report | **done** |
 | 10 | MVCC, locks, wait-for graph, deadlocks | Two consoles, snapshots, lock table | **done** |
 | 11 | `UPDATE ... SET`, `DELETE ... WHERE`, version chains | Update walkthroughs, live rows vs versions | **done** |
+| 12 | — (CI over everything above) | One catalogue of demo SQL, checked against the engine | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
 So the tenth is `1.0.0`, the eleventh `1.1.0`, and `engine.MILESTONE` is
 `major * 10 + minor`.
 
+Not every milestone adds an engine feature. The twelfth added continuous
+integration, which is a guarantee about the other eleven — see
+`docs/milestone-12-ci.md` for why `MILESTONE_FEATURES` stopped at eleven
+entries.
+
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-11-dml.md`.
+the newest is `docs/milestone-12-ci.md`.
 
 ## What each milestone adds to the file format
 
@@ -39,6 +45,7 @@ the newest is `docs/milestone-11-dml.md`.
 | 9 | — | **v4**: `checkpoint_lsn` — the LSN of the log file's first byte. Page `lsn` starts being written; the field had been reserved since Milestone 1. |
 | 10 | — | **v5**: `next_xid`; every row gains an 8-byte tuple header with `xmin`/`xmax` |
 | 11 | — | — (an update writes a second version through the M10 header; nothing new on disk) |
+| 12 | — | — (nothing runs; everything is checked) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 

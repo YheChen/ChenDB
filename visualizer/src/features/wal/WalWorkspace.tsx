@@ -32,7 +32,7 @@ import {
   useTransactions,
   useWal,
 } from "@/hooks/useEngine";
-import { insertRows } from "@/lib/demoRows";
+import { WAL_DEMOS } from "@/lib/demoSql";
 import { formatBytes, formatCount } from "@/lib/format";
 import { RecoveryPanel } from "./RecoveryPanel";
 import { WalCounters, WalTable } from "./WalTable";
@@ -165,38 +165,19 @@ export function WalWorkspace({
           ) : (
             <>
               <div className="flex flex-wrap gap-1.5">
-                <Button
-                  disabled={busy}
-                  title="Each statement commits, so each one fsyncs the log. Watch the record count and the log size climb."
-                  onClick={() => {
-                    setNote(
-                      "Twenty committed rows. Each statement got an implicit transaction, so each one appended a commit record and fsynced — that is why the sync count went up by twenty.",
-                    );
-                    run.mutate({
-                      sql: insertRows(table, { from: 800_000, count: 20 }),
-                      maxRows: 1,
-                    });
-                  }}
-                >
-                  Commit twenty rows
-                </Button>
-                <Button
-                  disabled={busy || inTransaction}
-                  title="Open a transaction and write into it without committing. Then crash — and watch these rows not come back."
-                  onClick={() => {
-                    setNote(
-                      "Fifty rows inside an open transaction, with no commit. They are in the table now and in the log — but with no commit record. Crash the database and recovery will take them back.",
-                    );
-                    run.mutate({
-                      sql:
-                        "BEGIN;\n" +
-                        insertRows(table, { from: 900_000, count: 50 }),
-                      maxRows: 1,
-                    });
-                  }}
-                >
-                  Write fifty uncommitted rows
-                </Button>
+                {WAL_DEMOS.map((demo) => (
+                  <Button
+                    key={demo.id}
+                    disabled={busy || (demo.requiresNoTransaction && inTransaction)}
+                    title={demo.hint}
+                    onClick={() => {
+                      setNote(demo.note);
+                      run.mutate({ sql: demo.sql(table), maxRows: 1 });
+                    }}
+                  >
+                    {demo.label}
+                  </Button>
+                ))}
               </div>
               {note ? <p className="text-muted text-[11px]">{note}</p> : null}
               {run.isError ? <ErrorNotice error={run.error} /> : null}
