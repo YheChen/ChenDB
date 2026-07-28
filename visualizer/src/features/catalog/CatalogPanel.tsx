@@ -230,7 +230,12 @@ function TableBody({
           <Field
             label="rows"
             value={formatCount(storage.row_count)}
-            title="Live rows. O(pages) to compute — nothing is cached, the same reason PostgreSQL's reltuples is only an estimate."
+            title="What a SELECT would return. O(pages) to compute — nothing is cached, the same reason PostgreSQL's reltuples is only an estimate."
+          />
+          <Field
+            label="versions"
+            value={formatCount(storage.version_count)}
+            title="Row versions physically on the pages. Higher than 'rows' after a delete or an update; the difference is what Vacuum reclaims."
           />
           <Field label="pages" value={storage.page_count} />
           <Field label="allocated" value={formatBytes(storage.bytes_allocated)} />

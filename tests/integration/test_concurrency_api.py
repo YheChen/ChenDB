@@ -221,3 +221,27 @@ def test_health_reports_mvcc(client: TestClient):
     body = client.get(f"{API_PREFIX}/health").json()
     assert body["milestone"] >= 10, "MVCC shipped in Milestone 10"
     assert body["features"]["mvcc"] is True
+
+
+def test_a_write_from_a_named_session_commits_itself(seeded: TestClient):
+    """No BEGIN, so the statement is its own transaction — for any session.
+
+    Until Milestone 11 this left the session's implicit transaction open
+    forever: the insert reported success, the row was invisible to everyone
+    else, and a row lock and the vacuum horizon were held until the process
+    ended. ``Database.transaction`` was asking the *default* session whether it
+    owned a transaction it had just opened for ``carol``.
+    """
+    run(seeded, "INSERT INTO users VALUES (900, 'carol');", session="carol")
+
+    assert sessions(seeded)["sessions"] == [], "nothing left open"
+    assert locks(seeded)["entries"] == [], "and no lock held by a ghost"
+    assert 900 in ids(seeded), "and the default session can see it"
+
+
+def test_an_update_from_a_named_session_commits_itself(seeded: TestClient):
+    run(seeded, "UPDATE users SET label = 'changed' WHERE id = 1;", session="carol")
+
+    assert sessions(seeded)["sessions"] == []
+    (result,) = run(seeded, "SELECT label FROM users WHERE id = 1;")
+    assert result["rows"] == [["changed"]]

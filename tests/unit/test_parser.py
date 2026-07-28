@@ -12,6 +12,7 @@ from engine.parser.ast import (
     ColumnConstraint,
     ColumnRef,
     CreateTableStatement,
+    DeleteStatement,
     InsertStatement,
     IsNullTest,
     Literal,
@@ -19,6 +20,7 @@ from engine.parser.ast import (
     Star,
     UnaryOp,
     UnaryOperator,
+    UpdateStatement,
     walk,
 )
 from engine.parser.parser import MAX_EXPRESSION_DEPTH, parse, parse_statement
@@ -361,6 +363,56 @@ def test_rows_of_differing_widths_are_rejected():
         parse_statement("INSERT INTO t VALUES (1, 2), (3)")
 
 
+# -- UPDATE / DELETE -------------------------------------------------------
+
+
+def test_update_with_several_assignments():
+    statement = parse_statement("UPDATE t SET a = 1, b = a + 1 WHERE c = 3")
+    assert isinstance(statement, UpdateStatement)
+    assert statement.table.name == "t"
+    assert [item.column for item in statement.assignments] == ["a", "b"]
+    assert isinstance(statement.assignments[1].value, BinaryOp)
+    assert isinstance(statement.where, BinaryOp)
+
+
+def test_update_without_a_where_clause_targets_every_row():
+    statement = parse_statement("UPDATE t SET a = 1")
+    assert isinstance(statement, UpdateStatement)
+    assert statement.where is None
+
+
+def test_delete_with_and_without_a_predicate():
+    filtered = parse_statement("DELETE FROM t WHERE a > 1")
+    assert isinstance(filtered, DeleteStatement)
+    assert isinstance(filtered.where, BinaryOp)
+    assert parse_statement("DELETE FROM t").where is None
+
+
+def test_delete_requires_from():
+    # MySQL allows `DELETE t WHERE ...`; one token of lookahead does not.
+    with pytest.raises(ParseError, match="expected FROM"):
+        parse_statement("DELETE t WHERE a = 1")
+
+
+def test_an_assignment_needs_an_equals_sign():
+    with pytest.raises(ParseError, match="'=' after the column name"):
+        parse_statement("UPDATE t SET a 1")
+
+
+def test_the_span_of_an_assignment_covers_both_sides():
+    sql = "UPDATE t SET price = price * 2"
+    statement = parse_statement(sql)
+    assert isinstance(statement, UpdateStatement)
+    assert statement.assignments[0].text_in(sql) == "price = price * 2"
+
+
+def test_an_assignment_value_is_reachable_by_the_generic_walk():
+    # Nothing in the mapper or the UI knows what an Assignment is; both find
+    # the expression underneath it through Node.children().
+    statement = parse_statement("UPDATE t SET a = b")
+    assert any(isinstance(node, ColumnRef) and node.name == "b" for node in walk(statement))
+
+
 # -- scripts ---------------------------------------------------------------
 
 
@@ -469,8 +521,9 @@ def test_star_inside_an_expression_is_explained():
         ("SELECT * FROM t LIMIT 10", "LIMIT"),
         ("SELECT * FROM t GROUP BY a", "GROUP BY"),
         ("SELECT DISTINCT a FROM t", "DISTINCT"),
-        ("DELETE FROM t", "DELETE"),
-        ("UPDATE t SET a = 1", "UPDATE"),
+        ("DELETE FROM t ORDER BY a", "ORDER BY is not allowed on DELETE"),
+        ("UPDATE t SET a = 1 LIMIT 2", "LIMIT is not allowed on UPDATE"),
+        ("UPDATE t SET a = 1 FROM u", "no joins yet"),
         ("DROP TABLE t", "DROP"),
         ("SELECT * FROM t WHERE a IN (1)", "IN"),
         ("SELECT * FROM t WHERE a LIKE 'x'", "LIKE"),
@@ -489,7 +542,7 @@ def test_valid_sql_that_is_not_implemented_says_so(sql: str, match: str):
 def test_unsupported_is_a_kind_of_parse_error():
     # So a caller that only cares "the SQL did not work" can catch one type.
     with pytest.raises(ParseError):
-        parse_statement("DELETE FROM t")
+        parse_statement("DROP TABLE t")
 
 
 def test_deeply_nested_parentheses_fail_cleanly_instead_of_crashing():

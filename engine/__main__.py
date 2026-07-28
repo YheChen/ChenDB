@@ -42,8 +42,8 @@ _BANNER = f"""ChenDB {__version__} — Milestone {MILESTONE} \
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL."""
 
 _HELP = """\
-  <sql>;                         run SQL — SELECT, INSERT, CREATE TABLE/INDEX,
-                                 EXPLAIN [ANALYZE], ANALYZE
+  <sql>;                         run SQL — SELECT, INSERT, UPDATE, DELETE,
+                                 CREATE TABLE/INDEX, EXPLAIN [ANALYZE], ANALYZE
   .help                          show this message
   .info                          database file and meta-page summary
   .tables                        every table, with row and page counts

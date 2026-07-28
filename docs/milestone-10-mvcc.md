@@ -343,14 +343,11 @@ python -m pytest tests/unit/test_mvcc.py tests/integration/test_concurrency_api.
 
 ## What is still missing
 
-This is the last milestone, so this list is not a plan — it is the honest edge
-of what got built.
-
 - **Serializable isolation.** Write skew is possible. Ruling it out needs
   predicate locking or SSI.
-- **No `UPDATE`.** ChenDB has `INSERT` and `DELETE`, so a version *chain* — the
-  `ctid` forward pointers PostgreSQL keeps — has nowhere to form. Versions here
-  are one deep.
+- ~~**No `UPDATE`.**~~ Fixed in [Milestone 11](milestone-11-dml.md), which is
+  where version chains actually get a second link. At this point the engine has
+  `INSERT` and `DELETE` only, so every version is one deep.
 - **No parallel statement execution**, as above.
 - **No lock escalation**, so a very wide transaction runs out of lock table
   rather than degrading.

@@ -151,6 +151,29 @@ The catalog is the exception, and deliberately: its own tables carry no header,
 because a rolled-back ``CREATE TABLE`` is undone by restoring the *page*, so
 there is never a catalog row anybody wants an older version of.
 
+Milestone 11 slid back into the pattern, and reused more than it added. An
+``UPDATE`` or ``DELETE`` is a query with something on the end of it:
+
+```
+     bind_update / bind_delete
+              │
+              ├──▶ identity_projection  ─┐
+              │                          ├──▶ the same logical → physical
+              └──▶ where                ─┘    planner a SELECT uses
+                                                     │
+                        ┌────────────────────────────┘
+                        ▼
+              _locate_rows   drains the plan into a list FIRST
+                        │        (the Halloween problem — see the milestone doc)
+                        ▼
+              Database.update_many / delete_many
+```
+
+The mutation is not an operator, for the same reason ``INSERT`` never was: a
+statement with exactly one execution strategy does not need a plan node to say
+so. What *does* have more than one answer — which rows — goes through the
+planner unchanged, which is why ``DELETE ... WHERE id = 5`` descends an index.
+
 ## An insert, end to end
 
 ```

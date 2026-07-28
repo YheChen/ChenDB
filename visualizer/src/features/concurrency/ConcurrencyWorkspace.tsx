@@ -29,9 +29,12 @@ import {
   useCatalog,
   useLocks,
   useSessions,
+  useTable,
   useVacuum,
 } from "@/hooks/useEngine";
+import { insertRow, literalFor } from "@/lib/demoRows";
 import { formatCount } from "@/lib/format";
+import type { TableDetail } from "@/types/api";
 import { LockCounters, LockTable } from "./LockTable";
 import { SessionConsole } from "./SessionConsole";
 
@@ -46,29 +49,74 @@ type Walkthrough = {
   bob: string;
 };
 
-const WALKTHROUGHS: (table: string) => Walkthrough[] = (table) => [
-  {
-    id: "invisible",
-    label: "A reader does not wait",
-    hint: "Run bob's BEGIN and INSERT, then alice's SELECT. Alice returns immediately and does not see the row — she read an older version rather than waiting for the newer one. Then commit bob and run alice again.",
-    bob: `INSERT INTO ${table} VALUES (9001, 'from bob');`,
-    alice: `SELECT * FROM ${table};`,
-  },
-  {
-    id: "repeatable",
-    label: "Two levels, two answers",
-    hint: "Open alice's transaction, run her SELECT, then have bob insert and commit, then run alice's SELECT again. Under read committed she sees the new row; the same sequence under repeatable read would not.",
-    alice: `SELECT * FROM ${table};`,
-    bob: `INSERT INTO ${table} VALUES (9002, 'later');`,
-  },
-  {
-    id: "conflict",
-    label: "Two writers collide",
-    hint: "Have both sessions BEGIN, then both delete the same row. The second one waits — this is the one conflict snapshot isolation cannot make disappear, and the lock table below shows it happening.",
-    alice: `DELETE FROM ${table} WHERE id = 1;`,
-    bob: `DELETE FROM ${table} WHERE id = 1;`,
-  },
-];
+/**
+ * Scripts built from the table that is actually open, never from a guess.
+ *
+ * These used to hardcode `WHERE id = 1`, which is fine until the open table has
+ * no `id` — and the walkthrough then failed in a way that looked like the
+ * engine misbehaving rather than the button being wrong. See `demoRows.ts`.
+ */
+const WALKTHROUGHS: (table: TableDetail) => Walkthrough[] = (table) => {
+  const name = table.name;
+  const walkthroughs: Walkthrough[] = [
+    {
+      id: "invisible",
+      label: "A reader does not wait",
+      hint: "Run bob's BEGIN and INSERT, then alice's SELECT. Alice returns immediately and does not see the row — she read an older version rather than waiting for the newer one. Then commit bob and run alice again.",
+      bob: insertRow(table, 9001),
+      alice: `SELECT * FROM ${name};`,
+    },
+    {
+      id: "repeatable",
+      label: "Two levels, two answers",
+      hint: "Open alice's transaction, run her SELECT, then have bob insert and commit, then run alice's SELECT again. Under read committed she sees the new row; the same sequence under repeatable read would not.",
+      alice: `SELECT * FROM ${name};`,
+      bob: insertRow(table, 9002),
+    },
+  ];
+
+  // An UPDATE needs a column to write to. Every table has one, but the type
+  // does not say so, and inventing a name here is exactly the bug this file
+  // used to have.
+  const target = updateTarget(table);
+  if (target) {
+    walkthroughs.push(
+      {
+        id: "versions",
+        label: "One row, two versions",
+        hint: `BEGIN bob, run his UPDATE, then run alice's SELECT: she reads the OLD ${target.name}, because both versions are on the page at once and bob's is not committed. Commit bob and run alice again to see the new one. Then look at rows vs versions on the Storage tab, and press Vacuum.`,
+        alice: `SELECT * FROM ${name};`,
+        bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 7777)};`,
+      },
+      {
+        id: "locks",
+        label: "A writer locks, a reader does not",
+        hint: `BEGIN bob and run his UPDATE without committing. The lock table below fills with one exclusive lock per version he touched — two per row, the old one and the new. Now run alice's SELECT: it returns instantly, holds 0 locks, and "readers blocked" stays 0. That is the whole claim of MVCC, in one panel.`,
+        alice: `SELECT * FROM ${name};`,
+        bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 200)};`,
+      },
+      {
+        id: "rollback",
+        label: "A rollback leaves nothing behind",
+        hint: "BEGIN bob, run his UPDATE, and check rows vs versions on the Storage tab: rows unchanged, versions up by one per row. Now ROLLBACK and look again — the new versions are gone, not merely dead, and Vacuum has nothing to do. ChenDB undoes by restoring pages, which is why it needs no commit log; PostgreSQL, which does not undo, needs both CLOG and a vacuum pass for the rows an aborted transaction left.",
+        alice: `SELECT * FROM ${name};`,
+        bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 300)};`,
+      },
+    );
+  }
+  return walkthroughs;
+};
+
+/**
+ * A column worth writing a demonstration value into.
+ *
+ * Not the primary key if anything else is available: setting every row's `id`
+ * to the same number makes the table nonsense, and a reader trying to follow
+ * the version chain then cannot tell the rows apart.
+ */
+function updateTarget(table: TableDetail) {
+  return table.columns.find((column) => !column.primary_key) ?? table.columns[0];
+}
 
 export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
   const [note, setNote] = useState<string | null>(null);
@@ -82,9 +130,21 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
   const vacuum = useVacuum(databaseId);
 
   const table = catalog.data?.tables[0]?.name ?? "users";
+  // The walkthroughs write real SQL against real columns, so they need the
+  // schema and not just the name.
+  const detail = useTable(databaseId, catalog.data?.tables[0]?.name ?? null);
   const byName = new Map(
     (sessions.data?.sessions ?? []).map((entry) => [entry.session, entry]),
   );
+
+  // A reader and a writer, which is the shape of every demonstration here. The
+  // consoles are keyed on these, so the writer's default becomes a real INSERT
+  // the moment the schema arrives rather than staying at whatever could be
+  // written without one.
+  const aliceSql = scripts?.alice ?? `SELECT * FROM ${table};`;
+  const bobSql =
+    scripts?.bob ??
+    (detail.data ? insertRow(detail.data, 9000) : `SELECT * FROM ${table};`);
 
   return (
     <div className="flex min-h-0 w-full flex-col gap-2 overflow-y-auto">
@@ -151,21 +211,31 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
       <Panel className="shrink-0" title="Walkthroughs" subtitle={table}>
         <div className="space-y-2 p-3">
           <div className="flex flex-wrap gap-1.5">
-            {WALKTHROUGHS(table).map((walkthrough) => (
-              <Button
-                key={walkthrough.id}
-                title={walkthrough.hint}
-                onClick={() => {
-                  setNote(walkthrough.hint);
-                  setScripts({
-                    alice: walkthrough.alice,
-                    bob: walkthrough.bob,
-                  });
-                }}
-              >
-                {walkthrough.label}
+            {/* Disabled rather than hidden while the schema loads, and
+                disabled rather than guessing if there is no table to use. */}
+            {detail.data ? (
+              WALKTHROUGHS(detail.data).map((walkthrough) => (
+                <Button
+                  key={walkthrough.id}
+                  title={walkthrough.hint}
+                  onClick={() => {
+                    setNote(walkthrough.hint);
+                    setScripts({
+                      alice: walkthrough.alice,
+                      bob: walkthrough.bob,
+                    });
+                  }}
+                >
+                  {walkthrough.label}
+                </Button>
+              ))
+            ) : (
+              <Button disabled>
+                {detail.isPending && catalog.data?.tables.length
+                  ? "Reading the schema…"
+                  : "No table to demonstrate on"}
               </Button>
-            ))}
+            )}
           </div>
           <p className="text-muted text-[11px]">
             {note ??
@@ -185,24 +255,22 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
           first={
             <div className="min-h-0 w-full pr-1">
               <SessionConsole
-                key={`${ALICE}-${scripts?.alice ?? ""}`}
+                key={`${ALICE}-${aliceSql}`}
                 databaseId={databaseId}
                 session={ALICE}
                 info={byName.get(ALICE)}
-                defaultSql={scripts?.alice ?? `SELECT * FROM ${table};`}
+                defaultSql={aliceSql}
               />
             </div>
           }
           second={
             <div className="min-h-0 w-full pl-1">
               <SessionConsole
-                key={`${BOB}-${scripts?.bob ?? ""}`}
+                key={`${BOB}-${bobSql}`}
                 databaseId={databaseId}
                 session={BOB}
                 info={byName.get(BOB)}
-                defaultSql={
-                  scripts?.bob ?? `INSERT INTO ${table} VALUES (9000, 'bob');`
-                }
+                defaultSql={bobSql}
               />
             </div>
           }

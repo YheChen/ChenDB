@@ -100,6 +100,7 @@ class WriteAheadLog:
     __slots__ = (
         "_base_lsn",
         "_buffer",
+        "_buffer_bytes",
         "_buffer_tail",
         "_closed",
         "_file",
@@ -128,6 +129,11 @@ class WriteAheadLog:
         #: Records staged in memory. Appending is a list append; the syscall
         #: happens at flush. Milestone 7 made the same trade for pages.
         self._buffer: list[bytes] = []
+        #: Running total of :attr:`_buffer`, maintained rather than recomputed.
+        #: ``next_lsn`` is read once per append and summing the buffer there
+        #: made a transaction of *n* records cost O(n squared) — 2,000 rows
+        #: updated in one statement spent 8.5 of 9.8 seconds inside ``sum``.
+        self._buffer_bytes = 0
         #: The last staged record, kept decoded so the next append can see
         #: whether it supersedes it. See :meth:`append_update`.
         self._buffer_tail: LogRecord | None = None
@@ -164,11 +170,11 @@ class WriteAheadLog:
         the LSN of the record that describes it, so the LSN has to exist before
         the page image is encoded into that record.
         """
-        return self._flushed_lsn + sum(len(chunk) for chunk in self._buffer)
+        return self._flushed_lsn + self._buffer_bytes
 
     @property
     def buffered_bytes(self) -> int:
-        return sum(len(chunk) for chunk in self._buffer)
+        return self._buffer_bytes
 
     @property
     def stats(self) -> WalStats:
@@ -210,7 +216,9 @@ class WriteAheadLog:
             before_image=before_image,
             after_image=after_image,
         )
-        self._buffer.append(record.to_bytes())
+        encoded = record.to_bytes()
+        self._buffer.append(encoded)
+        self._buffer_bytes += len(encoded)
         self._buffer_tail = record
         if transaction_id != NO_TRANSACTION:
             self._last_lsn_of[transaction_id] = record.lsn
@@ -297,7 +305,9 @@ class WriteAheadLog:
             before_image=tail.before_image,
             after_image=after,
         )
-        self._buffer[-1] = record.to_bytes()
+        encoded = record.to_bytes()
+        self._buffer_bytes += len(encoded) - len(self._buffer[-1])
+        self._buffer[-1] = encoded
         self._buffer_tail = record
         self._stats.records_coalesced += 1
         return record
@@ -338,6 +348,7 @@ class WriteAheadLog:
         if self._buffer:
             payload = b"".join(self._buffer)
             self._buffer.clear()
+            self._buffer_bytes = 0
             self._buffer_tail = None
             self._file.write(payload)
             self._file.flush()
@@ -456,6 +467,7 @@ class WriteAheadLog:
         """
         self._ensure_open()
         self._buffer.clear()
+        self._buffer_bytes = 0
         self._buffer_tail = None
         self._file.truncate(0)
         self._file.seek(0)
@@ -476,6 +488,7 @@ class WriteAheadLog:
         if self._closed:
             return
         self._buffer.clear()
+        self._buffer_bytes = 0
         self._buffer_tail = None
         self._file.close()
         self._closed = True

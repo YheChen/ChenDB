@@ -1,8 +1,8 @@
 # Roadmap
 
-Ten milestones. Each ends with a working database, a working visualizer, and a
-demo. Nothing is stubbed ahead of time: a feature is absent from the API and
-hidden in the UI until the engine behind it exists.
+Each milestone ends with a working database, a working visualizer, and a demo.
+Nothing is stubbed ahead of time: a feature is absent from the API and hidden in
+the UI until the engine behind it exists.
 
 | # | Engine | Visualizer | Status |
 |---|--------|------------|--------|
@@ -16,13 +16,15 @@ hidden in the UI until the engine behind it exists.
 | 8 | Transactions, undo log, rollback, atomic DDL | Transaction timeline, undo log, BEGIN/COMMIT/ROLLBACK | **done** |
 | 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, recovery report | **done** |
 | 10 | MVCC, locks, wait-for graph, deadlocks | Two consoles, snapshots, lock table | **done** |
+| 11 | `UPDATE ... SET`, `DELETE ... WHERE`, version chains | Update walkthroughs, live rows vs versions | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
-So the tenth is `1.0.0`, and `engine.MILESTONE` is `major * 10 + minor`.
+So the tenth is `1.0.0`, the eleventh `1.1.0`, and `engine.MILESTONE` is
+`major * 10 + minor`.
 
-**All ten are done.** What is deliberately not built is below, and
-`docs/milestone-10-mvcc.md` ends with the edges of the last one.
+Each milestone document ends with the honest edge of what it built; the one for
+the newest is `docs/milestone-11-dml.md`.
 
 ## What each milestone adds to the file format
 
@@ -36,6 +38,7 @@ So the tenth is `1.0.0`, and `engine.MILESTONE` is `major * 10 + minor`.
 | 8 | — | — (the undo log is memory; it dies with the process, which is why a crash mid-transaction is not atomic) |
 | 9 | — | **v4**: `checkpoint_lsn` — the LSN of the log file's first byte. Page `lsn` starts being written; the field had been reserved since Milestone 1. |
 | 10 | — | **v5**: `next_xid`; every row gains an 8-byte tuple header with `xmin`/`xmax` |
+| 11 | — | — (an update writes a second version through the M10 header; nothing new on disk) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -53,3 +56,9 @@ Real problems this design has, with no milestone assigned:
 - **`VACUUM`** to return trailing pages to the filesystem.
 - **Joins, aggregation, `GROUP BY`, subqueries.** Milestone 3 builds the
   operator framework these would slot into.
+- **`RETURNING`, and `INSERT ... SELECT`.** Both need a mutation to be an
+  operator that emits rows rather than a call into storage. One refactor covers
+  the pair; see `docs/milestone-11-dml.md`.
+- **Heap-only tuples.** Milestone 11 rewrites every index on every update
+  because the row's address changed. PostgreSQL's HOT avoids it when no indexed
+  column changed and the new version fits on the same page.

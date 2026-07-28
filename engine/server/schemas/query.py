@@ -135,7 +135,12 @@ class QueryResultModel(ApiModel):
     """The outcome of one statement."""
 
     statement_kind: str = Field(
-        description="SelectStatement, InsertStatement, CreateTableStatement or CreateIndexStatement"
+        description=(
+            "The AST node type: SelectStatement, InsertStatement, "
+            "UpdateStatement, DeleteStatement, CreateTableStatement, "
+            "CreateIndexStatement, ExplainStatement, AnalyzeStatement, or one "
+            "of the transaction statements"
+        )
     )
     returns_rows: bool
     message: str = Field(description="Summary for statements that return no rows")

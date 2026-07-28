@@ -5,6 +5,7 @@ whole appeal: the grammar below can be read straight off the method names.
 
     script         := statement { ';' statement } [ ';' ]
     statement      := create_table | create_index | insert | select
+                    | update | delete
                     | explain | analyze | begin | commit | rollback
 
     begin          := BEGIN [ TRANSACTION ]
@@ -29,6 +30,12 @@ whole appeal: the grammar below can be read straight off the method names.
     select         := SELECT select_list FROM ident [ WHERE expr ]
     select_list    := select_item { ',' select_item }
     select_item    := '*' | expr [ [ AS ] ident ]
+
+    update         := UPDATE ident SET assignment { ',' assignment }
+                      [ WHERE expr ]
+    assignment     := ident '=' expr
+
+    delete         := DELETE FROM ident [ WHERE expr ]
 
     expr           := or_expr
     or_expr        := and_expr { OR and_expr }
@@ -74,6 +81,7 @@ from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import ParseError, UnsupportedSqlError
 from engine.parser.ast import (
     AnalyzeStatement,
+    Assignment,
     BeginStatement,
     BinaryOp,
     BinaryOperator,
@@ -83,6 +91,7 @@ from engine.parser.ast import (
     CommitStatement,
     CreateIndexStatement,
     CreateTableStatement,
+    DeleteStatement,
     ExplainStatement,
     Expression,
     InsertStatement,
@@ -97,6 +106,7 @@ from engine.parser.ast import (
     TableRef,
     UnaryOp,
     UnaryOperator,
+    UpdateStatement,
     ValuesRow,
 )
 from engine.parser.lexer import tokenize
@@ -155,8 +165,6 @@ _TYPE_BY_KEYWORD: Final[dict[Keyword, DataType]] = {
 #: milestone that will add them. Recognising them lets the parser explain
 #: itself instead of reporting a generic syntax error.
 _NOT_YET: Final[dict[Keyword, str]] = {
-    Keyword.UPDATE: "UPDATE is not implemented yet",
-    Keyword.DELETE: "DELETE is not implemented yet",
     Keyword.DROP: "DROP is not implemented yet",
 }
 
@@ -331,6 +339,10 @@ class Parser:
             return self._select_statement()
         if self._check_keyword(Keyword.INSERT):
             return self._insert_statement()
+        if self._check_keyword(Keyword.UPDATE):
+            return self._update_statement()
+        if self._check_keyword(Keyword.DELETE):
+            return self._delete_statement()
         if self._check_keyword(Keyword.CREATE):
             return self._create_statement()
         if self._check_keyword(Keyword.EXPLAIN):
@@ -348,6 +360,8 @@ class Parser:
             expected=(
                 "SELECT",
                 "INSERT",
+                "UPDATE",
+                "DELETE",
                 "CREATE TABLE",
                 "CREATE INDEX",
                 "EXPLAIN",
@@ -598,6 +612,78 @@ class Parser:
             columns=columns,
             rows=tuple(rows),
         )
+
+    # -- UPDATE / DELETE ---------------------------------------------------
+
+    def _update_statement(self) -> UpdateStatement:
+        start = self._expect_keyword(Keyword.UPDATE).span
+        table = self._table_ref()
+        self._expect_keyword(Keyword.SET)
+
+        assignments: list[Assignment] = []
+        while True:
+            assignments.append(self._assignment())
+            if not self._match(TokenType.COMMA):
+                break
+        end = assignments[-1].span
+
+        if self._check_keyword(Keyword.FROM):
+            self._unsupported(
+                "UPDATE ... FROM needs a second row source, and there are no joins yet"
+            )
+
+        where: Expression | None = None
+        if self._match_keyword(Keyword.WHERE):
+            where = self._expression()
+            end = where.span
+
+        self._reject_trailing_clauses("UPDATE")
+        return self._node(
+            UpdateStatement,
+            start.union(end),
+            table=table,
+            assignments=tuple(assignments),
+            where=where,
+        )
+
+    def _assignment(self) -> Assignment:
+        name_token = self._identifier("a column name")
+        self._expect(TokenType.EQ, "'=' after the column name")
+        value = self._expression()
+        return self._node(
+            Assignment,
+            name_token.span.union(value.span),
+            column=self._identifier_name(name_token),
+            value=value,
+        )
+
+    def _delete_statement(self) -> DeleteStatement:
+        start = self._expect_keyword(Keyword.DELETE).span
+        # FROM is optional in MySQL's `DELETE t WHERE ...`; requiring it keeps
+        # the one-token lookahead honest and matches the standard.
+        self._expect_keyword(Keyword.FROM)
+        table = self._table_ref()
+        end = table.span
+
+        where: Expression | None = None
+        if self._match_keyword(Keyword.WHERE):
+            where = self._expression()
+            end = where.span
+
+        self._reject_trailing_clauses("DELETE")
+        return self._node(DeleteStatement, start.union(end), table=table, where=where)
+
+    def _reject_trailing_clauses(self, what: str) -> None:
+        """Reject ``ORDER BY``/``LIMIT`` on a statement that cannot honour them.
+
+        MySQL accepts both on ``UPDATE`` and ``DELETE``; PostgreSQL accepts
+        neither, because without an ordering guarantee "delete 10 rows" does not
+        say *which* ten. Failing loudly beats silently ignoring the clause,
+        which is the failure mode that loses data.
+        """
+        for keyword, clause in ((Keyword.ORDER, "ORDER BY"), (Keyword.LIMIT, "LIMIT")):
+            if self._check_keyword(keyword):
+                self._unsupported(f"{clause} is not allowed on {what}")
 
     # -- SELECT ------------------------------------------------------------
 

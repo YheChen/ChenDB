@@ -285,12 +285,24 @@ class Database:
         to be attributed to *something* — ``xmin`` of zero means "nobody made
         this", which no snapshot would ever see. That is a change from Milestone
         9, where a bare embedded write belonged to no transaction at all.
+
+        Counting the row is the caller's job, not this method's. It used to
+        happen here, which meant a delete reported one row created and one
+        deleted — harmless until Milestone 11, when an update became a delete
+        *and* an insert and the two counters stopped being interchangeable.
         """
         active = self._transactions.active_in(self._session)
         if active is None:
             active = self._transactions.begin(implicit=True, session=self._session)
-        active.rows_created += 1
         return active.transaction_id
+
+    def _note_rows(self, *, created: int = 0, deleted: int = 0) -> None:
+        """Attribute row counts to this session's transaction, if it has one."""
+        active = self._transactions.active_in(self._session)
+        if active is None:
+            return
+        active.rows_created += created
+        active.rows_deleted += deleted
 
     def _lock_row(self, table: str, record_id: RecordId) -> None:
         """Take an exclusive lock on one row, for as long as the transaction.
@@ -535,6 +547,18 @@ class Database:
         """
         self._pager.restore_page(page_id, image)
 
+    @property
+    def active_transaction(self) -> Transaction | None:
+        """**This session's** open transaction, if it has one.
+
+        Not ``TransactionManager.active``, which is the *default* session's and
+        is what every call site written before Milestone 10 meant. Anything
+        deciding whether to open or close a transaction has to ask about the
+        session it is running in, or a write from a named session opens an
+        implicit transaction that nothing ever ends.
+        """
+        return self._transactions.active_in(self._session)
+
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
         """Run a block atomically: commit on success, roll back on anything else.
@@ -547,7 +571,7 @@ class Database:
         — ChenDB has no savepoints, so an inner block cannot roll back
         independently, and pretending otherwise would be worse than not nesting.
         """
-        outer = self._transactions.active
+        outer = self.active_transaction
         transaction = self.begin(implicit=True) if outer is None else outer
         try:
             yield transaction
@@ -568,7 +592,7 @@ class Database:
         the top of it would raise "COMMIT with no transaction open" and hide
         whatever the block was doing.
         """
-        return outer is None and self._transactions.active is transaction
+        return outer is None and self.active_transaction is transaction
 
     @property
     def statistics(self) -> StatisticsCatalog:
@@ -707,6 +731,7 @@ class Database:
                 self._catalog.tree_for(index.name).insert(
                     index.encode(row[index.column_position]), record_id
                 )
+        self._note_rows(created=len(record_ids))
         return record_ids
 
     def get(self, table: str, record_id: RecordId) -> Row:
@@ -799,18 +824,61 @@ class Database:
         with self.transaction():
             return self._delete_one(info, heap, indexes, record_id)
 
-    def _delete_one(self, info, heap, indexes, record_id: RecordId) -> bool:
+    def _claim_row(self, info, heap, record_id: RecordId) -> tuple[bytes, int] | None:
+        """Take the row's write lock and hand back the version to change.
+
+        ``None`` means somebody else got there first and this row is theirs.
+
+        The order matters, and it is the whole of write-write conflict handling:
+
+            1. is this version already superseded by a **finished**
+               transaction?  → give up; the row is settled and not ours
+            2. otherwise take the exclusive lock — which **blocks** if a
+               transaction that is still open holds it
+            3. re-read, because waiting means the world moved on
+
+        Step 1 asks whether the deleter has *finished*, not whether the version
+        is dead. A version whose ``xmax`` names a running transaction is not
+        settled at all: that transaction may yet roll back, which in ChenDB
+        restores the page and takes the ``xmax`` with it. Treating it as dead
+        would let two sessions each conclude the other had won and neither
+        change anything — and would make a rolled-back delete silently swallow
+        somebody else's update.
+
+        A transaction is finished exactly when it is not in
+        :meth:`TransactionManager.running_ids`, with no commit log needed: a
+        rollback removes its work physically, so any ``xmax`` still on the page
+        from a finished transaction is a committed one.
+        """
         try:
             payload = heap.get(record_id)
         except RecordNotFoundError:
-            return False
+            return None
 
         header = read_tuple_header(payload)
-        if header.deleted:
-            return False  # already a dead version
+        running = self._transactions.running_ids()
+        if header.deleted and header.xmax not in running:
+            return None
 
         xid = self._writer_xid()
         self._lock_row(info.name, record_id)
+
+        # Re-read after the lock. If this call waited, the transaction it waited
+        # for has now ended: committed, and the xmax below stands, or rolled
+        # back, in which case the page came back and there is no xmax at all.
+        try:
+            payload = heap.get(record_id)
+        except RecordNotFoundError:  # pragma: no cover - vacuumed while waiting
+            return None
+        if read_tuple_header(payload).deleted:
+            return None
+        return payload, xid
+
+    def _delete_one(self, info, heap, indexes, record_id: RecordId) -> bool:
+        claimed = self._claim_row(info, heap, record_id)
+        if claimed is None:
+            return False
+        payload, xid = claimed
 
         if indexes:
             values = decode_record(info.schema, strip_tuple_header(payload))
@@ -824,10 +892,103 @@ class Database:
         # slot is reclaimed later by vacuum(). PostgreSQL does exactly this and
         # ships a daemon to do the reclaiming.
         heap.replace(record_id, set_xmax(payload, xid))
-        active = self._transactions.active_in(self._session)
-        if active is not None:
-            active.rows_deleted += 1
+        self._note_rows(deleted=1)
         return True
+
+    def delete_many(self, table: str, record_ids: Sequence[RecordId]) -> int:
+        """Tombstone several rows in **one** transaction. Returns how many went.
+
+        Not a loop over :meth:`delete`: that opens a transaction per row, which
+        would stamp a different ``xmax`` on each and leave half of them gone if
+        the tenth failed. A ``DELETE`` is one statement and gets one transaction.
+
+        The count can be lower than ``len(record_ids)`` when another session
+        deleted a row between this one locating it and reaching it. See
+        :meth:`update_many` for why that is reported rather than retried.
+        """
+        info = self.require_table(table)
+        heap = self._catalog.heap_for(info.name)
+        indexes = self._catalog.list_indexes(info.name)
+
+        with self.transaction():
+            return sum(
+                1
+                for record_id in record_ids
+                if self._delete_one(info, heap, indexes, record_id)
+            )
+
+    def update_many(
+        self, table: str, updates: Sequence[tuple[RecordId, Sequence[Any]]]
+    ) -> list[RecordId]:
+        """Replace rows with new versions. Returns the new addresses.
+
+        An MVCC update is a delete and an insert, not an edit::
+
+            before   slot 3   xmin=7 xmax=0   (1, 'ada',  10)
+            after    slot 3   xmin=7 xmax=9   (1, 'ada',  10)   ← still readable
+                     slot 8   xmin=9 xmax=0   (1, 'ada',  11)   ← the new version
+
+        Which is why the row's *address changes*, and why every index on the
+        table has to be rewritten even when the update touched no indexed
+        column: the entries all point at slot 3, and the live row is now slot 8.
+        That cost is real — an update to a table with four indexes is four B+
+        tree deletes and four inserts on top of two heap writes — and it is what
+        PostgreSQL's heap-only tuples avoid, by keeping the new version on the
+        same page and chaining to it from the old one so the indexes can stay
+        put. ChenDB has no HOT, so the bill is paid in full every time.
+
+        This is also the first thing in the project that makes a version chain
+        two deep. Until now a row was inserted once and deleted once, so
+        "the previous version" was always the same as "no row".
+        """
+        info = self.require_table(table)
+        heap = self._catalog.heap_for(info.name)
+        indexes = self._catalog.list_indexes(info.name)
+
+        with self.transaction():
+            replaced: list[RecordId] = []
+            for record_id, values in updates:
+                new_id = self._update_one(info, heap, indexes, record_id, values)
+                if new_id is not None:
+                    replaced.append(new_id)
+            return replaced
+
+    def _update_one(
+        self, info, heap, indexes, record_id: RecordId, values: Sequence[Any]
+    ) -> RecordId | None:
+        # ``None`` here means another session *committed* a change to this row
+        # between this statement locating it and reaching it — see
+        # :meth:`_claim_row`, which waits for one that has not committed yet.
+        #
+        # PostgreSQL does not give up at that point: under READ COMMITTED it
+        # follows the ``t_ctid`` chain to the new version, re-evaluates the
+        # WHERE clause against it, and updates that one instead — the
+        # EvalPlanQual machinery. It is the correct behaviour and it is a lot of
+        # machinery, so ChenDB skips the row and *reports* the skip rather than
+        # pretending the update applied.
+        claimed = self._claim_row(info, heap, record_id)
+        if claimed is None:
+            return None
+        payload, xid = claimed
+
+        old_values = decode_record(info.schema, strip_tuple_header(payload))
+        new_payload = add_tuple_header(encode_record(info.schema, values), xid)
+
+        # Tombstone first, then insert. The other order would briefly leave two
+        # live versions of the same row, and a concurrent reader taking a
+        # snapshot in that window would see both.
+        heap.replace(record_id, set_xmax(payload, xid))
+        new_id = heap.insert(new_payload)
+        self._lock_row(info.name, new_id)
+
+        for index in indexes:
+            position = index.column_position
+            tree = self._catalog.tree_for(index.name)
+            tree.delete(index.encode(old_values[position]), record_id)
+            tree.insert(index.encode(values[position]), new_id)
+
+        self._note_rows(created=1, deleted=1)
+        return new_id
 
     def count(self, table: str) -> int:
         """Rows visible to this reader. O(pages) — there is no cached count.

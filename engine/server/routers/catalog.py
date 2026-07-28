@@ -75,7 +75,11 @@ def _storage_of(managed: ManagedDatabase, db: Any, info: TableInfo) -> TableStor
     return mappers.table_storage_to_api(
         info,
         page_ids=page_ids,
-        row_count=heap.count(),
+        # `heap.count()` counts *slots*, so since Milestone 10 it has counted
+        # dead versions as rows. Reporting both makes the difference the point
+        # rather than a discrepancy between this panel and a SELECT.
+        row_count=db.count(info.name),
+        version_count=heap.count(),
         page_size=db.page_size,
         free_space=free_space,
         reclaimable_space=reclaimable,
@@ -85,7 +89,7 @@ def _storage_of(managed: ManagedDatabase, db: Any, info: TableInfo) -> TableStor
 def _summary_of(db: Any, info: TableInfo) -> TableSummary:
     heap = db.heap_for(info.name)
     return mappers.table_summary_to_api(
-        info, row_count=heap.count(), page_count=heap.page_count()
+        info, row_count=db.count(info.name), page_count=heap.page_count()
     )
 
 

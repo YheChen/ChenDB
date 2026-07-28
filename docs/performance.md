@@ -373,6 +373,53 @@ grows and never falls is an overdue vacuum, seen from the plan view.
 The second is on the hot path: a transaction updating the same row twice must
 not wait for itself.
 
+## UPDATE and DELETE — Milestone 11
+
+2,000 rows, one statement, 4 KiB pages. `pay` is the only column changed and
+only one of the two indexes covers it.
+
+| indexes | `UPDATE` | `DELETE` | `INSERT` for scale |
+|---|---|---|---|
+| none | 52 µs/row | 17 µs/row | 20 µs/row |
+| one | 123 µs/row | 55 µs/row | |
+| two | 186 µs/row | 85 µs/row | |
+
+Two things fall out of this table.
+
+**Each index costs an update about 65 µs and a delete about 35 µs** — and the
+update pays roughly double because it does a B+ tree *delete and insert* per
+index where the delete does only the delete. That is the true price of the fact
+that an MVCC update moves the row: the entry has to be taken out and put back
+even when the key did not change.
+
+**An update with no indexes still costs 2.5× a delete** (52 against 17). The
+delete writes eight bytes of header; the update writes those eight bytes, then
+encodes a whole new row and appends it. An update is genuinely two writes.
+
+For comparison, an index-free update at 52 µs against a bare insert at 20 µs is
+about the ratio you would predict from "delete plus insert plus one extra page
+read to fetch the version being replaced".
+
+### One quadratic, found by this milestone
+
+`WriteAheadLog.next_lsn` is read once per append and used to compute
+`sum(len(chunk) for chunk in self._buffer)` — O(n) per append, therefore O(n²)
+across a transaction.
+
+| | 2,000-row `UPDATE`, two indexes |
+|---|---|
+| before | 9.75 s, **8.5 s of it inside `sum`** (65 million `len` calls) |
+| after | 1.16 s, no single function above 7% |
+
+Keeping a running byte total is four lines. The bug had been in place since
+Milestone 9 and never fired, because nothing before this staged thousands of
+records inside one transaction — `insert_many` coalesces consecutive writes to
+the same page, and an update alternates between two pages so it cannot.
+
+`test_the_staged_total_is_tracked_rather_than_recomputed` pins the invariant.
+The lesson is the ordinary one: the module docstring described an append as O(1)
+and had said so, confidently, for two milestones.
+
 ## Cost of correctness
 
 | Feature | Cost | Why it is kept |
@@ -384,6 +431,8 @@ not wait for itself.
 | LSN stamp per page write | a second CRC32 over the page | the LSN is inside the checksum's range, and without it recovery cannot tell an applied change from an unapplied one |
 | One `fsync` per commit | ~60 µs | the only thing that distinguishes a finished transaction from an interrupted one after a power cut |
 | 8-byte tuple header per row | 24% of a small row | a reader that never waits for a writer needs to know which version it is looking at |
+| Materialising an UPDATE/DELETE's matched rows | memory proportional to rows matched | without it the scan reaches versions the statement just wrote — the Halloween problem |
+| Rewriting every index on an update | ~65 µs per index per row | the row's address changed, and no index knows that until it is told |
 | Visibility check per row scanned | ~330 ns | a dead version has to be walked past, and walking past it is cheaper than blocking |
 | Null bitmap always present | 1 byte per row per 8 columns | branch-free decoding |
 
@@ -406,7 +455,7 @@ the inspector.
 
 ## Where the remaining time goes
 
-Ten milestones in, the shape of a query's cost is:
+Eleven milestones in, the shape of a query's cost is:
 
 ```
   SELECT with a filter, 5,000 rows

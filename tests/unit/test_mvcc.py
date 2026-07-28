@@ -175,6 +175,27 @@ def test_a_transaction_always_sees_its_own_writes(db: Database):
 # -- deletes are versions, not removals -------------------------------------
 
 
+def test_an_implicit_transaction_belongs_to_the_session_that_opened_it(db: Database):
+    """A bare write from a named session must commit itself, like any other.
+
+    It did not, for a whole milestone. ``Database.transaction`` asked
+    ``TransactionManager.active`` — the *default* session's transaction —
+    decided it did not own the one it had just opened for ``carol``, and left it
+    running. The write reported success and stayed invisible to everyone,
+    holding a row lock and the vacuum horizon until the process ended.
+
+    The symptom is three assertions apart, which is why nothing caught it:
+    carol could read her own row back perfectly well.
+    """
+    with db.in_session("carol"):
+        db.insert("t", (900, "carol"))
+        assert 900 in ids(db), "carol can see her own write either way"
+
+    assert db.transactions.active_in("carol") is None, "and it committed"
+    assert db.transactions.running_ids() == frozenset()
+    assert 900 in ids(db), "so everybody else can see it too"
+
+
 def test_a_delete_leaves_the_version_readable_by_an_older_snapshot(db: Database):
     with db.in_session("alice"):
         db.begin(isolation=IsolationLevel.REPEATABLE_READ)
@@ -227,6 +248,112 @@ def test_vacuum_will_not_reclaim_what_an_open_snapshot_still_needs(db: Database)
     with db.in_session("alice"):
         db.commit()
     assert db.vacuum("t") == 1, "and once she is gone, it goes"
+
+
+# -- updates: the case the version chain was built for ----------------------
+
+
+def test_an_update_is_a_delete_and_an_insert_by_one_transaction(db: Database):
+    """Which is what makes a version chain longer than one link.
+
+    Until Milestone 11 a row was inserted once and deleted once, so "the
+    previous version" and "no row" were the same thing. An update is the case
+    MVCC was actually designed for.
+    """
+    before = db.version_count("t")
+    with db.in_session("alice"):
+        db.begin()
+        db.update_many("t", [(rid_of(db, 2), (2, "changed"))])
+        db.commit()
+
+    assert db.version_count("t") == before + 1, "the old version is still there"
+    assert db.count("t") == 5, "but only one of the two is live"
+
+
+def test_an_older_snapshot_still_reads_the_row_as_it_was(db: Database):
+    with db.in_session("alice"):
+        db.begin(isolation=IsolationLevel.REPEATABLE_READ)
+        labels = sorted(row[1] for row in db.rows("t"))
+
+    with db.in_session("bob"):
+        db.begin()
+        db.update_many("t", [(rid_of(db, 2), (2, "changed"))])
+        db.commit()
+
+    with db.in_session("alice"):
+        assert sorted(row[1] for row in db.rows("t")) == labels
+        db.commit()
+        assert "changed" in [row[1] for row in db.rows("t")]
+
+
+def test_an_update_that_lost_the_race_is_skipped_rather_than_applied(db: Database):
+    """Where ChenDB stops and PostgreSQL keeps going.
+
+    Alice located a row, bob replaced it and **committed**, and the version
+    alice meant to change is now dead. PostgreSQL would follow the ``t_ctid``
+    chain to the new version and re-check the predicate against it —
+    EvalPlanQual. ChenDB reports the skip instead, which is a smaller answer but
+    not a wrong one: what it must never do is silently overwrite bob.
+    """
+    target = rid_of(db, 2)
+
+    with db.in_session("bob"):
+        db.begin()
+        db.update_many("t", [(target, (2, "bob got here first"))])
+        db.commit()
+
+    with db.in_session("alice"):
+        assert db.update_many("t", [(target, (2, "alice's value"))]) == []
+
+    assert "bob got here first" in [row[1] for row in db.rows("t")]
+    assert "alice's value" not in [row[1] for row in db.rows("t")]
+
+
+def test_a_writer_waits_for_an_open_writer_instead_of_skipping(db: Database):
+    """An uncommitted xmax settles nothing, so the second writer must wait.
+
+    The distinction this makes is not academic. Bob's transaction is still open,
+    so it may yet roll back — in which case the row was never changed and alice
+    would have skipped it for nothing, silently. Treating "dead" and "dead by a
+    transaction that finished" as the same thing is how a lost update becomes
+    invisible.
+    """
+    target = rid_of(db, 2)
+
+    with db.in_session("bob"):
+        db.begin()
+        db.update_many("t", [(target, (2, "bob, uncommitted"))])
+
+    with db.in_session("alice"), pytest.raises(LockTimeout):
+        db.begin()
+        db.locks.acquire(
+            db.transactions.active_in("alice").transaction_id,
+            f"t:{target.page_id}.{target.slot_id}",
+            timeout=0.2,
+        )
+        db.update_many("t", [(target, (2, "alice's value"))])
+
+    with db.in_session("bob"):
+        db.rollback()
+
+
+def test_a_rolled_back_writer_leaves_the_row_to_the_next_one(db: Database):
+    # The other half of the same rule. Bob's rollback restored the page, so the
+    # xmax is physically gone and alice's update goes through — which it would
+    # not if she had given up the moment she saw a dead version.
+    target = rid_of(db, 2)
+
+    with db.in_session("bob"):
+        db.begin()
+        db.update_many("t", [(target, (2, "doomed"))])
+        db.rollback()
+
+    with db.in_session("alice"):
+        assert db.update_many("t", [(target, (2, "alice's value"))]) != []
+
+    labels = [row[1] for row in db.rows("t")]
+    assert "alice's value" in labels
+    assert "doomed" not in labels
 
 
 # -- writers do conflict ----------------------------------------------------

@@ -510,3 +510,78 @@ def test_tracing_does_not_change_query_results(seeded: TestClient):
         if baseline is None:
             baseline = result["rows"]
         assert result["rows"] == baseline, f"{level} changed the result"
+
+
+# -- UPDATE and DELETE over the wire ---------------------------------------
+
+
+def rows_of(client: TestClient, sql: str) -> list[list]:
+    return query(client, sql)[-1]["rows"]
+
+
+def test_health_reports_dml(client: TestClient):
+    body = client.get(f"{API_PREFIX}/health").json()
+    assert body["milestone"] >= 11, "UPDATE and DELETE shipped in Milestone 11"
+    assert body["features"]["dml"] is True
+
+
+def test_an_update_reports_what_it_changed(seeded: TestClient):
+    (result,) = query(seeded, "UPDATE users SET age = 37 WHERE id = 1")
+    assert result["statement_kind"] == "UpdateStatement"
+    assert result["returns_rows"] is False
+    assert result["rows_affected"] == 1
+    assert "updated 1 row(s) in users" in result["message"]
+    assert rows_of(seeded, "SELECT age FROM users WHERE id = 1") == [[37]]
+
+
+def test_a_delete_reports_what_it_removed(seeded: TestClient):
+    (result,) = query(seeded, "DELETE FROM users WHERE age IS NULL")
+    assert result["statement_kind"] == "DeleteStatement"
+    assert result["rows_affected"] == 1
+    assert rows_of(seeded, "SELECT id FROM users") == [[1], [3], [4]]
+
+
+def test_a_mutation_reports_the_new_row_addresses(seeded: TestClient):
+    # So the page inspector can jump straight to the version just written,
+    # exactly as it does after an INSERT.
+    (result,) = query(seeded, "UPDATE users SET age = 1 WHERE id = 1")
+    assert len(result["record_ids"]) == 1
+    assert set(result["record_ids"][0]) == {"page_id", "slot_id"}
+
+
+def test_an_update_leaves_the_old_version_for_the_inspector(seeded: TestClient):
+    before = seeded.get(f"{API_PREFIX}/databases/demo/tables/users").json()
+    query(seeded, "UPDATE users SET age = 99 WHERE id = 1")
+    after = seeded.get(f"{API_PREFIX}/databases/demo/tables/users").json()
+
+    assert after["storage"]["row_count"] == before["storage"]["row_count"]
+    assert rows_of(seeded, "SELECT age FROM users WHERE id = 1") == [[99]]
+
+
+def test_explain_delete_returns_a_plan(seeded: TestClient):
+    (result,) = query(seeded, "EXPLAIN DELETE FROM users WHERE id = 1")
+    plan = "\n".join(row[0] for row in result["rows"])
+    assert plan.startswith("Delete on users")
+    assert "Scan" in plan
+
+
+def test_a_rejected_assignment_changes_nothing(seeded: TestClient):
+    response = seeded.post(
+        f"{API_PREFIX}/databases/demo/query",
+        json={"sql": "UPDATE users SET age = 'old'"},
+    )
+    assert response.status_code == 422, response.text
+    assert rows_of(seeded, "SELECT age FROM users WHERE id = 1") == [[36]]
+
+
+def test_the_catalog_separates_live_rows_from_versions(seeded: TestClient):
+    # `row_count` says what a SELECT would return; `version_count` says what is
+    # physically on the pages. An update makes them differ by one.
+    query(seeded, "UPDATE users SET age = 99 WHERE id = 1")
+    storage = seeded.get(f"{API_PREFIX}/databases/demo/tables/users").json()["storage"]
+    assert storage["row_count"] == 4
+    assert storage["version_count"] == 5
+
+    seeded.post(f"{API_PREFIX}/databases/demo/vacuum")
+    after = seeded.get(f"{API_PREFIX}/databases/demo/tables/users").json()["storage"]
+    assert after["row_count"] == after["version_count"] == 4

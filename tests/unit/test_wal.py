@@ -125,6 +125,38 @@ def test_records_are_staged_until_flushed(log: WriteAheadLog):
     assert log.buffered_bytes == 0
 
 
+def test_the_staged_total_is_tracked_rather_than_recomputed(log: WriteAheadLog):
+    """``next_lsn`` is read once per append, so it must not walk the buffer.
+
+    It used to, and a transaction of *n* records therefore cost O(n squared):
+    one 2,000-row ``UPDATE`` spent 8.5 of its 9.8 seconds inside that ``sum``.
+    The invariant is cheap to check and the regression is not.
+    """
+    expected = 0
+    for n in range(200):
+        record = log.append(
+            RecordType.UPDATE, transaction_id=1, page_id=n, after_image=page(n)
+        )
+        expected += record.size
+        assert log.buffered_bytes == expected
+        assert log.next_lsn == expected
+
+    # And coalescing, which replaces the tail in place rather than appending.
+    before = log.buffered_bytes
+    log.append_update(
+        transaction_id=1,
+        page_id=199,
+        before_image=b"",
+        after_image_for=lambda _: page(7),
+    )
+    assert log.stats.records_coalesced == 1
+    assert log.buffered_bytes == before, "same-size image, same total"
+
+    log.flush()
+    assert log.flushed_lsn == expected
+    assert log.buffered_bytes == 0
+
+
 def test_the_transaction_chain_is_maintained(log: WriteAheadLog):
     first = log.append(RecordType.UPDATE, transaction_id=1, page_id=2, after_image=page(1))
     log.append(RecordType.UPDATE, transaction_id=2, page_id=3, after_image=page(1))
