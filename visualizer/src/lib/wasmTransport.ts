@@ -45,8 +45,16 @@ const PACKAGES = ["fastapi", "pydantic"];
  * and 404s. Absolute-from-the-document is right in both cases.
  */
 const ASSET_BASE = new URL(import.meta.env.BASE_URL || "/", document.baseURI).href;
-const ENGINE_SOURCES_URL = `${ASSET_BASE}chendb-engine.json`;
-const PYODIDE_INDEX_URL = `${ASSET_BASE}pyodide/`;
+
+/**
+ * Names the two big assets, which carry their versions in their paths.
+ *
+ * One small uncached request buys `immutable` on the other twelve megabytes.
+ * Without it the interpreter and the engine bundle would keep fixed names
+ * across releases, and a browser holding yesterday's `pyodide.asm.wasm` or
+ * `chendb-engine.json` would run the wrong one with no visible symptom.
+ */
+const MANIFEST_URL = `${ASSET_BASE}wasm-manifest.json`;
 
 export type BootProgress = {
   /** 0 to 1, for a progress bar that does not lie about being indeterminate. */
@@ -80,8 +88,13 @@ export async function createWasmTransport(
   const step = (fraction: number, message: string) =>
     onProgress({ fraction, message });
 
+  const manifest = await fetchManifest();
+  const pyodideIndexUrl = `${ASSET_BASE}${manifest.pyodide}`;
+
   step(0.05, "Fetching a Python interpreter…");
-  const pyodide = await (await loadRuntime())({ indexURL: PYODIDE_INDEX_URL });
+  const pyodide = await (await loadRuntime(pyodideIndexUrl))({
+    indexURL: pyodideIndexUrl,
+  });
 
   step(0.55, "Loading FastAPI and Pydantic…");
   await pyodide.loadPackage("micropip");
@@ -89,7 +102,7 @@ export async function createWasmTransport(
   await micropip.install(PACKAGES);
 
   step(0.8, "Unpacking the engine…");
-  const bundle = await fetchEngineBundle();
+  const bundle = await fetchEngineBundle(`${ASSET_BASE}${manifest.engine}`);
   writeSources(pyodide, bundle);
 
   step(0.9, "Opening a database…");
@@ -115,20 +128,32 @@ export async function createWasmTransport(
  * is copied into the build by `bundle-engine.mjs` and fetched like any other
  * asset. Types still come from the package, and are erased.
  */
-async function loadRuntime(): Promise<typeof LoadPyodide> {
-  const module = (await import(
-    /* @vite-ignore */ `${PYODIDE_INDEX_URL}pyodide.mjs`
-  )) as { loadPyodide: typeof LoadPyodide };
+async function loadRuntime(indexUrl: string): Promise<typeof LoadPyodide> {
+  const module = (await import(/* @vite-ignore */ `${indexUrl}pyodide.mjs`)) as {
+    loadPyodide: typeof LoadPyodide;
+  };
   return module.loadPyodide;
 }
 
-async function fetchEngineBundle(): Promise<EngineBundle> {
-  const response = await fetch(ENGINE_SOURCES_URL);
+type Manifest = { engineVersion: string; engine: string; pyodide: string };
+
+async function fetchManifest(): Promise<Manifest> {
+  // `no-cache` revalidates rather than skipping the cache: a 304 on a few dozen
+  // bytes is cheap, and it is what makes the assets it names cacheable forever.
+  const response = await fetch(MANIFEST_URL, { cache: "no-cache" });
   if (!response.ok) {
     throw new Error(
-      `the engine bundle is missing (${response.status}). ` +
+      `no wasm-manifest.json (${response.status}). ` +
         `Run \`npm run bundle:engine\` — the WASM build cannot make it up.`,
     );
+  }
+  return (await response.json()) as Manifest;
+}
+
+async function fetchEngineBundle(url: string): Promise<EngineBundle> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`the engine bundle is missing (${response.status}) at ${url}`);
   }
   return (await response.json()) as EngineBundle;
 }

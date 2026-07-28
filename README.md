@@ -58,7 +58,8 @@ git clone https://github.com/YheChen/ChenDB.git && cd ChenDB
 
 The visualizer ships with the engine inside it: CPython compiled to
 WebAssembly, the same `.py` files, no server anywhere. Every visitor gets a
-private database in their own tab.
+private database in their own tab. Deployed to Vercel from `vercel.json`;
+build it yourself with:
 
 ```bash
 npm --prefix visualizer run preview:wasm

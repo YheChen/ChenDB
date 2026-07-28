@@ -129,17 +129,22 @@ jobs:
 
       - name: The WASM build has everything it needs to boot
         run: |
+          test -s dist/wasm-manifest.json \
+            || { echo "::error::dist/wasm-manifest.json is missing"; exit 1; }
+          engine=$(node -p "require('./dist/wasm-manifest.json').engine")
+          pyodide=$(node -p "require('./dist/wasm-manifest.json').pyodide")
           for asset in \
-            dist/chendb-engine.json \
-            dist/pyodide/pyodide.mjs \
-            dist/pyodide/pyodide.asm.wasm \
-            dist/pyodide/python_stdlib.zip \
-            dist/pyodide/pyodide-lock.json
+            "dist/$engine" \
+            "dist/${pyodide}pyodide.mjs" \
+            "dist/${pyodide}pyodide.asm.wasm" \
+            "dist/${pyodide}python_stdlib.zip" \
+            "dist/${pyodide}pyodide-lock.json"
           do
             test -s "$asset" || { echo "::error::$asset is missing or empty"; exit 1; }
           done
-          # The engine bundle must be the *current* engine, not a stale copy.
+          # The manifest must name the *current* engine, not a stale bundle.
           version=$(grep -oE '__version__ = "[^"]+"' ../engine/__init__.py | cut -d'"' -f2)
-          grep -q "\"version\":\"$version\"" dist/chendb-engine.json \
-            || { echo "::error::chendb-engine.json is not engine $version"; exit 1; }
+          manifest=$(node -p "require('./dist/wasm-manifest.json').engineVersion")
+          test "$manifest" = "$version" \
+            || { echo "::error::bundle is engine $manifest, repo is $version"; exit 1; }
           echo "WASM bundle carries engine $version, $(du -sh dist | cut -f1) total"
