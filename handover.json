@@ -42,7 +42,10 @@
     "format": ".venv/bin/ruff format engine tests benchmarks examples scripts",
     "example_m8": ".venv/bin/python examples/milestone8_transactions.py",
     "example_m9": ".venv/bin/python examples/milestone9_wal.py",
-    "example_m10": ".venv/bin/python examples/milestone10_mvcc.py"
+    "example_m10": ".venv/bin/python examples/milestone10_mvcc.py",
+    "ci": "make ci \u2014 lint, typecheck, both test suites and every example, in CI's order. Run before pushing.",
+    "demo_sql": "make demo-sql \u2014 every SQL statement the visualizer's buttons produce, as JSON. Needs node >= 22.6.",
+    "example_m11": ".venv/bin/python examples/milestone11_dml.py"
   },
   "status": {
     "milestone_1": {
@@ -54,7 +57,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "All ten milestones are complete and merged; master is 1.0.0. There is ONE known defect (see known_issues) and a proposed ordered backlog (see backlog). Nothing is in progress and no branch is open.",
+    "next": "Milestones 1-12 are merged; master is 1.2.0 and CI is green on it. Milestone 13 (joins and aggregation) is IN PROGRESS on branch milestone-13-joins \u2014 see backlog[0].",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -118,7 +121,23 @@
       "boundary": "Snapshot isolation, not serializable \u2014 write skew is possible. Statements do not run at the same instant; several transactions are open at once and genuinely conflict, but the engine still runs one statement at a time. No UPDATE, so version chains are one deep. No lock escalation, no autovacuum, and indexes do not carry visibility."
     },
     "chores": {
-      "ruff_format": "COMPLETE and MERGED (PR #11). One `ruff format` pass over 44 files, reflowing from the 88 columns they were written at to the configured line-length = 92. Verified semantics-preserving by parsing every touched file before and after and comparing ast.dump() \u2014 all 44 identical."
+      "ruff_format": "COMPLETE and MERGED (PR #11). One `ruff format` pass over 44 files, reflowing from the 88 columns they were written at to the configured line-length = 92. Verified semantics-preserving by parsing every touched file before and after and comparing ast.dump() \u2014 all 44 identical.",
+      "ci": "CI caught a real staleness on its first run: docs/openapi.json still said 1.1.0 after the version bump. Fixed in 707a26d. Bumping engine.__version__ now REQUIRES `make types` in the same commit."
+    },
+    "milestone_11": {
+      "state": "COMPLETE and MERGED to master (PR #12)",
+      "shipped": "UPDATE ... SET and DELETE ... WHERE end to end: AST, grammar, binder (bind_update/bind_delete/identity_projection), row source through the existing planner, _locate_rows materialising before writing (Halloween), Database.update_many/delete_many/_claim_row, EXPLAIN on both, catalog row_count vs version_count, four new MVCC walkthroughs.",
+      "also_fixed": [
+        "Write-write conflicts: a writer skipped any row with a non-zero xmax without asking whether that transaction had FINISHED. Now _claim_row waits on the row lock while the other writer is open.",
+        "A named session's implicit transaction never committed \u2014 Database.transaction asked the DEFAULT session whether it owned a transaction it had just opened for someone else.",
+        "WriteAheadLog.next_lsn summed the whole staged buffer per append: O(n^2) per transaction. A 2,000-row UPDATE spent 8.5 of 9.8 seconds in that sum.",
+        "The catalog reported heap.count() (slots, so dead versions) as 'live rows'."
+      ]
+    },
+    "milestone_12": {
+      "state": "COMPLETE and MERGED to master (PR #13)",
+      "shipped": ".github/workflows/ci.yml with three jobs split by dependency (bare-interpreter engine + every example; python with ruff/ruff format/pytest/api.ts freshness; frontend with tsc/vitest/vite build). visualizer/src/lib/demoSql.ts is now the single catalogue of every demo statement, consumed by all six workspaces. tests/integration/test_demo_sql.py runs each one against a real engine by asking node to evaluate the catalogue. make ci, make examples, make demo-sql.",
+      "verified": "Both historical demo bugs were reintroduced and the guard caught both by name. CI's own first run failed on a real staleness (openapi.json left at 1.1.0)."
     }
   },
   "architecture_invariants": {
@@ -225,7 +244,15 @@
     "`make lint` runs `ruff check` AND `ruff format --check`. Both have been in the target since Milestone 1, and the format half was red from Milestone 1 to Milestone 10 \u2014 unnoticed because everything was verified by running `ruff check` directly, which was always green. The linter and the formatter are separate tools. Run `make lint`, not `ruff check`.",
     "Format only the files you touched. A whole-tree `ruff format` used to add ~44 files of reflow to any diff; the tree is clean now, so it should stay a no-op, but a version bump of ruff could change that.",
     "The visualizer's 'try it' and 'walkthrough' buttons build real SQL and no test checks that it parses. One shipped broken (see known_issues). Two earlier ones shipped with hardcoded column counts that broke on a three-column table, which is why visualizer/src/lib/demoRows.ts exists \u2014 build demo SQL from the table's real schema, never from an assumption.",
-    "SQL DML is INSERT only. UPDATE, DELETE and DROP are refused by engine/parser/parser.py:_NOT_YET. Database.delete(table, record_id) and the HTTP delete-record endpoint work \u2014 the gap is the SQL surface, not the engine."
+    "SQL DML is INSERT only. UPDATE, DELETE and DROP are refused by engine/parser/parser.py:_NOT_YET. Database.delete(table, record_id) and the HTTP delete-record endpoint work \u2014 the gap is the SQL surface, not the engine.",
+    "Bumping engine.__version__ changes docs/openapi.json (FastAPI puts the version in the info block). Run `make types` in the SAME commit or CI's freshness check fails \u2014 this is exactly what CI caught on its first run.",
+    "Database.transaction() and execute_script() must use Database.active_transaction (session-aware), NEVER TransactionManager.active (default session only). Getting it wrong leaves a named session's implicit transaction open forever: the write reports success and stays invisible to everyone.",
+    "A writer must not skip a row just because header.deleted is set. Ask whether the transaction in xmax has FINISHED (not in running_ids). Still open means it may yet roll back, so take the lock and block. Database._claim_row is the only place this belongs.",
+    "UPDATE and DELETE materialise their matched rows before writing (_locate_rows). Removing that reintroduces the Halloween problem; tests/unit/test_dml.py catches it.",
+    "Demo SQL goes in visualizer/src/lib/demoSql.ts, never inline in a component, and is built from the open table via demoRows.ts. tests/integration/test_demo_sql.py runs every entry against a real engine.",
+    "scripts/emit_demo_sql.ts runs under plain Node type stripping: value imports in demoSql.ts need an explicit .ts extension (allowImportingTsExtensions is on), type-only imports are erased and may use the @/ alias.",
+    "MILESTONE_FEATURES may lag MILESTONE by one. Milestone 12 added CI, which is not something the engine can do, so it has 11 entries at MILESTONE 12.",
+    "Two browser consoles cannot demonstrate a write-write conflict: ManagedDatabase holds one RLock per request, so locate-and-mutate is atomic across consoles and a row-lock wait would deadlock against the engine lock. Asserted in tests/unit/test_mvcc.py instead."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -237,57 +264,30 @@
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py."
   },
-  "known_issues": [
-    {
-      "id": "mvcc-walkthrough-uses-unparseable-sql",
-      "severity": "shipped defect, user-visible",
-      "where": "visualizer/src/features/concurrency/ConcurrencyWorkspace.tsx:68-69",
-      "what": "The MVCC workspace's 'Two writers collide' walkthrough loads `DELETE FROM <table> WHERE id = 1;` into both consoles, and the parser refuses DELETE \u2014 engine/parser/parser.py:_NOT_YET. The button cannot do what it says. Database.delete(table, record_id) and the HTTP delete-record endpoint both work; it is only the SQL form that was never built.",
-      "fix": "Implement DELETE ... WHERE, which is backlog item 1. Changing the walkthrough to avoid DELETE would hide the gap rather than close it, and the gap is real: SQL DML is INSERT only.",
-      "guard": "Nothing tests that a demo button's SQL parses. Backlog item 2 adds that; it is a few lines and would have caught this."
-    }
-  ],
+  "known_issues": [],
   "backlog": [
     {
-      "order": 1,
-      "title": "DELETE ... WHERE and UPDATE ... SET",
-      "size": "days",
-      "why": "Fixes the shipped defect above and closes a real gap in one: SQL DML is currently INSERT only. UPDATE matters more than it looks \u2014 docs/milestone-10-mvcc.md says 'no UPDATE, so a version chain is one deep', and an update creating a new version of an existing row is the case MVCC was actually designed for. The version machinery has only ever seen insert-then-delete.",
+      "item": "Joins and aggregation",
+      "status": "IN PROGRESS (milestone 13)",
+      "why": "The biggest remaining functional gap, and what justifies the planner: join ordering is the classic optimizer problem and the Milestone 6 cost model has never had to make an interesting decision.",
       "touches": [
-        "engine/parser/parser.py \u2014 remove UPDATE and DELETE from _NOT_YET, add _delete_statement / _update_statement",
-        "engine/parser/ast.py \u2014 DeleteStatement, UpdateStatement",
-        "engine/executor/binder.py, engine/executor/engine.py",
-        "A Delete/Update operator, or a direct path like INSERT's \u2014 see the engine.py module docstring on why DDL and INSERT are not planned",
-        "tests/unit/test_parser.py \u2014 the _NOT_YET parametrisation has an entry per refused keyword; remove the two that ship"
+        "engine/parser/{ast,parser}.py",
+        "engine/executor/binder.py",
+        "engine/planner/{logical,physical}.py",
+        "engine/optimizer/cost.py",
+        "engine/executor/operators.py",
+        "engine/executor/engine.py"
       ]
     },
     {
-      "order": 2,
-      "title": "CI, plus the guards for what has already slipped",
-      "size": "hours",
-      "why": "There is no .github/workflows at all. Two things this project has already demonstrated it needs: `make lint` was red from Milestone 1 to Milestone 10 because nothing automated ran it, and a demo button shipped with SQL that does not parse.",
-      "touches": [
-        ".github/workflows/ci.yml \u2014 full pytest, make lint, npm typecheck, npm test, and every examples/milestone*.py (they all run in a tempdir and exit 0)",
-        "A test asserting every walkthrough/demo SQL string in the visualizer parses. Four lines, and the specific guard for the known issue above."
-      ]
+      "item": "Differential testing against SQLite",
+      "status": "not started",
+      "why": "Random schemas and queries against both engines, compared. Finds the semantic corners nobody writes a test for: NULL ordering, integer division, comparison across types."
     },
     {
-      "order": 3,
-      "title": "Joins and aggregation",
-      "size": "weeks",
-      "why": "The biggest remaining functional gap. The executor has exactly four operators \u2014 SeqScan, IndexScan, Filter, Project \u2014 so SELECT is one table, filtered, projected. No JOIN, GROUP BY, count(*), ORDER BY or LIMIT.\n\nIt is also what justifies the planner. Today it chooses between two access paths; join ordering is THE classic optimizer problem, and the cost model calibrated in Milestone 6 has never had to make an interesting decision. engine/executor/engine.py's docstring already says the volcano model was built so these are new operators rather than a rewrite."
-    },
-    {
-      "order": 4,
-      "title": "Differential testing against SQLite",
-      "size": "open-ended",
-      "why": "Generate random schemas and random queries, run against both engines, compare answers. This is how real databases find bugs \u2014 SQLancer does it to PostgreSQL. Most valuable AFTER joins, because that is when there is enough semantics to disagree about; three-valued logic and NULL handling in join predicates is where the bodies are.\n\nPairs with a randomized crash-torture test: kill at random points rather than the scripted ones tests/recovery/ uses now."
-    },
-    {
-      "order": 5,
-      "title": "A hosted demo",
-      "size": "open-ended",
-      "why": "The visualizer is what makes this project distinctive and nobody can see it without cloning the repo and running two servers. Last because it is worth most when there is most to show, and because it needs real thought about sandboxing: the crash button destroys data and the workspace is a real directory on disk."
+      "item": "A hosted demo",
+      "status": "not started",
+      "why": "The visualizer is the whole pitch and it currently needs a clone and two terminals."
     }
   ]
 }
