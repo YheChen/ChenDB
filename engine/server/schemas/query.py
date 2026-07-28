@@ -91,10 +91,10 @@ class OperatorNodeModel(ApiModel):
 
 
 class PlanAlternativeModel(ApiModel):
-    """One access path the planner considered, chosen or not."""
+    """One option the planner considered, chosen or not."""
 
     description: str
-    access_path: str = Field(description="PhysicalSeqScan or PhysicalIndexScan")
+    access_path: str = Field(description="The node type, e.g. PhysicalIndexScan")
     estimated_cost: float
     estimated_rows: float
     chosen: bool
@@ -103,6 +103,14 @@ class PlanAlternativeModel(ApiModel):
         "Empty for the winner."
     )
     index_name: str | None
+    decision: str = Field(
+        default="access path",
+        description=(
+            "Which question this answered — 'how to read users', 'what order to "
+            "join in'. A query over several tables makes several independent "
+            "decisions, and a flat list of winners reads as a contradiction."
+        ),
+    )
 
 
 class PlanStatisticsModel(ApiModel):

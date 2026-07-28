@@ -16,7 +16,7 @@ back from the actual file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M12    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M13    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -42,7 +42,7 @@ back from the actual file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Twelve milestones are complete.** Nothing is stubbed ahead of time: a
+**Thirteen milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -61,7 +61,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.2.0 — Milestone 12 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE)
+ChenDB 1.3.0 — Milestone 13 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -138,10 +138,11 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Diagnostics** | 5 trace levels · 37 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
-| **Execution** | volcano operators (scan / filter / project) · three-valued logic · step-through debugger with real cancellation |
+| **Queries** | inner joins with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
+| **Execution** | volcano operators (scan / filter / project / join / aggregate / sort / limit) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
-| **Planner** | logical and physical plans · statistics · a cost model calibrated by measurement · `EXPLAIN` |
+| **Planner** | logical and physical plans · statistics · a cost model calibrated by measurement · predicate pushdown · System R join-order search · `EXPLAIN` |
 | **Buffer pool** | write-back · exact LRU · counters for every frame |
 | **Transactions** | `BEGIN` / `COMMIT` / `ROLLBACK` · page-level undo log · implicit transactions · atomic DDL |
 | **Durability** | write-ahead log · LSN per page · checkpoints · ARIES recovery (analysis / redo / undo) · a crash button that proves it |
@@ -149,7 +150,7 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
 
-Three claims worth checking rather than believing:
+Four claims worth checking rather than believing:
 
 **A committed transaction survives `SIGKILL` without a sync.** The pages may
 still be in memory; the log is enough to put them back. An uncommitted one is
@@ -161,15 +162,22 @@ runs a `SELECT` and gets its answer immediately, without the uncommitted row and
 without taking a lock of its own. `tests/unit/test_mvcc.py` asserts it and the
 MVCC workspace shows it.
 
+**The planner does not join in the order you wrote.** Give it two tables and it
+re-derives the order from statistics, builds the hash table on the smaller side
+because a build costs more than a probe, and pushes your `WHERE` below the join.
+`EXPLAIN` names each decision separately and shows what it turned down.
+`tests/unit/test_joins.py` asserts it.
+
 **An update does not overwrite anything.** It writes eight bytes to the old
 version and appends a new one, so a transaction that took its snapshot first
 still reads the old value — and the table panel shows `rows 4 · versions 5`
 until you press Vacuum. `tests/unit/test_dml.py` asserts it.
 
 Deliberately not built — and each has a paragraph in the milestone docs saying
-why: serializable isolation, `RETURNING`, heap-only tuples, parallel statement
-execution, lock escalation, autovacuum, joins, aggregation, `ORDER BY`, and
-overflow pages for rows larger than a page.
+why: serializable isolation, `RETURNING`, heap-only tuples, outer joins, bushy
+plans, index nested-loop joins, subqueries, `DISTINCT`, parallel statement
+execution, lock escalation, autovacuum, and overflow pages for rows larger than
+a page.
 
 ---
 
@@ -303,6 +311,7 @@ change the system observed.
 | `python examples/milestone9_wal.py` | narrated walkthrough of the log, checkpoints and recovery |
 | `python examples/milestone10_mvcc.py` | narrated walkthrough of snapshots, locks and deadlocks |
 | `python examples/milestone11_dml.py` | narrated walkthrough of `UPDATE`, `DELETE` and the Halloween problem |
+| `python examples/milestone13_joins.py` | narrated walkthrough of joins, join order and aggregation |
 | `make ci` | lint, typecheck, both test suites and every example — CI's order |
 | `make demo-sql` | every SQL statement the explorer's buttons will produce |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
@@ -331,6 +340,7 @@ change the system observed.
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
 | [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
 | [Milestone 12](docs/milestone-12-ci.md) | CI, and running every demo button against the real engine |
+| [Milestone 13](docs/milestone-13-joins.md) | joins, aggregation, and the first decision the cost model could get wrong |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

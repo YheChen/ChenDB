@@ -68,12 +68,12 @@ from engine.concurrency.snapshot import Snapshot, visible
 from engine.diagnostics.events import OperatorEvent
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import RecordNotFoundError
-from engine.executor.binder import ResultColumn
+from engine.executor.binder import BoundAggregate, BoundSortKey, ResultColumn, RowLayout
 from engine.executor.controller import NULL_CONTROLLER, StepController, StepKind
 from engine.executor.expression import describe_expression, evaluate, is_true
 from engine.index.bplustree import BPlusTree
 from engine.index.key import SMALLEST_VALUE_KEY, describe_key
-from engine.parser.ast import Expression
+from engine.parser.ast import AggregateFunction, Expression
 from engine.serialization.record import (
     Row,
     decode_record,
@@ -86,12 +86,18 @@ from engine.storage.heap import HeapFile, RecordId
 __all__ = [
     "ExecutionContext",
     "Filter",
+    "HashAggregate",
+    "HashJoin",
     "IndexScan",
+    "JoinOperator",
+    "Limit",
+    "NestedLoopJoin",
     "Operator",
     "OperatorStats",
     "Project",
     "ScanOperator",
     "SeqScan",
+    "Sort",
     "describe_plan",
 ]
 
@@ -301,7 +307,7 @@ class ScanOperator(Operator):
     anything above the leaf noticing.
     """
 
-    __slots__ = ("_heap", "_last_record_id", "_schema", "_table_name")
+    __slots__ = ("_heap", "_last_record_id", "_layout", "_schema", "_table_name")
 
     def __init__(
         self,
@@ -311,11 +317,13 @@ class ScanOperator(Operator):
         heap: HeapFile,
         schema: Schema,
         table_name: str,
+        layout: RowLayout | None = None,
     ) -> None:
         super().__init__(operator_id, context)
         self._heap = heap
         self._schema = schema
         self._table_name = table_name
+        self._layout = layout
         self._last_record_id: RecordId | None = None
 
     @property
@@ -350,7 +358,26 @@ class ScanOperator(Operator):
         if snapshot is not None and not visible(header, snapshot):
             self.stats.rows_skipped += 1
             return None
-        return decode_record(self._schema, strip_tuple_header(payload))
+        row = decode_record(self._schema, strip_tuple_header(payload))
+        return self._place(row)
+
+    def _place(self, row: Row) -> Row:
+        """Put this table's columns where the joined row expects them.
+
+        Below a join every row is the full width of the ``FROM``, with the
+        tables not yet joined left empty. That is what lets a bound column
+        index — computed once, by the binder, against the *written* order —
+        stay correct however the planner decides to reorder the joins.
+
+        With one table the layout is the identity and this is a no-op, which is
+        why nothing before Milestone 13 pays for it.
+        """
+        layout = self._layout
+        if layout is None or layout.total == layout.width:
+            return row
+        wide = layout.blank()
+        wide[layout.offset : layout.offset + layout.width] = row
+        return tuple(wide)
 
     def _on_close(self) -> None:
         self._last_record_id = None
@@ -374,9 +401,15 @@ class SeqScan(ScanOperator):
         heap: HeapFile,
         schema: Schema,
         table_name: str,
+        layout: RowLayout | None = None,
     ) -> None:
         super().__init__(
-            operator_id, context, heap=heap, schema=schema, table_name=table_name
+            operator_id,
+            context,
+            heap=heap,
+            schema=schema,
+            table_name=table_name,
+            layout=layout,
         )
         self._rows: Iterator[tuple[RecordId, bytes]] | None = None
 
@@ -454,9 +487,15 @@ class IndexScan(ScanOperator):
         high: bytes | None,
         include_low: bool = True,
         include_high: bool = True,
+        layout: RowLayout | None = None,
     ) -> None:
         super().__init__(
-            operator_id, context, heap=heap, schema=schema, table_name=table_name
+            operator_id,
+            context,
+            heap=heap,
+            schema=schema,
+            table_name=table_name,
+            layout=layout,
         )
         self._tree = tree
         self._index_name = tree.name
@@ -659,6 +698,528 @@ class Project(Operator):
 
 
 # -- helpers ---------------------------------------------------------------
+
+
+class JoinOperator(Operator):
+    """Two inputs, one output row per matching pair.
+
+    Both algorithms below place the right side's columns into the left side's
+    row by *slice*, at the offsets :class:`RowLayout` fixed. Merging by "take
+    whichever side is not None" would be shorter and wrong: a genuine SQL NULL
+    is indistinguishable from an empty slot, so a NULL on the left would be
+    silently overwritten by whatever the right side happened to have there.
+    """
+
+    __slots__ = ("_left", "_predicate", "_right", "_right_slices")
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        left: Operator,
+        right: Operator,
+        predicate: Expression,
+        right_slices: tuple[tuple[int, int], ...],
+    ) -> None:
+        super().__init__(operator_id, context)
+        self._left = left
+        self._right = right
+        self._predicate = predicate
+        self._right_slices = right_slices
+
+    @property
+    def children(self) -> tuple[Operator, ...]:
+        return (self._left, self._right)
+
+    @property
+    def output_columns(self) -> tuple[ResultColumn, ...]:
+        return self._left.output_columns + self._right.output_columns
+
+    def _merge(self, left: Row, right: Row) -> Row:
+        merged = list(left)
+        for offset, width in self._right_slices:
+            merged[offset : offset + width] = right[offset : offset + width]
+        return tuple(merged)
+
+    def _matches(self, row: Row) -> bool:
+        return (
+            evaluate(
+                self._predicate,
+                row,
+                tracer=self.context.tracer,
+                operator_id=self.operator_id,
+            )
+            is True
+        )
+
+
+class NestedLoopJoin(JoinOperator):
+    """For every left row, every right row. The algorithm that always works.
+
+    The right side is drained into memory once on ``open`` rather than re-read
+    per left row. That is not a small detail: re-opening the child would turn
+    ``O(n·m)`` comparisons into ``O(n·m)`` *scans*, and it is the difference
+    between slow and unusable. It also means the memory cost is the right side,
+    which is why the planner puts the smaller estimate there.
+
+    Even so it loses to a hash join on every equijoin the cost model has ever
+    been shown, and that is the point of keeping it: a planner with one
+    algorithm has nothing to be right about.
+    """
+
+    __slots__ = ("_buffered", "_left_row", "_position")
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._buffered: list[Row] = []
+        self._left_row: Row | None = None
+        self._position = 0
+
+    @property
+    def detail(self) -> str:
+        return describe_expression(self._predicate)
+
+    def _on_open(self) -> None:
+        self._buffered = list(iter(self._right))
+        self._left_row = None
+        self._position = 0
+
+    def _on_close(self) -> None:
+        self._buffered = []
+        self._left_row = None
+
+    def _produce(self) -> Row | None:
+        while True:
+            if self._left_row is None:
+                self._left_row = self._left.next()
+                if self._left_row is None:
+                    return None
+                self.stats.input_rows += 1
+                self._position = 0
+
+            while self._position < len(self._buffered):
+                right = self._buffered[self._position]
+                self._position += 1
+                merged = self._merge(self._left_row, right)
+                if self._matches(merged):
+                    return merged
+
+            self._left_row = None
+
+
+class HashJoin(JoinOperator):
+    """Build a hash table on the left, probe it with the right.
+
+    ``O(n + m)`` instead of ``O(n·m)``, paid for in memory proportional to the
+    build side. The planner builds on the *smaller* estimate; getting that
+    backwards is the difference between a table of ten rows and one of ten
+    million, and it is why the cost model needs a row count for each side and
+    not just for the result.
+
+    Only one equality is hashed. ``a.x = b.y AND a.z < b.w`` hashes the first
+    and re-checks the second per matching pair, which is what ``residual`` is —
+    a composite hash key would need the same key encoding a composite index
+    would, and :mod:`engine.index.key` explains why that is a whole layer.
+
+    NULL never matches, including another NULL, so a row whose key is NULL is
+    dropped from both sides. That is not an optimisation; it is what ``=``
+    means in three-valued logic, and a hash table would happily match them.
+    """
+
+    __slots__ = (
+        "_bucket",
+        "_build_key",
+        "_position",
+        "_probe_key",
+        "_probe_row",
+        "_residual",
+        "_table",
+    )
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        left: Operator,
+        right: Operator,
+        predicate: Expression,
+        build_key: Expression,
+        probe_key: Expression,
+        residual: Expression | None,
+        right_slices: tuple[tuple[int, int], ...],
+    ) -> None:
+        super().__init__(
+            operator_id,
+            context,
+            left=left,
+            right=right,
+            predicate=predicate,
+            right_slices=right_slices,
+        )
+        self._build_key = build_key
+        self._probe_key = probe_key
+        self._residual = residual
+        self._table: dict[Any, list[Row]] = {}
+        self._bucket: Sequence[Row] = ()
+        self._probe_row: Row = ()
+        self._position = 0
+
+    @property
+    def detail(self) -> str:
+        core = (
+            f"{describe_expression(self._build_key)} = "
+            f"{describe_expression(self._probe_key)}"
+        )
+        return core + (
+            f" AND {describe_expression(self._residual)}" if self._residual else ""
+        )
+
+    def _key(self, row: Row, expression: Expression) -> Any:
+        return evaluate(
+            expression, row, tracer=self.context.tracer, operator_id=self.operator_id
+        )
+
+    def _on_open(self) -> None:
+        self._table = {}
+        for row in self._left:
+            key = self._key(row, self._build_key)
+            if key is None:
+                continue
+            self._table.setdefault(key, []).append(row)
+        self._bucket = ()
+        self._position = 0
+
+    def _on_close(self) -> None:
+        self._table = {}
+        self._bucket = ()
+
+    def _produce(self) -> Row | None:
+        while True:
+            while self._position < len(self._bucket):
+                left = self._bucket[self._position]
+                self._position += 1
+                merged = self._merge(left, self._probe_row)
+                if self._residual is None or self._matches(merged):
+                    return merged
+
+            probe = self._right.next()
+            if probe is None:
+                return None
+            self.stats.input_rows += 1
+            key = self._key(probe, self._probe_key)
+            if key is None:
+                # NULL = NULL is UNKNOWN, not TRUE. Hashing it would match.
+                continue
+            self._probe_row = probe
+            self._bucket = self._table.get(key, ())
+            self._position = 0
+
+
+class HashAggregate(Operator):
+    """One row per group. The first operator here that is not a pipeline.
+
+    Every input row is read before the first output row exists, because a group
+    is not complete until the input is. That shows up in the plan view as the
+    point where "time to first row" stops being small, and it is the honest
+    reason ``LIMIT 1`` over a ``GROUP BY`` saves nothing.
+
+    Hashing rather than sorting: linear in rows, independent of the number of
+    groups, and it buys no ordering — which is exactly right, because nobody
+    asked for one. PostgreSQL picks between ``HashAggregate`` and
+    ``GroupAggregate`` on whether the input is already sorted; nothing here
+    produces sorted input, so there is no choice to make.
+    """
+
+    __slots__ = ("_aggregates", "_child", "_group_keys", "_having", "_output", "_position")
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        child: Operator,
+        group_keys: tuple[Expression, ...],
+        aggregates: tuple[BoundAggregate, ...],
+        having: Expression | None,
+    ) -> None:
+        super().__init__(operator_id, context)
+        self._child = child
+        self._group_keys = group_keys
+        self._aggregates = aggregates
+        self._having = having
+        self._output: list[Row] = []
+        self._position = 0
+
+    @property
+    def children(self) -> tuple[Operator, ...]:
+        return (self._child,)
+
+    @property
+    def output_columns(self) -> tuple[ResultColumn, ...]:
+        return tuple(
+            ResultColumn(describe_expression(key), None) for key in self._group_keys
+        ) + tuple(ResultColumn(entry.label, None) for entry in self._aggregates)
+
+    @property
+    def detail(self) -> str:
+        keys = ", ".join(describe_expression(key) for key in self._group_keys)
+        return f"by {keys or 'all rows'}"
+
+    def _on_open(self) -> None:
+        groups: dict[tuple[Any, ...], list[_Accumulator]] = {}
+        order: list[tuple[Any, ...]] = []
+
+        for row in self._child:
+            self.stats.input_rows += 1
+            key = tuple(
+                evaluate(
+                    expression,
+                    row,
+                    tracer=self.context.tracer,
+                    operator_id=self.operator_id,
+                )
+                for expression in self._group_keys
+            )
+            accumulators = groups.get(key)
+            if accumulators is None:
+                accumulators = [_Accumulator(entry.function) for entry in self._aggregates]
+                groups[key] = accumulators
+                order.append(key)
+            for entry, accumulator in zip(self._aggregates, accumulators, strict=True):
+                accumulator.add(
+                    None
+                    if entry.counts_rows
+                    else evaluate(
+                        entry.argument,
+                        row,
+                        tracer=self.context.tracer,
+                        operator_id=self.operator_id,
+                    ),
+                    counts_rows=entry.counts_rows,
+                )
+
+        if not self._group_keys and not groups:
+            # `SELECT COUNT(*) FROM empty` is 0, not no rows. There is exactly
+            # one group when there are no keys, and it exists whether or not
+            # anything fell into it. Add a GROUP BY and the same query over the
+            # same empty table correctly returns nothing at all.
+            groups[()] = [_Accumulator(entry.function) for entry in self._aggregates]
+            order.append(())
+
+        self._output = []
+        for key in order:
+            row = (*key, *(accumulator.value() for accumulator in groups[key]))
+            if self._having is not None and (
+                evaluate(
+                    self._having,
+                    row,
+                    tracer=self.context.tracer,
+                    operator_id=self.operator_id,
+                )
+                is not True
+            ):
+                continue
+            self._output.append(row)
+        self._position = 0
+
+    def _on_close(self) -> None:
+        self._output = []
+
+    def _produce(self) -> Row | None:
+        if self._position >= len(self._output):
+            return None
+        row = self._output[self._position]
+        self._position += 1
+        return row
+
+
+class _Accumulator:
+    """One aggregate's running state.
+
+    ``COUNT`` counts; everything else ignores NULL, which is the rule that makes
+    ``AVG`` of ``[1, NULL, 3]`` equal 2 and not 1.33 — the NULL is not a zero,
+    it is a row that does not participate. ``SUM`` and ``AVG`` over no non-NULL
+    values are NULL, and only ``COUNT`` is 0.
+    """
+
+    __slots__ = ("_count", "_function", "_max", "_min", "_sum")
+
+    def __init__(self, function: AggregateFunction) -> None:
+        self._function = function
+        self._count = 0
+        self._sum: Any = None
+        self._min: Any = None
+        self._max: Any = None
+
+    def add(self, value: Any, *, counts_rows: bool) -> None:
+        if counts_rows:
+            self._count += 1
+            return
+        if value is None:
+            return
+        self._count += 1
+        self._sum = value if self._sum is None else self._sum + value
+        self._min = value if self._min is None else min(self._min, value)
+        self._max = value if self._max is None else max(self._max, value)
+
+    def value(self) -> Any:
+        match self._function:
+            case AggregateFunction.COUNT:
+                return self._count
+            case AggregateFunction.SUM:
+                return self._sum
+            case AggregateFunction.AVG:
+                # Always a float, including over integers: the average of 1 and
+                # 2 is 1.5, and truncating it because the column was INTEGER is
+                # the kind of quiet wrongness this project exists to avoid.
+                return None if self._count == 0 else self._sum / self._count
+            case AggregateFunction.MIN:
+                return self._min
+            case AggregateFunction.MAX:
+                return self._max
+        return None  # pragma: no cover - the enum is exhausted above
+
+
+class Sort(Operator):
+    """Buffer everything, order it, then emit. Blocking, like the aggregate.
+
+    NULLs sort last ascending and first descending, which is PostgreSQL's rule
+    (``NULLS LAST`` by default for ``ASC``) and the opposite of SQLite's. There
+    is no right answer — the standard leaves it implementation-defined — but
+    there is a wrong one, which is comparing NULL to a number and crashing.
+
+    In memory only. A sort that does not fit is a sort that fails; PostgreSQL
+    switches to an external merge at ``work_mem``. The row ceiling is what
+    bounds this, and it is checked before the sort rather than during it.
+    """
+
+    __slots__ = ("_child", "_keys", "_position", "_rows")
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        child: Operator,
+        keys: tuple[BoundSortKey, ...],
+    ) -> None:
+        super().__init__(operator_id, context)
+        self._child = child
+        self._keys = keys
+        self._rows: list[Row] = []
+        self._position = 0
+
+    @property
+    def children(self) -> tuple[Operator, ...]:
+        return (self._child,)
+
+    @property
+    def output_columns(self) -> tuple[ResultColumn, ...]:
+        return self._child.output_columns
+
+    @property
+    def detail(self) -> str:
+        return ", ".join(
+            f"#{key.output_index}{' DESC' if key.descending else ''}" for key in self._keys
+        )
+
+    def _on_open(self) -> None:
+        self._rows = list(self._child)
+        self.stats.input_rows = len(self._rows)
+        # One pass per key, least significant first. Python's sort is stable,
+        # so the earlier keys survive — which is both correct and shorter than
+        # a comparator that has to mix ascending and descending in one pass.
+        for key in reversed(self._keys):
+            self._rows.sort(
+                key=lambda row, index=key.output_index: _sort_key(row[index]),
+                reverse=key.descending,
+            )
+        self._position = 0
+
+    def _on_close(self) -> None:
+        self._rows = []
+
+    def _produce(self) -> Row | None:
+        if self._position >= len(self._rows):
+            return None
+        row = self._rows[self._position]
+        self._position += 1
+        return row
+
+
+def _sort_key(value: Any) -> tuple[int, Any]:
+    """Sort NULLs after everything, and never compare one to a number.
+
+    The leading integer is the whole trick: it partitions before the value is
+    ever reached, so ``None < 5`` is never evaluated. ``reverse=True`` flips the
+    partition along with the values, which is why descending puts NULLs first —
+    PostgreSQL's rule, arrived at by not having a special case rather than by
+    having one.
+    """
+    if value is None:
+        return (1, 0)
+    if isinstance(value, bool):
+        return (0, int(value))
+    return (0, value)
+
+
+class Limit(Operator):
+    """Stop pulling after enough rows, having skipped ``offset``.
+
+    The one operator that makes the pipeline visible: over a scan it really does
+    stop early, and ``pages read`` in the plan view falls. Over a sort it saves
+    nothing, because the sort already drained its child — and that non-saving is
+    exactly as informative as the saving.
+    """
+
+    __slots__ = ("_child", "_count", "_emitted", "_offset", "_skipped")
+
+    def __init__(
+        self,
+        operator_id: str,
+        context: ExecutionContext,
+        *,
+        child: Operator,
+        count: int,
+        offset: int = 0,
+    ) -> None:
+        super().__init__(operator_id, context)
+        self._child = child
+        self._count = count
+        self._offset = offset
+        self._emitted = 0
+        self._skipped = 0
+
+    @property
+    def children(self) -> tuple[Operator, ...]:
+        return (self._child,)
+
+    @property
+    def output_columns(self) -> tuple[ResultColumn, ...]:
+        return self._child.output_columns
+
+    @property
+    def detail(self) -> str:
+        return f"{self._count}" + (f" offset {self._offset}" if self._offset else "")
+
+    def _on_open(self) -> None:
+        self._emitted = 0
+        self._skipped = 0
+
+    def _produce(self) -> Row | None:
+        while self._skipped < self._offset:
+            if self._child.next() is None:
+                return None
+            self._skipped += 1
+        if self._emitted >= self._count:
+            return None
+        row = self._child.next()
+        if row is None:
+            return None
+        self._emitted += 1
+        return row
 
 
 def _render_row(row: Sequence[Any] | None) -> str:

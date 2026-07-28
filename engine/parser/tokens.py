@@ -128,6 +128,13 @@ class Keyword(StrEnum):
     parser say "ORDER BY is not implemented yet" instead of "unexpected
     identifier 'ORDER'", and it means a future milestone cannot silently break
     a query that used the word as a column name.
+
+    **Aggregate names are deliberately absent.** ``COUNT``, ``SUM``, ``AVG``,
+    ``MIN`` and ``MAX`` are parsed as an identifier followed by ``(``, exactly
+    as PostgreSQL and SQLite do, so ``count`` stays usable as a column name.
+    Reserving five words that common, to save one token of lookahead, would be
+    a bad trade — and a table with a ``min`` and a ``max`` column is not an
+    unusual table.
     """
 
     # Statements
@@ -152,7 +159,16 @@ class Keyword(StrEnum):
     AS = "AS"
     ORDER = "ORDER"
     GROUP = "GROUP"
+    HAVING = "HAVING"
     BY = "BY"
+    JOIN = "JOIN"
+    INNER = "INNER"
+    OUTER = "OUTER"
+    LEFT = "LEFT"
+    RIGHT = "RIGHT"
+    FULL = "FULL"
+    CROSS = "CROSS"
+    USING = "USING"
     LIMIT = "LIMIT"
     OFFSET = "OFFSET"
     ASC = "ASC"

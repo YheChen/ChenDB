@@ -215,7 +215,7 @@ def test_explain_returns_the_plan_as_rows(seeded: TestClient):
     assert [column["name"] for column in result["columns"]] == ["QUERY PLAN"]
     text = "\n".join(row[0] for row in result["rows"])
     assert "PhysicalIndexScan" in text
-    assert "Alternatives considered" in text
+    assert "Considered how to read users" in text
     assert "Statistics: 2000 rows" in text
 
 

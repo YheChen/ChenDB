@@ -82,7 +82,9 @@ def main() -> int:
         "SELECT name FROM",
         "SELECT 'unterminated",
         "SELECT * FROM order",
-        "SELECT * FROM t ORDER BY age",
+        # Was `ORDER BY`, until Milestone 13 implemented it. `make examples`
+        # caught that on the next run, which is the whole reason CI runs them.
+        "SELECT * FROM a LEFT JOIN b ON a.x = b.x",
     ]:
         outcome = analyze_sql(sql)
         assert outcome.error is not None

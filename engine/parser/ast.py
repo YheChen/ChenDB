@@ -46,6 +46,7 @@ from engine.parser.tokens import SourceSpan
 from engine.serialization.types import DataType
 
 __all__ = [
+    "AggregateFunction",
     "AnalyzeStatement",
     "Assignment",
     "BeginStatement",
@@ -60,13 +61,18 @@ __all__ = [
     "DeleteStatement",
     "ExplainStatement",
     "Expression",
+    "FunctionCall",
     "InsertStatement",
     "IsNullTest",
+    "JoinClause",
+    "JoinKind",
     "Literal",
     "Node",
+    "OrderByItem",
     "RollbackStatement",
     "SelectItem",
     "SelectStatement",
+    "SortDirection",
     "Star",
     "Statement",
     "TableRef",
@@ -222,12 +228,14 @@ class ColumnRef(Expression):
 
 @dataclass(frozen=True, slots=True)
 class Star(Expression):
-    """``*`` in a projection.
+    """``*`` in a projection, or ``u.*`` for one table of a join.
 
     An expression rather than a flag on ``SelectStatement`` so that
     ``SELECT *, id`` parses, and so the projection list stays homogeneous for
     the planner to walk.
     """
+
+    table: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,9 +278,20 @@ class Statement(Node):
 
 @dataclass(frozen=True, slots=True)
 class TableRef(Node):
-    """A table named in a statement."""
+    """A table named in a statement, optionally under an alias.
+
+    The alias is what a qualified column resolves against, not the table name:
+    ``FROM users u`` makes ``u.id`` valid and ``users.id`` an error, which is
+    what every SQL engine does and what makes a self-join expressible at all.
+    """
 
     name: str
+    alias: str | None = None
+
+    @property
+    def binding_name(self) -> str:
+        """What a qualified reference must use to reach this table."""
+        return self.alias or self.name
 
 
 class ColumnConstraint(StrEnum):
@@ -460,14 +479,96 @@ class SelectItem(Node):
         return self.expression.node_type.lower()
 
 
+class JoinKind(StrEnum):
+    """How unmatched rows are treated.
+
+    Only ``INNER`` is implemented. The others are named so the parser can say
+    which one it is refusing, and because an outer join is not merely an inner
+    join with extra rows: it constrains the order the planner may join in, which
+    is the reason it is a milestone of its own rather than a flag.
+    """
+
+    INNER = "INNER"
+    LEFT = "LEFT"
+    RIGHT = "RIGHT"
+    FULL = "FULL"
+
+
+@dataclass(frozen=True, slots=True)
+class JoinClause(Node):
+    """One ``JOIN b ON …`` appended to a ``FROM``.
+
+    A flat list of these rather than a nested tree, because the *written* order
+    of a join is not the order it runs in — the planner reorders freely, and a
+    tree here would suggest a nesting the user does not control. That is exactly
+    what the SQL standard means by joins being commutative and associative, and
+    the whole reason join ordering is a search problem.
+    """
+
+    table: TableRef
+    on: Expression
+    kind: JoinKind = JoinKind.INNER
+
+
+class SortDirection(StrEnum):
+    ASC = "ASC"
+    DESC = "DESC"
+
+
+@dataclass(frozen=True, slots=True)
+class OrderByItem(Node):
+    """One ``expr [ASC|DESC]`` in an ``ORDER BY``."""
+
+    expression: Expression
+    direction: SortDirection = SortDirection.ASC
+
+
+class AggregateFunction(StrEnum):
+    COUNT = "COUNT"
+    SUM = "SUM"
+    AVG = "AVG"
+    MIN = "MIN"
+    MAX = "MAX"
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionCall(Expression):
+    """``COUNT(*)``, ``SUM(price)``, and nothing else yet.
+
+    ``argument`` is ``None`` for ``COUNT(*)``, which is not sugar for
+    ``COUNT(1)``: the star form counts *rows*, and the expression form counts
+    rows where the expression is not NULL. Conflating them is the most common
+    SQL misunderstanding there is, and keeping the distinction in the AST makes
+    it impossible here.
+    """
+
+    function: AggregateFunction
+    argument: Expression | None
+
+    @property
+    def is_star(self) -> bool:
+        return self.argument is None
+
+
 @dataclass(frozen=True, slots=True)
 class SelectStatement(Statement):
     projections: tuple[SelectItem, ...]
     table: TableRef
+    joins: tuple[JoinClause, ...] = ()
     where: Expression | None = None
+    group_by: tuple[Expression, ...] = ()
+    having: Expression | None = None
+    order_by: tuple[OrderByItem, ...] = ()
+    limit: int | None = None
+    offset: int | None = None
 
     @property
     def is_select_star(self) -> bool:
         return len(self.projections) == 1 and isinstance(
             self.projections[0].expression, Star
         )
+
+    @property
+    def tables(self) -> tuple[TableRef, ...]:
+        """Every table in the ``FROM``, in the order it was written."""
+        return (self.table, *(join.table for join in self.joins))

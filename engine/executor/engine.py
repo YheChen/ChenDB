@@ -70,11 +70,16 @@ from engine.executor.expression import evaluate
 from engine.executor.operators import (
     ExecutionContext,
     Filter,
+    HashAggregate,
+    HashJoin,
     IndexScan,
+    Limit,
+    NestedLoopJoin,
     Operator,
     Project,
     ScanOperator,
     SeqScan,
+    Sort,
 )
 from engine.parser.ast import (
     AnalyzeStatement,
@@ -93,19 +98,28 @@ from engine.parser.ast import (
 )
 from engine.parser.parser import parse
 from engine.planner.logical import (
+    LogicalAggregate,
     LogicalFilter,
+    LogicalJoin,
+    LogicalLimit,
     LogicalNode,
     LogicalProject,
     LogicalScan,
+    LogicalSort,
     walk_logical,
 )
 from engine.planner.physical import (
     DEFAULT_PLANNER_OPTIONS,
+    PhysicalAggregate,
     PhysicalFilter,
+    PhysicalHashJoin,
     PhysicalIndexScan,
+    PhysicalLimit,
+    PhysicalNestedLoopJoin,
     PhysicalNode,
     PhysicalProject,
     PhysicalSeqScan,
+    PhysicalSort,
     PlannedQuery,
     PlannerOptions,
     describe_physical,
@@ -200,14 +214,71 @@ def build_logical_plan(bound: BoundSelect) -> LogicalNode:
     belongs to a rewrite rule or to the cost model, where it can be named and
     inspected. Milestone 3 dropped an identity projection here; that is now
     :mod:`engine.optimizer.rules`.
+
+    The nodes come out in **SQL's evaluation order**, which is not its written
+    order, and reading the tree bottom-up is the shortest explanation of why
+    ``ORDER BY`` can use a select-list alias and ``WHERE`` cannot::
+
+        Limit                  LIMIT 10
+          Sort                 ORDER BY total DESC
+            Project            SELECT u.name, SUM(o.total) AS total
+              Aggregate        GROUP BY u.name  HAVING SUM(o.total) > 100
+                Filter         WHERE o.paid
+                  Join         ON u.id = o.user_id
+                    Scan users
+                    Scan orders
+
+    The joins are emitted left-deep in the order they were written. That is a
+    *starting point*, not a decision: :func:`~engine.planner.physical.plan_select`
+    re-derives the order from scratch.
     """
-    return build_row_source(
-        bound.table_name,
-        bound.input_schema,
-        bound.where,
-        bound.projections,
-        bound.output_columns,
+    scope = bound.scope
+    total = scope.width
+
+    plan: LogicalNode = LogicalScan(
+        "scan_1",
+        scope.entries[0].table_name,
+        scope.entries[0].schema,
+        position=0,
+        offset=scope.entries[0].offset,
+        total_width=total,
     )
+    for index, join in enumerate(bound.joins, start=1):
+        entry = scope.entry(join.binding_name)
+        assert entry is not None
+        plan = LogicalJoin(
+            f"join_{index}",
+            join.condition,
+            plan,
+            LogicalScan(
+                f"scan_{entry.position + 1}",
+                entry.table_name,
+                entry.schema,
+                position=entry.position,
+                offset=entry.offset,
+                total_width=total,
+            ),
+        )
+
+    if bound.where is not None:
+        plan = LogicalFilter("filter", bound.where, plan)
+
+    if bound.aggregation is not None:
+        plan = LogicalAggregate(
+            "aggregate",
+            bound.aggregation.group_keys,
+            bound.aggregation.aggregates,
+            bound.aggregation.having,
+            plan,
+        )
+
+    plan = LogicalProject("project", bound.projections, bound.output_columns, plan)
+
+    if bound.order_by:
+        plan = LogicalSort("sort", bound.order_by, plan)
+    if bound.limit is not None:
+        plan = LogicalLimit("limit", bound.limit, bound.offset or 0, plan)
+    return plan
 
 
 def build_row_source(
@@ -331,6 +402,7 @@ def materialise(
                 heap=database.heap_for(node.table_name),
                 schema=node.schema,
                 table_name=node.table_name,
+                layout=node.layout,
             )
 
         case PhysicalIndexScan():
@@ -345,6 +417,57 @@ def materialise(
                 high=node.high,
                 include_low=node.include_low,
                 include_high=node.include_high,
+                layout=node.layout,
+            )
+
+        case PhysicalNestedLoopJoin():
+            return NestedLoopJoin(
+                node.node_id,
+                context,
+                left=materialise(node.left, database, context),
+                right=materialise(node.right, database, context),
+                predicate=node.predicate,
+                right_slices=node.right_slices,
+            )
+
+        case PhysicalHashJoin():
+            return HashJoin(
+                node.node_id,
+                context,
+                left=materialise(node.left, database, context),
+                right=materialise(node.right, database, context),
+                predicate=node.predicate,
+                build_key=node.build_key,
+                probe_key=node.probe_key,
+                residual=node.residual,
+                right_slices=node.right_slices,
+            )
+
+        case PhysicalAggregate():
+            return HashAggregate(
+                node.node_id,
+                context,
+                child=materialise(node.child, database, context),
+                group_keys=node.group_keys,
+                aggregates=node.aggregates,
+                having=node.having,
+            )
+
+        case PhysicalSort():
+            return Sort(
+                node.node_id,
+                context,
+                child=materialise(node.child, database, context),
+                keys=node.keys,
+            )
+
+        case PhysicalLimit():
+            return Limit(
+                node.node_id,
+                context,
+                child=materialise(node.child, database, context),
+                count=node.count,
+                offset=node.offset,
             )
 
         case PhysicalFilter():
@@ -770,18 +893,34 @@ def _explain_lines(
     if planned.rewrites:
         lines.append(f"Rewrites applied: {', '.join(planned.rewrites)}")
     if len(planned.alternatives) > 1:
-        lines.append("Alternatives considered:")
-        for alternative in planned.alternatives:
-            marker = "->" if alternative.chosen else "  "
-            reason = (
-                f"  [{alternative.rejected_because}]"
-                if alternative.rejected_because
-                else ""
-            )
-            lines.append(
-                f"  {marker} {alternative.description}  "
-                f"cost={alternative.cost.total:.1f} rows={alternative.cost.rows:.0f}{reason}"
-            )
+        # Grouped by which question each was an answer to. A join has several
+        # independent decisions, and a flat list of them reads as a
+        # contradiction — three entries marked "chosen" for what looks like one
+        # choice.
+        for decision in dict.fromkeys(item.decision for item in planned.alternatives):
+            considered = [
+                item for item in planned.alternatives if item.decision == decision
+            ]
+            if (
+                len(considered) == 1
+                and considered[0].chosen
+                and len(planned.alternatives) > 2
+            ):
+                lines.append(f"Decided {decision}: {considered[0].description}")
+                continue
+            lines.append(f"Considered {decision}:")
+            for alternative in considered:
+                marker = "->" if alternative.chosen else "  "
+                reason = (
+                    f"  [{alternative.rejected_because}]"
+                    if alternative.rejected_because
+                    else ""
+                )
+                lines.append(
+                    f"  {marker} {alternative.description}  "
+                    f"cost={alternative.cost.total:.1f} "
+                    f"rows={alternative.cost.rows:.0f}{reason}"
+                )
     return lines
 
 

@@ -457,6 +457,28 @@ behind. It is now what a reader can see, and `version_count` is what is
 physically on the pages. The gap between them is exactly what `POST /vacuum`
 would reclaim, and a panel showing both cannot disagree with a `SELECT`.
 
+### Milestone 13 — joins and aggregation
+
+**No new endpoints**, again. What changed is what a plan can contain.
+
+`OperatorNodeModel.children` was always a list and now genuinely holds two for a
+join, so a client that assumed one child was assuming, not reading. The new
+operator types are `NestedLoopJoin`, `HashJoin`, `HashAggregate`, `Sort` and
+`Limit`.
+
+**`PlanAlternativeModel` gained `decision`.** With one table there was one
+question — how to read it — and a flat list of alternatives was right. A query
+over three tables answers four independent questions, and a flat list reads as a
+contradiction: several entries all marked `chosen`. The field says which
+question each answered (`"how to read customers"`, `"what order to join in"`),
+and both `EXPLAIN` and the visualizer group by it. It defaults to
+`"access path"`, so a client that ignores it sees what it always saw.
+
+Join-order sub-plans are reported alongside the winner with
+`rejected_because: "a building block, not a rejected plan"` — they are the
+pieces the chosen plan was assembled from, not options that lost, and saying so
+is cheaper than a second field.
+
 ## Errors
 
 Every non-2xx response carries the same envelope:

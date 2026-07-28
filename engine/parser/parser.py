@@ -27,9 +27,17 @@ whole appeal: the grammar below can be read straight off the method names.
                       VALUES row { ',' row }
     row            := '(' expr { ',' expr } ')'
 
-    select         := SELECT select_list FROM ident [ WHERE expr ]
+    select         := SELECT select_list FROM from_clause [ WHERE expr ]
+                      [ GROUP BY expr { ',' expr } ] [ HAVING expr ]
+                      [ ORDER BY sort_item { ',' sort_item } ]
+                      [ LIMIT int [ OFFSET int ] ]
     select_list    := select_item { ',' select_item }
-    select_item    := '*' | expr [ [ AS ] ident ]
+    select_item    := '*' | ident '.' '*' | expr [ [ AS ] ident ]
+
+    from_clause    := table_ref { ',' table_ref | join }
+    table_ref      := ident [ [ AS ] ident ]
+    join           := [ INNER ] JOIN table_ref ON expr
+    sort_item      := expr [ ASC | DESC ]
 
     update         := UPDATE ident SET assignment { ',' assignment }
                       [ WHERE expr ]
@@ -46,8 +54,9 @@ whole appeal: the grammar below can be read straight off the method names.
     additive       := multiplicative { ( '+' | '-' ) multiplicative }
     multiplicative := unary { ( '*' | '/' | '%' ) unary }
     unary          := ( '-' | '+' ) unary | primary
-    primary        := literal | column_ref | '(' expr ')'
+    primary        := literal | column_ref | aggregate | '(' expr ')'
     column_ref     := ident [ '.' ident ]
+    aggregate      := ( COUNT | SUM | AVG | MIN | MAX ) '(' ( '*' | expr ) ')'
 
 Precedence is encoded in the *shape* of the rules: ``or_expr`` calls
 ``and_expr`` calls ``not_expr`` and so on, so the operator parsed at the
@@ -80,6 +89,7 @@ from engine.diagnostics.events import AstNodeCreatedEvent, ParsedEvent, ParseErr
 from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import ParseError, UnsupportedSqlError
 from engine.parser.ast import (
+    AggregateFunction,
     AnalyzeStatement,
     Assignment,
     BeginStatement,
@@ -94,13 +104,18 @@ from engine.parser.ast import (
     DeleteStatement,
     ExplainStatement,
     Expression,
+    FunctionCall,
     InsertStatement,
     IsNullTest,
+    JoinClause,
+    JoinKind,
     Literal,
     Node,
+    OrderByItem,
     RollbackStatement,
     SelectItem,
     SelectStatement,
+    SortDirection,
     Star,
     Statement,
     TableRef,
@@ -699,34 +714,170 @@ class Parser:
                 break
 
         self._expect_keyword(Keyword.FROM)
-        table = self._table_ref()
-        end = table.span
+        table, joins = self._from_clause()
+        end = joins[-1].span if joins else table.span
 
         where: Expression | None = None
         if self._match_keyword(Keyword.WHERE):
             where = self._expression()
             end = where.span
 
-        if self._check_keyword(Keyword.GROUP):
-            self._unsupported("GROUP BY is not implemented yet")
-        if self._check_keyword(Keyword.ORDER):
-            self._unsupported("ORDER BY is not implemented yet")
-        if self._check_keyword(Keyword.LIMIT):
-            self._unsupported("LIMIT is not implemented yet")
+        group_by: tuple[Expression, ...] = ()
+        if self._match_keyword(Keyword.GROUP):
+            self._expect_keyword(Keyword.BY)
+            keys: list[Expression] = []
+            while True:
+                keys.append(self._expression())
+                if not self._match(TokenType.COMMA):
+                    break
+            group_by = tuple(keys)
+            end = group_by[-1].span
+
+        having: Expression | None = None
+        if self._match_keyword(Keyword.HAVING):
+            having = self._expression()
+            end = having.span
+
+        order_by: tuple[OrderByItem, ...] = ()
+        if self._match_keyword(Keyword.ORDER):
+            self._expect_keyword(Keyword.BY)
+            items: list[OrderByItem] = []
+            while True:
+                items.append(self._sort_item())
+                if not self._match(TokenType.COMMA):
+                    break
+            order_by = tuple(items)
+            end = order_by[-1].span
+
+        limit: int | None = None
+        offset: int | None = None
+        if self._match_keyword(Keyword.LIMIT):
+            limit_token = self._expect(TokenType.INT_LITERAL, "a row count after LIMIT")
+            limit = int(limit_token.value)  # type: ignore[arg-type]
+            end = limit_token.span
+            if limit < 0:  # pragma: no cover - the lexer has no negative literals
+                self._fail("LIMIT cannot be negative")
+        if self._match_keyword(Keyword.OFFSET):
+            if limit is None:
+                # Accepted by PostgreSQL, and it means "skip n, then all the
+                # rest". Refused here because the executor implements OFFSET as
+                # part of LIMIT and would silently ignore a lone one.
+                self._unsupported("OFFSET without LIMIT is not implemented")
+            offset_token = self._expect(TokenType.INT_LITERAL, "a row count after OFFSET")
+            offset = int(offset_token.value)  # type: ignore[arg-type]
+            end = offset_token.span
 
         return self._node(
             SelectStatement,
             start.union(end),
             projections=tuple(projections),
             table=table,
+            joins=joins,
             where=where,
+            group_by=group_by,
+            having=having,
+            order_by=order_by,
+            limit=limit,
+            offset=offset,
         )
+
+    def _from_clause(self) -> tuple[TableRef, tuple[JoinClause, ...]]:
+        """``a``, ``a, b``, or ``a JOIN b ON …`` — the same thing three ways.
+
+        A comma-separated ``FROM`` is an inner join with its predicate in the
+        ``WHERE`` clause, and the planner treats it identically. Supporting both
+        spellings costs one branch and is worth it: the comma form is how most
+        older SQL is written, and rejecting it would make the join planner
+        unreachable from half the queries anyone would try.
+        """
+        first = self._table_ref()
+        joins: list[JoinClause] = []
+
+        while True:
+            if self._match(TokenType.COMMA):
+                table = self._table_ref()
+                # No ON. The predicate, if any, is in the WHERE clause, and
+                # `TRUE` is the honest join condition for a cross product.
+                joins.append(
+                    self._node(
+                        JoinClause,
+                        table.span,
+                        table=table,
+                        on=self._node(
+                            Literal, table.span, value=True, data_type=DataType.BOOLEAN
+                        ),
+                        kind=JoinKind.INNER,
+                    )
+                )
+                continue
+
+            kind = self._join_kind()
+            if kind is None:
+                break
+            start = self._expect_keyword(Keyword.JOIN).span
+            table = self._table_ref()
+            self._expect_keyword(Keyword.ON)
+            on = self._expression()
+            joins.append(
+                self._node(JoinClause, start.union(on.span), table=table, on=on, kind=kind)
+            )
+
+        return first, tuple(joins)
+
+    def _join_kind(self) -> JoinKind | None:
+        """The join flavour about to be parsed, or ``None`` if this is not one.
+
+        Only inner joins are implemented. An outer join is not an inner join
+        with extra rows: it fixes which side may be the outer relation, so the
+        planner can no longer reorder freely, and the executor has to
+        NULL-extend. Both are real work, and refusing by name beats a syntax
+        error that says nothing.
+        """
+        if self._match_keyword(Keyword.INNER):
+            return JoinKind.INNER
+        if self._check_keyword(Keyword.LEFT, Keyword.RIGHT, Keyword.FULL):
+            side = self._current.keyword
+            assert side is not None
+            self._unsupported(
+                f"{side.value} JOIN is not implemented; an outer join constrains "
+                f"the order the planner may join in, and ChenDB reorders freely"
+            )
+        if self._check_keyword(Keyword.CROSS):
+            self._unsupported("CROSS JOIN is not implemented; write 'FROM a, b'")
+        if self._check_keyword(Keyword.JOIN):
+            return JoinKind.INNER
+        return None
+
+    def _sort_item(self) -> OrderByItem:
+        expression = self._expression()
+        span = expression.span
+        direction = SortDirection.ASC
+        if (token := self._match_keyword(Keyword.ASC, Keyword.DESC)) is not None:
+            direction = (
+                SortDirection.DESC if token.is_keyword(Keyword.DESC) else SortDirection.ASC
+            )
+            span = span.union(token.span)
+        return self._node(OrderByItem, span, expression=expression, direction=direction)
 
     def _select_item(self) -> SelectItem:
         if self._check(TokenType.STAR):
             star_token = self._advance()
-            star = self._node(Star, star_token.span)
+            star = self._node(Star, star_token.span, table=None)
             return self._node(SelectItem, star_token.span, expression=star, alias=None)
+
+        # `u.*` — every column of one table in a join. One token of lookahead is
+        # not enough to see it coming, so the qualified reference is parsed and
+        # the star recognised after the dot.
+        if self._check(TokenType.IDENTIFIER) and self._peek_is_qualified_star():
+            name_token = self._advance()
+            self._advance()  # the dot
+            star_token = self._advance()  # the star
+            star = self._node(
+                Star,
+                name_token.span.union(star_token.span),
+                table=self._identifier_name(name_token),
+            )
+            return self._node(SelectItem, star.span, expression=star, alias=None)
 
         expression = self._expression()
         span = expression.span
@@ -745,9 +896,38 @@ class Parser:
 
         return self._node(SelectItem, span, expression=expression, alias=alias)
 
+    def _peek_is_qualified_star(self) -> bool:
+        """Two tokens ahead: is this ``ident . *``?
+
+        The only place the parser looks past one token, and it is bounded and
+        local — the alternative is a backtracking attempt at an expression,
+        which would cost the "no backtracking" property the whole design rests
+        on for a syntax used in one position.
+        """
+        return (
+            self._pos + 2 < len(self._tokens)
+            and self._tokens[self._pos + 1].type is TokenType.DOT
+            and self._tokens[self._pos + 2].type is TokenType.STAR
+        )
+
     def _table_ref(self) -> TableRef:
         token = self._identifier("a table name")
-        return self._node(TableRef, token.span, name=self._identifier_name(token))
+        span = token.span
+        alias: str | None = None
+
+        if self._match_keyword(Keyword.AS):
+            alias_token = self._identifier("a table alias")
+            alias = self._identifier_name(alias_token)
+            span = span.union(alias_token.span)
+        elif self._check(TokenType.IDENTIFIER):
+            # `FROM users u`. Only an identifier can follow a table name here —
+            # every clause that could come next starts with a keyword — so this
+            # needs no lookahead.
+            alias_token = self._advance()
+            alias = self._identifier_name(alias_token)
+            span = span.union(alias_token.span)
+
+        return self._node(TableRef, span, name=self._identifier_name(token), alias=alias)
 
     # -- expressions -------------------------------------------------------
 
@@ -922,6 +1102,8 @@ class Parser:
             return self._node(Literal, token.span, value=None, data_type=None)
 
         if self._check(TokenType.IDENTIFIER):
+            if self._peek_is_call():
+                return self._function_call()
             return self._column_reference()
 
         if self._check(TokenType.STAR):
@@ -933,6 +1115,56 @@ class Parser:
         self._fail(
             "expected a value",
             expected=("a column name", "a literal", "'('"),
+        )
+
+    def _peek_is_call(self) -> bool:
+        """Is the identifier at the cursor followed by ``(``?
+
+        What distinguishes ``count(x)`` from a column called ``count``. Keeping
+        aggregate names out of the reserved set is why this lookahead exists,
+        and it is the trade PostgreSQL and SQLite both make: a table with a
+        ``min`` and a ``max`` column is not an unusual table.
+        """
+        return (
+            self._pos + 1 < len(self._tokens)
+            and self._tokens[self._pos + 1].type is TokenType.LPAREN
+        )
+
+    def _function_call(self) -> FunctionCall:
+        name_token = self._advance()
+        name = self._identifier_name(name_token).upper()
+        try:
+            function = AggregateFunction(name)
+        except ValueError:
+            self._fail(
+                f"unknown function {self._identifier_name(name_token)!r}; ChenDB has "
+                f"{', '.join(item.value for item in AggregateFunction)}",
+                expected=tuple(item.value for item in AggregateFunction),
+            )
+
+        self._expect(TokenType.LPAREN, "'(' after a function name")
+        argument: Expression | None = None
+        if self._check(TokenType.STAR):
+            # COUNT(*) counts rows; COUNT(x) counts rows where x is not NULL.
+            # They are different questions and only one of them takes a column.
+            star = self._advance()
+            if function is not AggregateFunction.COUNT:
+                self._fail(
+                    f"{function.value}(*) is not meaningful; "
+                    f"only COUNT counts rows rather than values"
+                )
+            del star
+        else:
+            argument = self._expression()
+            if isinstance(argument, FunctionCall):
+                self._unsupported("an aggregate of an aggregate is not allowed")
+        end = self._expect(TokenType.RPAREN, "')' after the function argument").span
+
+        return self._node(
+            FunctionCall,
+            name_token.span.union(end),
+            function=function,
+            argument=argument,
         )
 
     def _column_reference(self) -> ColumnRef:

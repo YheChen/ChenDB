@@ -182,6 +182,7 @@ const COSTED: PlanModel = {
       chosen: false,
       rejected_because: "14.8x the cost of the chosen plan",
       index_name: null,
+      decision: "how to read users",
     },
     {
       description: "Index scan on users_age (age = 30)",
@@ -191,6 +192,7 @@ const COSTED: PlanModel = {
       chosen: true,
       rejected_because: "",
       index_name: "users_age",
+      decision: "how to read users",
     },
   ],
   rewrites: ["fold_constants"],
@@ -294,5 +296,46 @@ describe("AlternativesPanel", () => {
   it("says so when there was nothing to choose between", () => {
     render(<AlternativesPanel plan={PLAN} />);
     expect(screen.getByText("No alternatives")).toBeInTheDocument();
+  });
+
+  it("keeps one decision unlabelled — the label would be noise", () => {
+    render(<AlternativesPanel plan={COSTED} />);
+    expect(screen.queryByText("how to read users")).not.toBeInTheDocument();
+  });
+
+  it("labels each decision when a join makes several", () => {
+    // Three entries marked "chosen" is a contradiction until you can see that
+    // they answered three different questions.
+    const joined: PlanModel = {
+      ...COSTED,
+      alternatives: [
+        ...COSTED.alternatives,
+        {
+          description: "Sequential scan of orders",
+          access_path: "PhysicalSeqScan",
+          estimated_cost: 41,
+          estimated_rows: 500,
+          chosen: true,
+          rejected_because: "",
+          index_name: null,
+          decision: "how to read orders",
+        },
+        {
+          description: "users x orders",
+          access_path: "PhysicalHashJoin",
+          estimated_cost: 12,
+          estimated_rows: 500,
+          chosen: true,
+          rejected_because: "",
+          index_name: null,
+          decision: "what order to join in",
+        },
+      ],
+    };
+    render(<AlternativesPanel plan={joined} />);
+    expect(screen.getByText("how to read users")).toBeInTheDocument();
+    expect(screen.getByText("how to read orders")).toBeInTheDocument();
+    expect(screen.getByText("what order to join in")).toBeInTheDocument();
+    expect(screen.getByText("users x orders")).toBeInTheDocument();
   });
 });

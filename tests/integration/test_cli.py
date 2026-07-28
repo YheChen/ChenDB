@@ -75,7 +75,7 @@ def test_a_query_with_no_index_falls_back_to_a_scan(db_path: Path):
 
 def test_explain_shows_the_alternatives_and_why_they_lost(db_path: Path):
     output = run(db_path, "EXPLAIN SELECT email FROM users WHERE age = 45")
-    assert "Alternatives considered" in output
+    assert "Considered how to read users" in output
     assert "Sequential scan of users" in output
     assert "Index scan on users_age" in output
     assert "cost of the chosen plan" in output
@@ -206,7 +206,7 @@ def test_a_hyphenated_command_dispatches(db_path: Path):
 def test_explain_through_the_cli_shows_the_cost(db_path: Path):
     output = run(db_path, ".analyze", "EXPLAIN SELECT id FROM users WHERE age = 45")
     assert "cost=" in output
-    assert "Alternatives considered" in output
+    assert "Considered how to read users" in output
 
 
 def test_trace_and_events_work_together(db_path: Path):

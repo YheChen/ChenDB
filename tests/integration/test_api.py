@@ -57,7 +57,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     # The one place that pins the exact number. Every other suite asserts the
     # floor its own feature shipped at, so finishing a milestone edits one file.
     body = client.get(f"{API_PREFIX}/health").json()
-    assert body["milestone"] == 12
+    assert body["milestone"] == 13
     assert body["api_version"] == "v1"
     # Panels for unbuilt features must be advertised as absent, not stubbed.
     assert body["features"]["storage"] is True
@@ -72,6 +72,7 @@ def test_health_reports_the_milestone_and_feature_flags(client: TestClient):
     assert body["features"]["wal"] is True
     assert body["features"]["mvcc"] is True
     assert body["features"]["dml"] is True
+    assert body["features"]["joins"] is True
 
 
 def test_health_does_not_leak_an_absolute_path(client: TestClient):
