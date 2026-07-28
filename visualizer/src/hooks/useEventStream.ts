@@ -1,5 +1,5 @@
 /**
- * Live diagnostic events over WebSocket.
+ * Live diagnostic events, buffered for a React tree.
  *
  * Three things this hook has to get right:
  *
@@ -9,21 +9,20 @@
  * 2. **Batched rendering.** One React state update per event would make the UI
  *    slower than the engine it is watching. Incoming events are staged in a ref
  *    and flushed on an interval.
- * 3. **Honest reconnection.** A dropped socket reconnects with backoff, and the
- *    gap is visible in the UI rather than papered over.
+ * 3. **Pausing without disconnecting.** A paused stream keeps its socket and
+ *    drops what arrives, so resuming does not replay a backlog.
+ *
+ * Where the events *come from* is the transport's business. Reconnection with
+ * backoff used to live here, and moved out with it: a transport running the
+ * engine inside the tab cannot disconnect, so there would be nothing for that
+ * code to do.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { eventStreamUrl } from "@/lib/api";
+import { getTransport, type ConnectionState } from "@/lib/transport";
 import type { TraceRecordModel } from "@/types/api";
 
-export type ConnectionState =
-  | "idle"
-  | "connecting"
-  | "open"
-  | "reconnecting"
-  | "closed"
-  | "error";
+export type { ConnectionState };
 
 export interface EventStreamState {
   events: TraceRecordModel[];
@@ -36,14 +35,6 @@ export interface EventStreamState {
 
 const DEFAULT_CAPACITY = 2_000;
 const FLUSH_INTERVAL_MS = 100;
-const RECONNECT_BASE_MS = 500;
-const RECONNECT_MAX_MS = 10_000;
-
-type ServerMessage =
-  | { type: "hello"; database_id: string; last_seq: number; trace_level: string }
-  | { type: "events"; events: TraceRecordModel[] }
-  | { type: "dropped"; count: number; total_dropped: number }
-  | { type: "error"; error: string; message: string };
 
 export function useEventStream(
   databaseId: string | null,
@@ -59,8 +50,6 @@ export function useEventStream(
   const [totalReceived, setTotalReceived] = useState(0);
 
   const pending = useRef<TraceRecordModel[]>([]);
-  const socketRef = useRef<WebSocket | null>(null);
-  const attemptRef = useRef(0);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
@@ -95,70 +84,14 @@ export function useEventStream(
       setConnection("idle");
       return;
     }
-
-    let disposed = false;
-    let reconnectTimer: number | undefined;
-
-    const connect = () => {
-      if (disposed) return;
-      setConnection(attemptRef.current === 0 ? "connecting" : "reconnecting");
-
-      const socket = new WebSocket(eventStreamUrl(databaseId));
-      socketRef.current = socket;
-
-      socket.onopen = () => {
-        if (disposed) return;
-        attemptRef.current = 0;
-        setConnection("open");
-      };
-
-      socket.onmessage = (raw) => {
-        if (disposed || pausedRef.current) return;
-        let message: ServerMessage;
-        try {
-          message = JSON.parse(raw.data as string) as ServerMessage;
-        } catch {
-          return; // malformed frame: ignore rather than tear down the stream
-        }
-        if (message.type === "events") {
-          pending.current.push(...message.events);
-        } else if (message.type === "dropped") {
-          setDroppedByServer((count) => count + message.count);
-        }
-      };
-
-      socket.onerror = () => {
-        if (!disposed) setConnection("error");
-      };
-
-      socket.onclose = () => {
-        if (disposed) return;
-        setConnection("closed");
-        // Exponential backoff, capped: a server restart should be picked up
-        // quickly, but a server that is down must not be hammered.
-        const delay = Math.min(
-          RECONNECT_MAX_MS,
-          RECONNECT_BASE_MS * 2 ** attemptRef.current,
-        );
-        attemptRef.current += 1;
-        reconnectTimer = window.setTimeout(connect, delay);
-      };
-    };
-
-    connect();
-
-    return () => {
-      disposed = true;
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      const socket = socketRef.current;
-      socketRef.current = null;
-      // onclose would otherwise schedule a reconnect for a stream we are
-      // deliberately leaving.
-      if (socket) {
-        socket.onclose = null;
-        socket.close();
-      }
-    };
+    return getTransport().subscribe(databaseId, {
+      onState: setConnection,
+      onEvents: (batch) => {
+        if (pausedRef.current) return;
+        pending.current.push(...batch);
+      },
+      onDropped: (count) => setDroppedByServer((total) => total + count),
+    });
   }, [databaseId]);
 
   return {

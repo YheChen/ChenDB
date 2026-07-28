@@ -1,13 +1,17 @@
 /**
- * Typed client for the engine API.
+ * Typed client for the engine API — the vocabulary, not the plumbing.
  *
- * Every request funnels through `request()` so error handling, the base path
- * and JSON decoding exist in exactly one place. Types come from
- * `src/types/api.ts`, which is generated from the server's OpenAPI schema —
- * a renamed field on the Python side breaks the TypeScript build rather than
- * failing silently in the browser.
+ * One method per endpoint, and types from `src/types/api.ts`, which is
+ * generated from the server's OpenAPI schema: a renamed field on the Python
+ * side breaks the TypeScript build rather than failing silently in a browser.
+ *
+ * *How* a request travels is deliberately not here. `request()` hands it to
+ * whichever `Transport` is active — `fetch` against a running server, or the
+ * same ASGI app compiled to WebAssembly and running in the tab. See
+ * `./transport.ts`; this file should read the same either way.
  */
 
+import { getTransport } from "./transport";
 import type {
   BufferPoolResponse,
   CreateDatabaseRequest,
@@ -43,7 +47,14 @@ import type {
   SessionListResponse,
 } from "@/types/api";
 
-export const API_PREFIX = "/api/v1";
+export {
+  API_PREFIX,
+  API_VERSION,
+  ApiRequestError,
+  eventStreamUrl,
+  type ConnectionState,
+  type Transport,
+} from "./transport";
 
 /** Trace levels, ordered. Mirrors engine.diagnostics.levels.TraceLevel. */
 export const TRACE_LEVELS = [
@@ -66,73 +77,8 @@ export const RESUME_MODES = [
 ] as const;
 export type ResumeModeName = (typeof RESUME_MODES)[number];
 
-/** An error carrying the server's structured envelope, when there is one. */
-export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ApiRequestError";
-  }
-}
-
-type ErrorBody = {
-  detail?: { error?: string; message?: string } | string;
-  error?: string;
-  message?: string;
-};
-
-function extractError(status: number, body: unknown): ApiRequestError {
-  const payload = body as ErrorBody | undefined;
-  const detail = payload?.detail;
-  if (detail && typeof detail === "object") {
-    return new ApiRequestError(
-      status,
-      detail.error ?? "Error",
-      detail.message ?? "Request failed",
-    );
-  }
-  if (typeof detail === "string") {
-    return new ApiRequestError(status, "Error", detail);
-  }
-  if (payload?.message) {
-    return new ApiRequestError(
-      status,
-      payload.error ?? "Error",
-      payload.message,
-    );
-  }
-  return new ApiRequestError(status, "Error", `Request failed (${status})`);
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_PREFIX}${path}`, {
-      ...init,
-      headers: {
-        ...(init?.body ? { "Content-Type": "application/json" } : {}),
-        ...init?.headers,
-      },
-    });
-  } catch (cause) {
-    // A network-level failure means the engine is not running; the UI shows a
-    // distinct "disconnected" state rather than a generic error.
-    throw new ApiRequestError(
-      0,
-      "Disconnected",
-      "Cannot reach the engine. Is `python -m engine.server` running?",
-    );
-  }
-
-  if (response.status === 204) return undefined as T;
-
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : undefined;
-  if (!response.ok) throw extractError(response.status, body);
-  return body as T;
+  return getTransport().request<T>(path, init);
 }
 
 const json = (body: unknown): RequestInit => ({
@@ -336,9 +282,3 @@ export const api = {
       body: JSON.stringify({ level }),
     }),
 };
-
-/** Absolute WebSocket URL for a database's live event stream. */
-export function eventStreamUrl(databaseId: string): string {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${API_PREFIX}/databases/${databaseId}/events/stream`;
-}

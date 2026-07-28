@@ -178,19 +178,24 @@ def test_the_packaged_version_matches_the_engine():
     assert pyproject["project"]["version"] == engine.__version__
 
 
-def test_the_feature_list_never_outruns_the_milestone():
+def test_the_feature_list_accounts_for_every_milestone():
     import engine
 
-    # It was `==` for eleven milestones. Milestone 12 shipped CI, which is a
-    # guarantee about the engine rather than something the engine can do, and
-    # "storage + SQL + … + CI" is not a sentence a banner should print. So the
-    # list is allowed to lag — but never to lead, which would mean a feature
-    # was announced before it existed.
-    assert len(engine.MILESTONE_FEATURES) <= engine.MILESTONE
-    assert len(engine.MILESTONE_FEATURES) >= engine.MILESTONE - 1, (
-        "the CLI banner enumerates what shipped; a missing entry usually means "
-        "a milestone landed without the banner being told"
+    # One entry per milestone, minus the ones that shipped no new engine
+    # capability and say so by name. This was `==`, then `>= MILESTONE - 1`,
+    # and the next milestone without a feature would have made it `- 2` — at
+    # which point it asserts nothing. Naming the exceptions keeps it exact.
+    expected = engine.MILESTONE - len(engine.MILESTONES_WITHOUT_ENGINE_FEATURES)
+    assert len(engine.MILESTONE_FEATURES) == expected, (
+        "the CLI banner enumerates what shipped. Either add an entry, or add "
+        "this milestone to MILESTONES_WITHOUT_ENGINE_FEATURES and say why."
     )
+
+
+def test_the_milestones_without_features_are_in_the_past():
+    import engine
+
+    assert all(n <= engine.MILESTONE for n in engine.MILESTONES_WITHOUT_ENGINE_FEATURES)
 
 
 def test_the_api_reports_the_engine_milestone():
