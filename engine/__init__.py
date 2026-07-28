@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -76,6 +76,7 @@ MILESTONE_FEATURES: tuple[str, ...] = (
     "write-ahead log",
     "MVCC",
     "UPDATE and DELETE",
+    "joins and aggregation",
 )
 """What the engine can do, in the order the milestones added it.
 

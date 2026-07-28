@@ -18,6 +18,7 @@ the UI until the engine behind it exists.
 | 10 | MVCC, locks, wait-for graph, deadlocks | Two consoles, snapshots, lock table | **done** |
 | 11 | `UPDATE ... SET`, `DELETE ... WHERE`, version chains | Update walkthroughs, live rows vs versions | **done** |
 | 12 | — (CI over everything above) | One catalogue of demo SQL, checked against the engine | **done** |
+| 13 | Joins, `GROUP BY`, aggregates, `ORDER BY`, `LIMIT` | Join trees, grouped planner decisions | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -30,7 +31,7 @@ integration, which is a guarantee about the other eleven — see
 entries.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-12-ci.md`.
+the newest is `docs/milestone-13-joins.md`.
 
 ## What each milestone adds to the file format
 
@@ -46,6 +47,7 @@ the newest is `docs/milestone-12-ci.md`.
 | 10 | — | **v5**: `next_xid`; every row gains an 8-byte tuple header with `xmin`/`xmax` |
 | 11 | — | — (an update writes a second version through the M10 header; nothing new on disk) |
 | 12 | — | — (nothing runs; everything is checked) |
+| 13 | — | — (joins are a planner and executor change; the file format is untouched) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -61,8 +63,10 @@ Real problems this design has, with no milestone assigned:
 - **Compact integer encoding** — SQLite stores an integer in the narrowest of
   1/2/3/4/6/8 bytes.
 - **`VACUUM`** to return trailing pages to the filesystem.
-- **Joins, aggregation, `GROUP BY`, subqueries.** Milestone 3 builds the
-  operator framework these would slot into.
+- **Outer joins, bushy plans and index nested-loop joins.** Milestone 13 does
+  inner joins over left-deep plans; each of these is a real extension with a
+  real reason it was left out.
+- **Subqueries, `DISTINCT`, `UNION`, window functions.**
 - **`RETURNING`, and `INSERT ... SELECT`.** Both need a mutation to be an
   operator that emits rows rather than a call into storage. One refactor covers
   the pair; see `docs/milestone-11-dml.md`.

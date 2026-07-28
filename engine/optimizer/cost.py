@@ -67,6 +67,7 @@ precisely because nobody can know it in advance.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -263,6 +264,148 @@ def project_cost(input_rows: float, *, expressions: int) -> Cost:
     )
 
 
+#: Inserting one row into the hash table: hash the key, index a dict, append to
+#: a bucket, and hold the row. Measured at 67 ns.
+CPU_HASH_BUILD_COST: Final = 0.037
+
+#: Looking one key up: hash and index, with nothing retained. Measured at 45 ns
+#: — **two thirds of a build**, and that asymmetry is not a detail. It is the
+#: only thing in the cost model that says which side of a hash join should be
+#: the build side, and getting that backwards is the difference between a hash
+#: table of ten rows and one of ten million.
+CPU_HASH_PROBE_COST: Final = 0.025
+
+#: Comparing two rows during a sort. Measured at 26 ns: a tuple comparison in C,
+#: not a walk of an expression tree, so it is a fifth of a predicate evaluation.
+#: That is why an `n log n` sort of 5,000 rows costs less than scanning them.
+CPU_COMPARE_COST: Final = 0.014
+
+#: Folding one value into one accumulator: a counter, an add, or a compare.
+#: Measured at 50 ns.
+CPU_AGGREGATE_COST: Final = 0.027
+
+#: What an equijoin between two unknown columns is assumed to select, when
+#: neither side has distinct-value statistics. PostgreSQL falls back to
+#: ``DEFAULT_EQ_SEL`` here too; the difference is that a join's fallback is
+#: applied to the *product* of two row counts, so it is the single estimate most
+#: able to be catastrophically wrong.
+DEFAULT_JOIN_SELECTIVITY: Final = DEFAULT_EQ_SELECTIVITY
+
+
+def nested_loop_join_cost(outer_rows: float, inner_rows: float, *, matches: float) -> Cost:
+    """Compare every outer row against every inner row.
+
+    ``O(n·m)`` comparisons and no memory. It wins on exactly one shape — a tiny
+    outer side — and loses spectacularly on everything else, which is precisely
+    what makes it worth keeping as a candidate: the cost model has to *say* so,
+    and a planner with one join algorithm has nothing to be right about.
+
+    The inner side is drained into memory once, so what is charged here is
+    comparisons and not re-scans. Re-reading the inner child per outer row —
+    the textbook naive form — would make this ``O(n·m)`` *scans* rather than
+    ``O(n·m)`` comparisons, and the difference is several orders of magnitude.
+    So this cost is the *optimistic* one, and the algorithm still loses.
+    """
+    comparisons = outer_rows * inner_rows
+    return Cost(io=0.0, cpu=comparisons * CPU_PREDICATE_COST, rows=matches)
+
+
+def hash_join_cost(build_rows: float, probe_rows: float, *, matches: float) -> Cost:
+    """Build a hash table on one side, probe it with the other.
+
+    ``O(n + m)`` instead of ``O(n·m)``, paid for in memory proportional to the
+    build side — so the planner builds on the *smaller* one. It arrives at that
+    by arithmetic rather than by a rule: a build entry costs half again what a
+    probe does, so putting the bigger side on the build is simply more
+    expensive. That is the whole reason the model needs a row-count estimate for
+    each side and not just for the result.
+
+    Only equijoins can use it. A join on ``a.x < b.y`` has no key to hash and
+    falls back to nested loops, which is why range joins are slow in every
+    engine and not just this one.
+    """
+    return Cost(
+        io=0.0,
+        cpu=build_rows * CPU_HASH_BUILD_COST + probe_rows * CPU_HASH_PROBE_COST,
+        rows=matches,
+    )
+
+
+def sort_cost(input_rows: float, *, keys: int = 1) -> Cost:
+    """``n log n`` comparisons, in memory.
+
+    Charged even when the input is one row, because the operator still has to
+    *drain its child completely* before it can emit anything — a sort is the
+    first thing in this engine that is not a pipeline, and the plan view shows
+    it as the place where "time to first row" stops being small.
+
+    No spill to disk: a sort that does not fit is a sort that fails. PostgreSQL
+    switches to an external merge at ``work_mem``; ChenDB's ceiling is the row
+    limit, which is checked before the sort rather than during it.
+    """
+    comparisons = input_rows * max(math.log2(max(input_rows, 2.0)), 1.0)
+    return Cost(io=0.0, cpu=comparisons * keys * CPU_COMPARE_COST, rows=input_rows)
+
+
+def aggregate_cost(input_rows: float, *, groups: float, aggregates: int) -> Cost:
+    """Hash each row to its group, then fold it into that group's accumulators.
+
+    Linear in rows and independent of the number of groups, which is the
+    property that makes hashing the right choice here: sorting first would cost
+    ``n log n`` and buy an ordering nobody asked for.
+    """
+    return Cost(
+        io=0.0,
+        cpu=input_rows * (CPU_HASH_BUILD_COST + aggregates * CPU_AGGREGATE_COST),
+        rows=max(groups, 1.0),
+    )
+
+
+def limit_cost(input_rows: float, *, count: int, offset: int) -> Cost:
+    """Free. It stops early; it does not do work.
+
+    Whether stopping early *helps* depends on what is underneath: a limit above
+    a sort saves nothing, because the sort had to see every row anyway. That is
+    visible in the plan as a Limit whose child's cost did not fall.
+    """
+    return Cost(io=0.0, cpu=0.0, rows=min(input_rows, float(count + offset)) - offset)
+
+
+def join_selectivity(
+    left: TableStatistics, right: TableStatistics, *, equality: bool
+) -> float:
+    """The fraction of the cross product an equijoin is expected to keep.
+
+    The textbook estimate, and the one PostgreSQL uses: for ``a.x = b.y``,
+
+        selectivity = 1 / max(distinct(a.x), distinct(b.y))
+
+    The reasoning is worth stating because the assumption inside it is what
+    breaks. If every value of the *smaller* domain appears in the larger one —
+    a foreign key, which is the common case — then each row of the larger side
+    matches exactly one row of the smaller, and the result has as many rows as
+    the larger side. Take the maximum of the two distinct counts and that falls
+    out.
+
+    Where it fails is skew. Ten million orders spread over three customers is
+    still ``distinct = 3``, and the estimate is off by six orders of magnitude.
+    Fixing that needs a most-common-values list, which is the single largest
+    thing missing from this cost model.
+    """
+    if not equality:
+        # A range join keeps a third of the cross product, on the same
+        # reasoning as DEFAULT_INEQ_SELECTIVITY: an inequality is rarely
+        # selective, and pretending otherwise makes a nested loop look cheap.
+        return DEFAULT_INEQ_SELECTIVITY
+    distinct = max(left.row_count, right.row_count, 1)
+    return _clamp(1.0 / distinct)
+
+
+def distinct_join_selectivity(left_distinct: int, right_distinct: int) -> float:
+    """:func:`join_selectivity` when both columns really have been analyzed."""
+    return _clamp(1.0 / max(left_distinct, right_distinct, 1))
+
+
 # --------------------------------------------------------------------------
 # Selectivity
 # --------------------------------------------------------------------------
@@ -298,7 +441,7 @@ def _selectivity(predicate: Expression, stats: TableStatistics) -> float:
             return 1.0 - _selectivity(operand, stats)
 
         case IsNullTest(operand=BoundColumnRef() as column, negated=negated):
-            info = stats.column(column.column_index)
+            info = _column_stats(column, stats)
             if info is None:
                 return DEFAULT_EQ_SELECTIVITY
             fraction = info.null_fraction(stats.row_count)
@@ -310,6 +453,26 @@ def _selectivity(predicate: Expression, stats: TableStatistics) -> float:
     return DEFAULT_INEQ_SELECTIVITY
 
 
+def _column_stats(
+    column: BoundColumnRef, stats: TableStatistics
+) -> ColumnStatistics | None:
+    """Look a column up in its own table's statistics.
+
+    By ``table_position``, **not** ``column_index``. Since Milestone 13 a bound
+    index addresses the *joined* row, so ``sales.amount`` in
+    ``customers JOIN sales`` is index 5 — and asking a three-column table for
+    its column 5 gets nothing. The statistics then fall back to a default, the
+    filter's row estimate collapses, and the planner concludes a nested loop is
+    nearly free. It did, for about ten minutes.
+
+    A column with no ``table_position`` came from an aggregate's output row and
+    has no table to be a position in.
+    """
+    if column.table_position is None:
+        return None
+    return stats.column(column.table_position)
+
+
 def _comparison_selectivity(predicate: BinaryOp, stats: TableStatistics) -> float:
     matched = _as_column_literal(predicate)
     if matched is None:
@@ -317,7 +480,7 @@ def _comparison_selectivity(predicate: BinaryOp, stats: TableStatistics) -> floa
         return DEFAULT_INEQ_SELECTIVITY
     column, operator, value = matched
 
-    info = stats.column(column.column_index)
+    info = _column_stats(column, stats)
     if info is None:
         return DEFAULT_EQ_SELECTIVITY
 

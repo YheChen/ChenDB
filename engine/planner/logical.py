@@ -43,13 +43,17 @@ from engine.parser.ast import Expression
 from engine.serialization.schema import Schema
 
 if TYPE_CHECKING:
-    from engine.executor.binder import ResultColumn
+    from engine.executor.binder import BoundAggregate, BoundSortKey, ResultColumn
 
 __all__ = [
+    "LogicalAggregate",
     "LogicalFilter",
+    "LogicalJoin",
+    "LogicalLimit",
     "LogicalNode",
     "LogicalProject",
     "LogicalScan",
+    "LogicalSort",
     "describe_logical",
     "walk_logical",
 ]
@@ -85,6 +89,16 @@ class LogicalScan(LogicalNode):
 
     table_name: str
     schema: Schema
+    position: int = 0
+    """Which table in the ``FROM``, counting from zero."""
+    offset: int = 0
+    """Where this table's columns start in the joined row."""
+    total_width: int = 0
+    """How wide the joined row is. Zero means "the same as this table"."""
+
+    @property
+    def width(self) -> int:
+        return self.total_width or len(self.schema)
 
     @property
     def detail(self) -> str:
@@ -122,6 +136,89 @@ class LogicalProject(LogicalNode):
     @property
     def detail(self) -> str:
         return ", ".join(describe_expression(item) for item in self.projections)
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalJoin(LogicalNode):
+    """Rows of ``left`` paired with rows of ``right`` where ``predicate`` holds.
+
+    No algorithm: a hash join and a nested-loop join produce the same rows, and
+    which is cheaper depends on statistics this node has no business knowing.
+    No *order* either, in the sense that matters — an inner join is commutative,
+    so ``a ⨝ b`` and ``b ⨝ a`` are the same logical plan and the enumerator is
+    free to build both.
+    """
+
+    predicate: Expression
+    left: LogicalNode
+    right: LogicalNode
+
+    @property
+    def children(self) -> tuple[LogicalNode, ...]:
+        return (self.left, self.right)
+
+    @property
+    def detail(self) -> str:
+        return describe_expression(self.predicate)
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalAggregate(LogicalNode):
+    """Collapse groups of rows into one row each.
+
+    With no keys there is exactly one group and it exists even over no rows,
+    which is why ``SELECT COUNT(*) FROM empty`` returns ``0`` and not nothing.
+    """
+
+    group_keys: tuple[Expression, ...]
+    aggregates: tuple[BoundAggregate, ...]
+    having: Expression | None
+    child: LogicalNode
+
+    @property
+    def children(self) -> tuple[LogicalNode, ...]:
+        return (self.child,)
+
+    @property
+    def detail(self) -> str:
+        keys = ", ".join(describe_expression(key) for key in self.group_keys) or "all rows"
+        functions = ", ".join(entry.label for entry in self.aggregates)
+        return f"by {keys}" + (f" -> {functions}" if functions else "")
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalSort(LogicalNode):
+    """Order the rows. The one operator that cannot stream."""
+
+    keys: tuple[BoundSortKey, ...]
+    child: LogicalNode
+
+    @property
+    def children(self) -> tuple[LogicalNode, ...]:
+        return (self.child,)
+
+    @property
+    def detail(self) -> str:
+        return ", ".join(
+            f"#{key.output_index}{' DESC' if key.descending else ''}" for key in self.keys
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalLimit(LogicalNode):
+    """Stop after ``count`` rows, having skipped ``offset``."""
+
+    count: int
+    offset: int
+    child: LogicalNode
+
+    @property
+    def children(self) -> tuple[LogicalNode, ...]:
+        return (self.child,)
+
+    @property
+    def detail(self) -> str:
+        return f"{self.count}" + (f" offset {self.offset}" if self.offset else "")
 
 
 def walk_logical(node: LogicalNode) -> list[LogicalNode]:

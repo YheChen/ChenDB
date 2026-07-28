@@ -515,10 +515,10 @@ export interface ParseResponse {
   duration_ns: number;
 }
 
-/** One access path the planner considered, chosen or not. */
+/** One option the planner considered, chosen or not. */
 export interface PlanAlternativeModel {
   description: string;
-  /** PhysicalSeqScan or PhysicalIndexScan */
+  /** The node type, e.g. PhysicalIndexScan */
   access_path: string;
   estimated_cost: number;
   estimated_rows: number;
@@ -526,6 +526,8 @@ export interface PlanAlternativeModel {
   /** Why this lost, e.g. '3.6x the cost of the chosen plan'. Empty for the winner. */
   rejected_because: string;
   index_name: null | string;
+  /** Which question this answered — 'how to read users', 'what order to join in'. A query over several tables makes several independent decisions, and a flat list of winners reads as a contradiction. */
+  decision?: string;
 }
 
 export interface PlanModel {

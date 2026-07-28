@@ -235,6 +235,34 @@ export function walkthroughs(table: TableDetail): Walkthrough[] {
 
 export type Example = { label: string; sql: string; parses: boolean };
 
+export const JOIN_DEMO_SQL = `-- Two tables, one join, and a planner with something to decide.
+-- Run it, then read the plan: the ON condition became a HashJoin, the WHERE
+-- was pushed BELOW it, and the smaller table is the one being hashed.
+--
+-- IF NOT EXISTS, so running it twice works. The rows accumulate, which is
+-- itself worth watching: the statistics go stale and the plan can flip.
+
+CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+CREATE TABLE IF NOT EXISTS sales (id INTEGER PRIMARY KEY, customer_id INTEGER, amount INTEGER);
+
+INSERT INTO customers VALUES
+  (1, 'ada', 'london'), (2, 'alan', 'london'),
+  (3, 'grace', 'new york'), (4, 'edsger', 'amsterdam');
+
+INSERT INTO sales VALUES
+  (10, 1, 120), (11, 1,  80), (12, 2, 300),
+  (13, 3, 45),  (14, 3, 220), (15, 4,  15), (16, 99, 5);
+
+ANALYZE;
+
+SELECT c.city, COUNT(*) AS orders, SUM(s.amount) AS revenue
+FROM customers c JOIN sales s ON c.id = s.customer_id
+WHERE s.amount > 20
+GROUP BY c.city
+HAVING SUM(s.amount) > 100
+ORDER BY revenue DESC
+LIMIT 5;`;
+
 export const EXAMPLES: Example[] = [
   {
     label: "CREATE TABLE",
@@ -284,9 +312,18 @@ SELECT "select" FROM "order";`,
     sql: `SELECT name FROM`,
   },
   {
+    label: "Joins and aggregation",
+    parses: true,
+    sql: JOIN_DEMO_SQL,
+  },
+  {
     label: "Not implemented yet",
     parses: false,
-    sql: `SELECT * FROM users ORDER BY age;`,
+    // Was `ORDER BY`, until Milestone 13 implemented it and the guard in
+    // tests/integration/test_demo_sql.py failed with "was accepted". That is
+    // the failure mode this catalogue exists for, caught one milestone after
+    // it was built.
+    sql: `SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id;`,
   },
 ];
 
@@ -311,6 +348,13 @@ INSERT INTO users VALUES
 
 SELECT email, age * 2 AS doubled FROM users WHERE age >= 18;`;
 
+/**
+ * A two-table schema and a query that has to choose an order to join it in.
+ *
+ * Loaded by the Execution workspace's "Joins" button. It builds its own tables
+ * because the interesting part is the *plan*, and a plan needs statistics —
+ * hence the ANALYZE, without which the planner is guessing and says so.
+ */
 // --------------------------------------------------------------------------
 // The catalogue
 // --------------------------------------------------------------------------
@@ -376,6 +420,12 @@ export function demoStatements(table: TableDetail): DemoStatement[] {
     label: "Execution workspace opener",
     sql: EXECUTION_INITIAL_SQL,
     // It creates its own table, so it needs a database that has not got one.
+    on: "empty",
+  });
+  add({
+    id: "execution/joins",
+    label: "Joins and aggregation",
+    sql: JOIN_DEMO_SQL,
     on: "empty",
   });
   return out;

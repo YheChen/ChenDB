@@ -61,6 +61,7 @@ FEATURES: dict[str, bool] = {
     "wal": True,  # Milestone 9 — log, checkpoints, ARIES recovery
     "mvcc": True,  # Milestone 10 — row versions, snapshots, locks
     "dml": True,  # Milestone 11 — UPDATE ... SET, DELETE ... WHERE
+    "joins": True,  # Milestone 13 — joins, GROUP BY, ORDER BY, LIMIT
 }
 
 _DESCRIPTION = """

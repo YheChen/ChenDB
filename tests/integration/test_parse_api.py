@@ -226,9 +226,9 @@ def test_the_error_lists_what_would_have_been_accepted(client: TestClient):
 
 
 def test_unsupported_sql_is_distinguished_from_a_syntax_error(client: TestClient):
-    body = parse(client, "SELECT * FROM t ORDER BY a")
+    body = parse(client, "SELECT * FROM a LEFT JOIN b ON a.x = b.x")
     assert body["error"]["kind"] == "UnsupportedSqlError"
-    assert "ORDER BY" in body["error"]["message"]
+    assert "LEFT JOIN" in body["error"]["message"]
 
     body = parse(client, "SELECT FROM FROM")
     assert body["error"]["kind"] == "ParseError"

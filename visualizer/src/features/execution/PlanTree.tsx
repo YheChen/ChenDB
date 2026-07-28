@@ -22,6 +22,7 @@
 import { Badge, EmptyState, Panel } from "@/components/primitives";
 import { cn, formatCount, formatDuration } from "@/lib/format";
 import type {
+  PlanAlternativeModel,
   OperatorNodeModel,
   PlanModel,
   PlanStatisticsModel,
@@ -32,6 +33,14 @@ const OPERATOR_TONE: Record<string, string> = {
   IndexScan: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
   Filter: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
   Project: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  // The two-input and the blocking operators share a tone each, so the shape
+  // of a plan is readable before any of the text is: pink where the row count
+  // can multiply, orange where the pipeline stops.
+  HashJoin: "bg-pink-500/15 text-pink-700 dark:text-pink-300",
+  NestedLoopJoin: "bg-pink-500/15 text-pink-700 dark:text-pink-300",
+  HashAggregate: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+  Sort: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+  Limit: "bg-zinc-500/15",
 };
 
 /** How far an estimate may drift before it is worth pointing at. */
@@ -228,44 +237,66 @@ export function AlternativesPanel({ plan }: { plan: PlanModel | null | undefined
     );
   }
 
-  const cheapest = Math.min(...plan.alternatives.map((a) => a.estimated_cost));
+  // Grouped by which question each answered. A query over one table makes one
+  // decision and the grouping is invisible; a join makes several, and a flat
+  // list of them reads as a contradiction — three entries marked "chosen".
+  const groups = new Map<string, PlanAlternativeModel[]>();
+  for (const alternative of plan.alternatives) {
+    const key = alternative.decision || "access path";
+    groups.set(key, [...(groups.get(key) ?? []), alternative]);
+  }
 
   return (
     <div className="space-y-3 p-3">
-      <ul className="space-y-1.5">
-        {plan.alternatives.map((alternative) => (
-          <li
-            key={alternative.description}
-            className={cn(
-              "rounded border px-2.5 py-1.5",
-              alternative.chosen
-                ? "border-[var(--accent)] bg-[var(--accent)]/8"
-                : "border-[var(--border-subtle)] opacity-70",
-            )}
-          >
-            <div className="flex items-baseline gap-2">
-              <span className="text-[10px]">{alternative.chosen ? "▶" : "○"}</span>
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                {alternative.description}
-              </span>
-              <span
-                className="shrink-0 font-mono text-[11px]"
-                title="Estimated cost. The unit is one page read; see engine/optimizer/cost.py."
-              >
-                {alternative.estimated_cost.toFixed(1)}
-              </span>
-            </div>
-            <p className="text-muted mt-0.5 pl-5 font-mono text-[10px]">
-              {formatCount(Math.round(alternative.estimated_rows))} row(s) expected
-              {alternative.rejected_because
-                ? ` · ${alternative.rejected_because}`
-                : cheapest === alternative.estimated_cost
-                  ? " · cheapest"
-                  : ""}
-            </p>
-          </li>
-        ))}
-      </ul>
+      {[...groups].map(([decision, considered]) => {
+        const cheapest = Math.min(...considered.map((a) => a.estimated_cost));
+        return (
+          <div key={decision}>
+            {groups.size > 1 ? (
+              <p className="text-muted mb-1 text-[10px] tracking-wide uppercase">
+                {decision}
+              </p>
+            ) : null}
+            <ul className="space-y-1.5">
+              {considered.map((alternative, index) => (
+                <li
+                  key={`${alternative.description}-${index}`}
+                  className={cn(
+                    "rounded border px-2.5 py-1.5",
+                    alternative.chosen
+                      ? "border-[var(--accent)] bg-[var(--accent)]/8"
+                      : "border-[var(--border-subtle)] opacity-70",
+                  )}
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[10px]">
+                      {alternative.chosen ? "▶" : "○"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                      {alternative.description}
+                    </span>
+                    <span
+                      className="shrink-0 font-mono text-[11px]"
+                      title="Estimated cost. The unit is one page read; see engine/optimizer/cost.py."
+                    >
+                      {alternative.estimated_cost.toFixed(1)}
+                    </span>
+                  </div>
+                  <p className="text-muted mt-0.5 pl-5 font-mono text-[10px]">
+                    {formatCount(Math.round(alternative.estimated_rows))} row(s)
+                    expected
+                    {alternative.rejected_because
+                      ? ` · ${alternative.rejected_because}`
+                      : cheapest === alternative.estimated_cost
+                        ? " · cheapest"
+                        : ""}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
 
       {plan.rewrites.length > 0 ? (
         <div>

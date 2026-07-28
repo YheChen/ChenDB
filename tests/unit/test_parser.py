@@ -517,10 +517,11 @@ def test_star_inside_an_expression_is_explained():
 @pytest.mark.parametrize(
     ("sql", "match"),
     [
-        ("SELECT * FROM t ORDER BY a", "ORDER BY"),
-        ("SELECT * FROM t LIMIT 10", "LIMIT"),
-        ("SELECT * FROM t GROUP BY a", "GROUP BY"),
         ("SELECT DISTINCT a FROM t", "DISTINCT"),
+        ("SELECT * FROM a LEFT JOIN b ON a.x = b.x", "LEFT JOIN"),
+        ("SELECT * FROM a CROSS JOIN b", "CROSS JOIN"),
+        ("SELECT * FROM t OFFSET 3", "OFFSET without LIMIT"),
+        ("SELECT COUNT(COUNT(x)) FROM t", "aggregate of an aggregate"),
         ("DELETE FROM t ORDER BY a", "ORDER BY is not allowed on DELETE"),
         ("UPDATE t SET a = 1 LIMIT 2", "LIMIT is not allowed on UPDATE"),
         ("UPDATE t SET a = 1 FROM u", "no joins yet"),

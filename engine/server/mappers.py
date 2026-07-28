@@ -495,6 +495,7 @@ def plan_alternative_to_api(alternative: Alternative) -> PlanAlternativeModel:
         chosen=alternative.chosen,
         rejected_because=alternative.rejected_because,
         index_name=alternative.index_name,
+        decision=alternative.decision,
     )
 
 
