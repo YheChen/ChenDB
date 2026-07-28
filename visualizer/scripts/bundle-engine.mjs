@@ -3,10 +3,21 @@
  *
  *     node scripts/bundle-engine.mjs
  *
- * Writes two things into `wasm-public/`, both generated and both gitignored:
+ * Writes three things into `wasm-public/`, all generated and all gitignored:
  *
- *     chendb-engine.json    every engine/*.py, as {path: source}
- *     pyodide/              the Pyodide runtime, copied from node_modules
+ *     wasm-manifest.json           names the two below. Small, never cached.
+ *     chendb-engine-<version>.json every engine/*.py, as {path: source}
+ *     pyodide-<version>/           the Pyodide runtime and its wheels
+ *
+ * **The version is in the path on purpose.** These are 12 MB of payload that
+ * has to be cached hard to make a cold load bearable, and `immutable` is only
+ * honest if the name changes when the bytes do. With a fixed name, a browser
+ * that cached `pyodide.asm.wasm` would keep serving the old interpreter after
+ * an upgrade, and a stale `chendb-engine.json` would run last release's engine
+ * against this release's UI — a bug with no plausible symptom.
+ *
+ * The manifest is the one thing fetched without caching, and it is a few dozen
+ * bytes.
  *
  * Its own directory rather than `public/`, because Vite copies `publicDir`
  * into *every* build and the HTTP build has no use for 15 MB of interpreter.
@@ -125,12 +136,17 @@ async function copyWheels(source, target, lock, pyodideVersion) {
   return { count: wheels.length, fetched, bytes };
 }
 
+/** `pyodide-314.0.3` — the runtime directory, named for what is in it. */
+function pyodideDirName() {
+  return `pyodide-${pyodideVersion}`;
+}
+
 function copyPyodide() {
   const source = join(VISUALIZER, "node_modules", "pyodide");
   if (!existsSync(source)) {
     throw new Error("pyodide is not installed; run `npm install` first");
   }
-  const target = join(OUT, "pyodide");
+  const target = join(OUT, pyodideDirName());
   rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
 
@@ -146,31 +162,46 @@ function copyPyodide() {
   return bytes;
 }
 
-const engine = collectPython(join(REPO, "engine"));
-mkdirSync(OUT, { recursive: true });
-writeFileSync(
-  join(OUT, "chendb-engine.json"),
-  JSON.stringify({ version: version(), files: engine.files }),
-);
-
-const runtime = copyPyodide();
-
 const pyodideDir = join(VISUALIZER, "node_modules", "pyodide");
 const lock = JSON.parse(readFileSync(join(pyodideDir, "pyodide-lock.json"), "utf8"));
 const pyodideVersion = JSON.parse(
   readFileSync(join(pyodideDir, "package.json"), "utf8"),
 ).version;
+
+const engineVersion = version();
+const engineFile = `chendb-engine-${engineVersion}.json`;
+
+// A clean slate, so yesterday's version does not ship alongside today's.
+rmSync(OUT, { recursive: true, force: true });
+mkdirSync(OUT, { recursive: true });
+
+const engine = collectPython(join(REPO, "engine"));
+writeFileSync(
+  join(OUT, engineFile),
+  JSON.stringify({ version: engineVersion, files: engine.files }),
+);
+
+const runtime = copyPyodide();
 const wheels = await copyWheels(
   pyodideDir,
-  join(OUT, "pyodide"),
+  join(OUT, pyodideDirName()),
   lock,
   pyodideVersion,
 );
 
+writeFileSync(
+  join(OUT, "wasm-manifest.json"),
+  JSON.stringify({
+    engineVersion,
+    engine: engineFile,
+    pyodide: `${pyodideDirName()}/`,
+  }),
+);
+
 const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
 console.log(
-  `engine ${version()}: ${Object.keys(engine.files).length} files, ${mb(engine.bytes)}\n` +
+  `engine ${engineVersion}: ${Object.keys(engine.files).length} files, ${mb(engine.bytes)}\n` +
     `pyodide ${pyodideVersion} runtime: ${mb(runtime)}\n` +
     `wheels: ${wheels.count} (${wheels.fetched} downloaded), ${mb(wheels.bytes)}\n` +
-    `-> ${relative(REPO, OUT)}/`,
+    `-> ${relative(REPO, OUT)}/ (manifest + ${engineFile} + ${pyodideDirName()}/)`,
 );

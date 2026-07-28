@@ -68,6 +68,23 @@ against — and vendored at build time, so the demo does not go down when
 somebody else's CDN does, and the wheel set cannot drift from the interpreter
 it was compiled for.
 
+### The version is in the path
+
+```
+wasm-manifest.json            names the two below. A few dozen bytes, revalidated.
+chendb-engine-1.5.0.json      immutable, one year
+pyodide-314.0.3/              immutable, one year
+```
+
+Twelve megabytes has to be cached hard for a cold load to be bearable, and
+`immutable` is only honest if the name changes when the bytes do. With fixed
+names, a browser holding the previous `pyodide.asm.wasm` would keep running the
+old interpreter after an upgrade, and a stale `chendb-engine.json` would run
+last release's engine against this release's UI — a bug with no plausible
+symptom and no way to reproduce.
+
+One small revalidated request buys correct caching on everything else.
+
 ---
 
 ## Three things that went wrong
@@ -162,10 +179,27 @@ assets live in `wasm-public/` rather than `public/` because Vite copies
 interpreter — a mistake made once here, caught by the dev bundle jumping from
 2.9 MB to 19 MB.
 
-CI builds both, then checks the WASM one has every asset it needs to boot **and
-that `chendb-engine.json` carries the current engine version** — a stale bundle
-is the one failure that would look like the engine misbehaving rather than the
-build being wrong.
+CI builds both, then reads `wasm-manifest.json`, checks every asset it names
+exists and is non-empty, **and that the engine version in it matches the repo**
+— a stale bundle is the one failure that would look like the engine
+misbehaving rather than the build being wrong.
+
+### Where it is deployed
+
+Vercel, from `vercel.json` at the repo root: `npm --prefix visualizer run
+build:wasm`, output `visualizer/dist`, with the cache headers above.
+
+GitHub Pages was the first attempt and is not used, for one reason that
+matters and two that are pleasant. It **cannot set response headers at all**,
+so the immutable caching above is unavailable and every load revalidates twelve
+megabytes. It also serves gzip where Vercel serves brotli, which is worth
+megabytes on a `.wasm`; and it serves a project site from `/<repo>/` where
+Vercel serves a root.
+
+The header thing is also the only route to `SharedArrayBuffer`, which needs
+`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` — and
+`SharedArrayBuffer` is what would give Pyodide real threads, and therefore step
+mode. Not built, but it is the difference between "later" and "never".
 
 ---
 
@@ -178,7 +212,10 @@ build being wrong.
   cost of making every call async message-passing across a boundary.
 - **A cold load is a few seconds.** Nothing is preloaded and nothing is
   streamed; the progress bar names each stage instead of pretending.
-- **No `SharedArrayBuffer`, so no real threads**, which also means a row-lock
+- **No `SharedArrayBuffer` yet, so no real threads.** The COOP/COEP headers it
+  needs are now possible; every cross-origin resource would have to be
+  CORP-tagged, and everything here is same-origin, so this is a real option
+  rather than a wish. It, which also means a row-lock
   wait in the MVCC workspace freezes the tab until it times out — the same
   outcome the HTTP build has for a different reason, documented in
   `docs/milestone-11-dml.md`.
