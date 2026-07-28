@@ -59,6 +59,7 @@ export function StepControls({
   onResume,
   onCancel,
   canStart,
+  available = true,
 }: {
   execution: ExecutionDetail | null;
   isPending: boolean;
@@ -66,7 +67,23 @@ export function StepControls({
   onResume: (mode: ResumeModeName) => void;
   onCancel: () => void;
   canStart: boolean;
+  /** False in the WASM build. See the note rendered below. */
+  available?: boolean;
 }) {
+  if (!available) {
+    // Said out loud rather than silently removed. A reader who knows the
+    // feature exists should find out why it is not here, and a reader who does
+    // not learns something about what a browser cannot do.
+    return (
+      <div className="text-muted border-b border-[var(--border-subtle)] px-3 py-2 text-[11px]">
+        Step-through needs a background thread to pause an execution on, and
+        this build runs the engine inside the browser tab, which has none. Plans
+        and costs below are real; only the stepping is missing.{" "}
+        <span className="whitespace-nowrap">Run the server to step.</span>
+      </div>
+    );
+  }
+
   const live = execution !== null && execution.state === "paused";
   const terminal =
     execution !== null &&

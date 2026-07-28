@@ -1,0 +1,67 @@
+# Publish the WASM build to GitHub Pages.
+#
+# The artifact is the visualizer *and the engine* — CPython compiled to
+# WebAssembly, the engine's own `.py` files, and the wheels for FastAPI and
+# Pydantic. About 23 MB, served as static files, with nothing running on a
+# server anywhere.
+#
+# That is not a stylistic preference. The API has no authentication and no disk
+# quota, so a public instance would need per-visitor workspaces, a reaper and a
+# rate limiter before the link could be shared. In a browser tab each visitor
+# gets a private engine and there is nothing to isolate.
+#
+# Only from master, and only after CI has passed on it: a demo that is broken
+# in public is worse than a demo that is a commit behind.
+
+name: Pages
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a queued run supersedes the one waiting, but never
+# cancels one mid-upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # `workflow_run` fires whatever the outcome, so the result has to be checked.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: visualizer/package-lock.json
+
+      - run: npm ci
+        working-directory: visualizer
+
+      # A relative base, so the same artifact works at a project-site subpath
+      # (`/ChenDB/`) and at a user-site root without being rebuilt.
+      - run: npm run build:wasm
+        working-directory: visualizer
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: visualizer/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

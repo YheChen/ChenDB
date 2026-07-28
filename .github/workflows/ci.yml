@@ -72,10 +72,12 @@ jobs:
       - run: pip install -e '.[server,dev]'
 
       - name: ruff check
-        run: ruff check engine tests benchmarks examples scripts
+        # visualizer/src/lib holds wasmBootstrap.py — the browser's Python is
+        # held to the same standard as the engine's.
+        run: ruff check engine tests benchmarks examples scripts visualizer/src/lib
 
       - name: ruff format --check
-        run: ruff format --check engine tests benchmarks examples scripts
+        run: ruff format --check engine tests benchmarks examples scripts visualizer/src/lib
 
       - name: pytest
         # CHENDB_REQUIRE_NODE turns the demo-SQL guard's "node is missing, skip"
@@ -118,3 +120,26 @@ jobs:
       # but does not bundle is still broken.
       - name: vite build
         run: npm run build
+
+      # And the WASM build separately, because it has its own failure modes:
+      # a missing engine bundle, a Pyodide layout change, a wheel that no
+      # longer resolves out of the lock file. None of those show up above.
+      - name: vite build (WASM)
+        run: npm run build:wasm
+
+      - name: The WASM build has everything it needs to boot
+        run: |
+          for asset in \
+            dist/chendb-engine.json \
+            dist/pyodide/pyodide.mjs \
+            dist/pyodide/pyodide.asm.wasm \
+            dist/pyodide/python_stdlib.zip \
+            dist/pyodide/pyodide-lock.json
+          do
+            test -s "$asset" || { echo "::error::$asset is missing or empty"; exit 1; }
+          done
+          # The engine bundle must be the *current* engine, not a stale copy.
+          version=$(grep -oE '__version__ = "[^"]+"' ../engine/__init__.py | cut -d'"' -f2)
+          grep -q "\"version\":\"$version\"" dist/chendb-engine.json \
+            || { echo "::error::chendb-engine.json is not engine $version"; exit 1; }
+          echo "WASM bundle carries engine $version, $(du -sh dist | cut -f1) total"

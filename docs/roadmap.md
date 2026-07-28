@@ -20,6 +20,7 @@ the UI until the engine behind it exists.
 | 12 | — (CI over everything above) | One catalogue of demo SQL, checked against the engine | **done** |
 | 13 | Joins, `GROUP BY`, aggregates, `ORDER BY`, `LIMIT` | Join trees, grouped planner decisions | **done** |
 | 14 | — (a transport seam, so the app can carry the engine) | Same UI, no server required | **done** |
+| 15 | — (the engine, compiled to WebAssembly) | The whole explorer in a browser tab, no backend | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -32,7 +33,7 @@ integration, which is a guarantee about the other eleven — see
 entries.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-14-transport.md`.
+the newest is `docs/milestone-15-wasm.md`.
 
 ## What each milestone adds to the file format
 

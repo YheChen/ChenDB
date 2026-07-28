@@ -10,12 +10,16 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bundle:engine": "node scripts/bundle-engine.mjs",
+    "build:wasm": "npm run bundle:engine && VITE_CHENDB_WASM=1 tsc -b && VITE_CHENDB_WASM=1 vite build --base ./",
+    "preview:wasm": "npm run build:wasm && vite preview --port 4173"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.62.0",
     "monaco-editor": "^0.52.2",
+    "pyodide": "^314.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
