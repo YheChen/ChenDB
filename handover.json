@@ -57,7 +57,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-13 are merged; master is 1.3.0 and CI is green on it. Nothing is in progress and no branch is open. The remaining backlog is two items, neither started.",
+    "next": "Milestones 1-13 are merged; master is 1.3.0 and CI is green. Milestone 14 (the transport seam) is IN PROGRESS on branch milestone-14-transport. The plan is WASM/Pyodide for the public demo and a Tailscale-reachable T14 for dev \u2014 see wasm_spike below, which is the load-bearing evidence for that split.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -266,7 +266,9 @@
     "Aggregate names (COUNT, SUM, AVG, MIN, MAX) are deliberately NOT reserved words. They are parsed as an identifier followed by '(' so `count` stays usable as a column name, which is what PostgreSQL and SQLite do.",
     "After a HashAggregate the row is [group keys..., aggregates...] and the binder rewrites every projection to index into THAT, reusing BoundColumnRef. The expression evaluator needed no change; do not invent a new node type for it.",
     "engine/executor/operators.py must not import from engine/planner/*. RowLayout lives in engine/executor/binder.py beside Scope for that reason.",
-    "Implementing a SQL feature makes any demo or example that claims it is unsupported go stale. `make ci` catches it \u2014 it happened twice in Milestone 13 for ORDER BY."
+    "Implementing a SQL feature makes any demo or example that claims it is unsupported go stale. `make ci` catches it \u2014 it happened twice in Milestone 13 for ORDER BY.",
+    "The API has NO authentication and no disk quota. max_open_databases / max_rows_per_query / max_page_bytes_returned cap responses, not writes. Never expose the server on a public URL without building per-visitor workspaces, a reaper and a quota first. A tailnet or localhost is fine.",
+    "FastAPI runs `def` route handlers in a worker thread. That is invisible on a real server and fatal under WASM. If you ever wonder why the browser build has a threadpool shim, this is why."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -281,19 +283,56 @@
   "known_issues": [],
   "backlog": [
     {
-      "item": "Differential testing against SQLite",
-      "status": "not started",
-      "why": "Random schemas and queries against both engines, compared. Finds the semantic corners nobody writes a test for: NULL ordering, integer division, comparison across types, and now join and aggregate semantics \u2014 which is a much bigger surface than it was before Milestone 13."
+      "item": "Transport seam (milestone 14)",
+      "status": "IN PROGRESS",
+      "why": "visualizer/src/lib/api.ts funnels all 37 call sites through ONE request() using fetch, plus one WebSocket helper. Splitting that into a Transport interface is the whole change needed before a WASM build is possible, and it alters no behaviour."
     },
     {
-      "item": "A hosted demo",
+      "item": "WASM build and Pages deploy (milestone 15)",
       "status": "not started",
-      "why": "The visualizer is the whole pitch and it currently needs a clone and two terminals."
+      "why": "The public demo. Needs the Pyodide transport, the threadpool shim, feature flags for step mode, an honest label on the crash button, and a CI job so the bundle cannot rot."
+    },
+    {
+      "item": "T14 as the dev server",
+      "status": "waiting on hardware",
+      "why": "Tailscale up, bind the server to the tailnet address, set CHENDB_CORS_ORIGINS, add a systemd unit. A tailnet IS the auth \u2014 note the API has NO authentication, so it must never be exposed publicly as-is.",
+      "note": "Real fsync, the recovery suite forking real processes, and long benchmarks all want real hardware."
+    },
+    {
+      "item": "Differential testing against SQLite",
+      "status": "not started",
+      "why": "Random schemas and queries against both engines, compared. Finds the semantic corners nobody writes a test for."
     },
     {
       "item": "Outer joins",
       "status": "not started",
-      "why": "The most-requested thing the parser now refuses by name. An outer join fixes which side may be the outer relation, so the join-order search can no longer reorder freely, and the executor has to NULL-extend. See docs/milestone-13-joins.md."
+      "why": "The parser refuses LEFT/RIGHT/FULL by name. An outer join constrains the order the planner may join in and needs NULL extension, so it is a milestone rather than a flag."
     }
-  ]
+  ],
+  "wasm_spike": {
+    "verdict": "PASSES. The unmodified engine runs under Pyodide and answers in-process ASGI calls.",
+    "ran": "scripts-free spike under Node with pyodide 314.0.3; engine/*.py copied into MEMFS, no host filesystem mount.",
+    "versions": {
+      "python": "3.14.2 (wasm32)",
+      "pydantic": "2.12.5 with pydantic_core 2.41.5 \u2014 the Rust core has a wasm32 wheel and really validates",
+      "fastapi": "0.136.1",
+      "starlette": "1.0.0"
+    },
+    "proved": [
+      "GET /health -> 200, milestone 13, 15 features",
+      "CREATE TABLE / INSERT write real pages; page 4 reports HEAP, owner users, checksum_valid true, LSN 82668",
+      "A join + GROUP BY + HAVING + ORDER BY returns the CORRECT rows",
+      "EXPLAIN shows PhysicalHashJoin \u2014 the Milestone 13 planner works in WASM",
+      "The crash button works: abandon, reopen, recovery replays 24 records over 4 finished transactions, and the committed row survives",
+      "os.fsync does not raise on MEMFS (but has nothing to sync to, so it is not durability)"
+    ],
+    "the_one_blocker": "RuntimeError: can't start new thread. FastAPI offloads SYNCHRONOUS route handlers to a worker thread via anyio.to_thread.run_sync, and WASM has no threads. Every ChenDB router is `def`, not `async def`. Fixed with a ~6-line BROWSER-ONLY shim that patches anyio.to_thread.run_sync and starlette.concurrency.run_in_threadpool to run inline. ZERO engine changes. Do NOT 'fix' this by making the routers async def: that would serialise the real server across databases too.",
+    "architecture_decision": "Because the ASGI app runs in-process, the browser build reuses the SAME routers, mappers, Pydantic models and error envelope. No engine/server/browser.py, no duplicated endpoint layer, no drift guard needed, and api.ts stays generated from the one OpenAPI schema.",
+    "still_unknown": [
+      "Step mode is dead in-tab and this is confirmed, not guessed: StepController blocks a thread. It ships disabled behind the existing /health features flag.",
+      "The WebSocket event stream is untested under WASM. It should become a direct FanoutSink subscription, which is simpler, but that is unproven.",
+      "The spike ran under Node, not a browser. Threads and MEMFS behave the same; load time and memory are unmeasured."
+    ],
+    "first_load_cost": "~15 MB: 9.2 MB pyodide.asm.wasm + 2.4 MB python_stdlib.zip + 2.4 MB wheels + 1 MB engine source. Maybe 6-8 MB compressed, cached after."
+  }
 }

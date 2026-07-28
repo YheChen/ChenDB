@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -83,15 +83,29 @@ MILESTONE_FEATURES: tuple[str, ...] = (
 Prose for banners, not a capability check — the API's ``/health`` has structured
 flags for that.
 
-It ran one entry per milestone for eleven milestones and then stopped, because
-Milestone 12 added continuous integration: a guarantee about the other eleven
-rather than a twelfth thing the engine can do. Listing it here would put "CI" in
-a banner that reads "storage + SQL + execution + …", which is a category error.
-So the invariant is ``len() <= MILESTONE`` and the gap is deliberate."""
+It ran one entry per milestone for eleven milestones and then stopped. Some
+milestones do not add a capability: Milestone 12 shipped continuous integration
+and Milestone 14 a transport seam, and both are statements *about* the engine
+rather than things it can do. "storage + SQL + execution + … + CI" is not a
+sentence a banner should print.
+
+Rather than loosen the check each time — it was ``==``, then ``>= MILESTONE - 1``,
+and would have become ``- 2`` here — the exceptions are named in
+:data:`MILESTONES_WITHOUT_ENGINE_FEATURES`. Naming them keeps the assertion
+exact and makes skipping one a decision somebody had to write down."""
+
+MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14})
+"""Milestones that shipped no new engine capability, and why.
+
+* **12** — continuous integration, and a guard that runs every demo button.
+* **14** — the transport seam, so the visualizer can carry the engine with it
+  as WebAssembly instead of talking to a server.
+"""
 
 __all__ = [
     "DEFAULT_PAGE_SIZE",
     "MILESTONE",
+    "MILESTONES_WITHOUT_ENGINE_FEATURES",
     "MILESTONE_FEATURES",
     "BPlusTree",
     "Catalog",
