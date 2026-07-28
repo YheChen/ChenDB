@@ -57,7 +57,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-12 are merged; master is 1.2.0 and CI is green on it. Milestone 13 (joins and aggregation) is IN PROGRESS on branch milestone-13-joins \u2014 see backlog[0].",
+    "next": "Milestones 1-13 are merged; master is 1.3.0 and CI is green on it. Nothing is in progress and no branch is open. The remaining backlog is two items, neither started.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -138,6 +138,14 @@
       "state": "COMPLETE and MERGED to master (PR #13)",
       "shipped": ".github/workflows/ci.yml with three jobs split by dependency (bare-interpreter engine + every example; python with ruff/ruff format/pytest/api.ts freshness; frontend with tsc/vitest/vite build). visualizer/src/lib/demoSql.ts is now the single catalogue of every demo statement, consumed by all six workspaces. tests/integration/test_demo_sql.py runs each one against a real engine by asking node to evaluate the catalogue. make ci, make examples, make demo-sql.",
       "verified": "Both historical demo bugs were reintroduced and the guard caught both by name. CI's own first run failed on a real staleness (openapi.json left at 1.1.0)."
+    },
+    "milestone_13": {
+      "state": "COMPLETE and MERGED to master (PR #14)",
+      "shipped": "Inner joins (JOIN ... ON and comma form) with aliases and self-joins; GROUP BY, HAVING, COUNT/SUM/AVG/MIN/MAX; ORDER BY with NULL ordering; LIMIT/OFFSET. NestedLoopJoin, HashJoin, HashAggregate, Sort, Limit operators. System R join-order DP over left-deep plans (cap 8, greedy above and it says so), predicate pushdown, five measured cost constants, and EXPLAIN alternatives grouped by which decision they answered.",
+      "also_fixed": [
+        "The cost model looked column statistics up by column_index, which since this milestone addresses the JOINED row. A three-column table asked for column 5 returned nothing, selectivity fell back to a default, and a nested loop looked nearly free. _column_stats uses table_position now."
+      ],
+      "caught_by_ci": "Milestone 12's guards flagged two claims that went stale the moment ORDER BY worked: the SQL editor's 'Not implemented yet' example and an assertion in examples/milestone2_parser.py. Both use LEFT JOIN now."
     }
   },
   "architecture_invariants": {
@@ -252,7 +260,13 @@
     "Demo SQL goes in visualizer/src/lib/demoSql.ts, never inline in a component, and is built from the open table via demoRows.ts. tests/integration/test_demo_sql.py runs every entry against a real engine.",
     "scripts/emit_demo_sql.ts runs under plain Node type stripping: value imports in demoSql.ts need an explicit .ts extension (allowImportingTsExtensions is on), type-only imports are erased and may use the @/ alias.",
     "MILESTONE_FEATURES may lag MILESTONE by one. Milestone 12 added CI, which is not something the engine can do, so it has 11 entries at MILESTONE 12.",
-    "Two browser consoles cannot demonstrate a write-write conflict: ManagedDatabase holds one RLock per request, so locate-and-mutate is atomic across consoles and a row-lock wait would deadlock against the engine lock. Asserted in tests/unit/test_mvcc.py instead."
+    "Two browser consoles cannot demonstrate a write-write conflict: ManagedDatabase holds one RLock per request, so locate-and-mutate is atomic across consoles and a row-lock wait would deadlock against the engine lock. Asserted in tests/unit/test_mvcc.py instead.",
+    "A bound column index addresses the JOINED row, whose layout is the order the tables were WRITTEN in and never changes however the planner reorders. Anything that needs a column's position within its own table uses BoundColumnRef.table_position \u2014 statistics lookups especially. Getting that wrong collapses selectivity estimates silently.",
+    "Below the topmost join every row is the full width of the FROM. A join merges by copying the right side's slices into the left's row \u2014 never by 'take whichever side is not None', because a genuine SQL NULL is indistinguishable from an empty slot.",
+    "Aggregate names (COUNT, SUM, AVG, MIN, MAX) are deliberately NOT reserved words. They are parsed as an identifier followed by '(' so `count` stays usable as a column name, which is what PostgreSQL and SQLite do.",
+    "After a HashAggregate the row is [group keys..., aggregates...] and the binder rewrites every projection to index into THAT, reusing BoundColumnRef. The expression evaluator needed no change; do not invent a new node type for it.",
+    "engine/executor/operators.py must not import from engine/planner/*. RowLayout lives in engine/executor/binder.py beside Scope for that reason.",
+    "Implementing a SQL feature makes any demo or example that claims it is unsupported go stale. `make ci` catches it \u2014 it happened twice in Milestone 13 for ORDER BY."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -267,27 +281,19 @@
   "known_issues": [],
   "backlog": [
     {
-      "item": "Joins and aggregation",
-      "status": "IN PROGRESS (milestone 13)",
-      "why": "The biggest remaining functional gap, and what justifies the planner: join ordering is the classic optimizer problem and the Milestone 6 cost model has never had to make an interesting decision.",
-      "touches": [
-        "engine/parser/{ast,parser}.py",
-        "engine/executor/binder.py",
-        "engine/planner/{logical,physical}.py",
-        "engine/optimizer/cost.py",
-        "engine/executor/operators.py",
-        "engine/executor/engine.py"
-      ]
-    },
-    {
       "item": "Differential testing against SQLite",
       "status": "not started",
-      "why": "Random schemas and queries against both engines, compared. Finds the semantic corners nobody writes a test for: NULL ordering, integer division, comparison across types."
+      "why": "Random schemas and queries against both engines, compared. Finds the semantic corners nobody writes a test for: NULL ordering, integer division, comparison across types, and now join and aggregate semantics \u2014 which is a much bigger surface than it was before Milestone 13."
     },
     {
       "item": "A hosted demo",
       "status": "not started",
       "why": "The visualizer is the whole pitch and it currently needs a clone and two terminals."
+    },
+    {
+      "item": "Outer joins",
+      "status": "not started",
+      "why": "The most-requested thing the parser now refuses by name. An outer join fixes which side may be the outer relation, so the join-order search can no longer reorder freely, and the executor has to NULL-extend. See docs/milestone-13-joins.md."
     }
   ]
 }
