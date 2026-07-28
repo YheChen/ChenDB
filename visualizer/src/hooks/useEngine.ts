@@ -92,6 +92,21 @@ function invalidateDatabase(
 
 // -- reads -----------------------------------------------------------------
 
+/**
+ * Whether the running build has a feature, defaulting to *present*.
+ *
+ * The default matters. `/health` takes a moment to arrive, and treating an
+ * unanswered question as "absent" would make every panel flicker off and back
+ * on at load. A feature is only hidden once the engine has actually said it is
+ * missing — which is what the WASM build does for step mode, because there is
+ * no thread there for a paused execution to sit on.
+ */
+export function useFeature(name: string): boolean {
+  const health = useHealth();
+  const features = health.data?.features as Record<string, boolean> | undefined;
+  return features?.[name] ?? true;
+}
+
 export function useHealth(): UseQueryResult<HealthResponse> {
   return useQuery({
     queryKey: queryKeys.health,

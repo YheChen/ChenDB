@@ -62,6 +62,11 @@ FEATURES: dict[str, bool] = {
     "mvcc": True,  # Milestone 10 — row versions, snapshots, locks
     "dml": True,  # Milestone 11 — UPDATE ... SET, DELETE ... WHERE
     "joins": True,  # Milestone 13 — joins, GROUP BY, ORDER BY, LIMIT
+    # Not milestones — build capabilities. Both are true here and false in the
+    # WASM build, which sets them in `visualizer/src/lib/wasmBootstrap.py`.
+    # The UI hides what is absent rather than letting a button fail.
+    "execution_stepping": True,  # needs a thread to pause an execution on
+    "durable_fsync": True,  # needs a filesystem fsync can actually reach
 }
 
 _DESCRIPTION = """

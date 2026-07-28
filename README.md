@@ -16,7 +16,7 @@ back from the actual file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M14    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M15    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -42,7 +42,7 @@ back from the actual file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Fourteen milestones are complete.** Nothing is stubbed ahead of time: a
+**Fifteen milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -54,6 +54,16 @@ feature absent from the engine is absent from the API and hidden in the UI. See
 git clone https://github.com/YheChen/ChenDB.git && cd ChenDB
 ```
 
+### In a browser — no clone, no install
+
+The visualizer ships with the engine inside it: CPython compiled to
+WebAssembly, the same `.py` files, no server anywhere. Every visitor gets a
+private database in their own tab.
+
+```bash
+npm --prefix visualizer run preview:wasm
+```
+
 ### The engine alone — no dependencies
 
 ```bash
@@ -61,7 +71,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.4.0 — Milestone 14 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation)
+ChenDB 1.5.0 — Milestone 15 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -340,6 +350,7 @@ change the system observed.
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
 | [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
 | [Milestone 12](docs/milestone-12-ci.md) | CI, and running every demo button against the real engine |
+| [Milestone 15](docs/milestone-15-wasm.md) | shipping a database engine as a static file, and the three things that broke |
 | [Milestone 14](docs/milestone-14-transport.md) | running the whole engine in a browser tab, and the seam that allows it |
 | [Milestone 13](docs/milestone-13-joins.md) | joins, aggregation, and the first decision the cost model could get wrong |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |

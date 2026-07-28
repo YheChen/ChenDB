@@ -25,6 +25,7 @@ import { Button, ErrorNotice, Panel, Spinner } from "@/components/primitives";
 import {
   useCheckpoint,
   useCrash,
+  useFeature,
   useRecovery,
   useRunQuery,
   useTable,
@@ -60,6 +61,7 @@ export function WalWorkspace({
 
   const inTransaction = transactions.data?.in_explicit_transaction ?? false;
   const busy = checkpoint.isPending || crash.isPending || run.isPending;
+  const durable = useFeature("durable_fsync");
 
   return (
     <div className="flex min-h-0 w-full flex-col gap-2 overflow-y-auto">
@@ -122,6 +124,21 @@ export function WalWorkspace({
           <ErrorNotice error={wal.error} onRetry={() => void wal.refetch()} />
         ) : (
           <>
+            {durable ? null : (
+              // The crash really does replay the log — it is the loss of the
+              // buffer pool that recovery undoes, and that is genuine here.
+              // What an in-memory filesystem cannot demonstrate is a power
+              // cut, because there is nothing for fsync to reach. Saying so is
+              // the difference between a demonstration and a claim.
+              <p className="text-muted border-b border-[var(--border-subtle)] px-3 py-2 text-[11px]">
+                This build keeps its pages in memory, so <code>fsync</code> has
+                nowhere to write. The crash below is real — the buffer pool is
+                lost and recovery replays the log to get the rows back — but it
+                proves survival of a <em>process</em> death, not a power cut.
+                The <code>SIGKILL</code> tests in <code>tests/recovery/</code>{" "}
+                prove the other one.
+              </p>
+            )}
             <WalCounters wal={wal.data} />
             {armed ? (
               <p className="border-t border-[var(--border-subtle)] px-3 py-2 text-[11px]">

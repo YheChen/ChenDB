@@ -18,7 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { SplitPane } from "@/components/SplitPane";
 import { Panel } from "@/components/primitives";
-import { useRunQuery } from "@/hooks/useEngine";
+import { useFeature, useRunQuery } from "@/hooks/useEngine";
 import { api, type ResumeModeName } from "@/lib/api";
 import { EXECUTION_INITIAL_SQL } from "@/lib/demoSql";
 import { SqlEditor } from "@/features/sql/SqlEditor";
@@ -49,6 +49,7 @@ export function ExecutionWorkspace({
   const [execution, setExecution] = useState<ExecutionDetail | null>(null);
 
   const run = useRunQuery(databaseId);
+  const stepAvailable = useFeature("execution_stepping");
 
   const start = useMutation({
     mutationFn: (statement: string) => api.startSteppedQuery(databaseId, statement),
@@ -147,6 +148,7 @@ export function ExecutionWorkspace({
                   bodyClassName="flex flex-col"
                 >
                   <StepControls
+                    available={stepAvailable}
                     execution={execution}
                     isPending={stepping}
                     canStart={Boolean(lastStatement())}
