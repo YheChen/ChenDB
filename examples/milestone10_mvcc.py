@@ -274,7 +274,8 @@ def main() -> int:
             print("  Where it stops:")
             print("    - not serializable. Write skew is possible; ruling it out")
             print("      needs predicate locking or PostgreSQL's SSI.")
-            print("    - no UPDATE, so a version chain is one deep.")
+            print("    - no UPDATE, so a version chain is one deep. Milestone 11")
+            print("      adds it; see examples/milestone11_dml.py.")
             print("    - statements do not run at the same INSTANT. Several")
             print("      transactions are open at once and genuinely conflict;")
             print("      the engine still runs one statement at a time.")
@@ -284,7 +285,6 @@ def main() -> int:
 
     print(f"\n{'-' * 78}")
     print("docs/milestone-10-mvcc.md has the full reasoning.")
-    print("That is all ten milestones.")
     return 0
 
 

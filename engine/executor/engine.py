@@ -53,12 +53,17 @@ from engine.errors import (
     TransactionError,
 )
 from engine.executor.binder import (
+    BoundDelete,
     BoundInsert,
     BoundSelect,
+    BoundUpdate,
     ResultColumn,
     bind_create_table,
+    bind_delete,
     bind_insert,
     bind_select,
+    bind_update,
+    identity_projection,
 )
 from engine.executor.controller import NULL_CONTROLLER, StepController
 from engine.executor.expression import evaluate
@@ -77,11 +82,14 @@ from engine.parser.ast import (
     CommitStatement,
     CreateIndexStatement,
     CreateTableStatement,
+    DeleteStatement,
     ExplainStatement,
+    Expression,
     InsertStatement,
     RollbackStatement,
     SelectStatement,
     Statement,
+    UpdateStatement,
 )
 from engine.parser.parser import parse
 from engine.planner.logical import (
@@ -105,6 +113,7 @@ from engine.planner.physical import (
     walk_physical,
 )
 from engine.serialization.record import Row
+from engine.serialization.schema import Schema
 from engine.storage.heap import RecordId
 from engine.transaction.manager import TransactionState
 
@@ -115,11 +124,13 @@ __all__ = [
     "ExecutionStats",
     "QueryResult",
     "build_logical_plan",
+    "build_row_source",
     "build_select_plan",
     "execute_script",
     "execute_statement",
     "materialise",
     "plan_query",
+    "plan_row_source",
 ]
 
 #: Ceiling on rows a single query returns, so an API caller cannot ask for an
@@ -190,10 +201,34 @@ def build_logical_plan(bound: BoundSelect) -> LogicalNode:
     inspected. Milestone 3 dropped an identity projection here; that is now
     :mod:`engine.optimizer.rules`.
     """
-    plan: LogicalNode = LogicalScan("scan", bound.table_name, bound.input_schema)
-    if bound.where is not None:
-        plan = LogicalFilter("filter", bound.where, plan)
-    return LogicalProject("project", bound.projections, bound.output_columns, plan)
+    return build_row_source(
+        bound.table_name,
+        bound.input_schema,
+        bound.where,
+        bound.projections,
+        bound.output_columns,
+    )
+
+
+def build_row_source(
+    table_name: str,
+    schema: Schema,
+    where: Expression | None,
+    projections: tuple[Expression, ...],
+    output_columns: tuple[ResultColumn, ...],
+) -> LogicalNode:
+    """Scan, optionally filter, project. The shape every statement starts from.
+
+    ``UPDATE`` and ``DELETE`` reach this too, because "which rows" is the same
+    question whatever you then do with them — and it is the only question in
+    either statement that has more than one answer. ``DELETE FROM t WHERE id =
+    5`` on an indexed ``id`` should descend the tree; without this the planner
+    would never see it, and a single-row delete would read the whole table.
+    """
+    plan: LogicalNode = LogicalScan("scan", table_name, schema)
+    if where is not None:
+        plan = LogicalFilter("filter", where, plan)
+    return LogicalProject("project", projections, output_columns, plan)
 
 
 def plan_query(
@@ -211,6 +246,24 @@ def plan_query(
     """
     tracer = tracer if tracer is not None else NULL_TRACER
     logical = build_logical_plan(bound)
+    planned = plan_select(logical, database, options)
+    _emit_plan(planned, tracer)
+    return planned
+
+
+def plan_row_source(
+    bound: BoundUpdate | BoundDelete,
+    database: Database,
+    *,
+    tracer: Tracer | None = None,
+    options: PlannerOptions = DEFAULT_PLANNER_OPTIONS,
+) -> PlannedQuery:
+    """:func:`plan_query` for the row-locating half of an ``UPDATE``/``DELETE``."""
+    tracer = tracer if tracer is not None else NULL_TRACER
+    projections, outputs = identity_projection(bound.schema, bound.statement)
+    logical = build_row_source(
+        bound.table_name, bound.schema, bound.where, projections, outputs
+    )
     planned = plan_select(logical, database, options)
     _emit_plan(planned, tracer)
     return planned
@@ -377,6 +430,10 @@ def execute_statement(
                 result = _execute_explain(statement, database, context, max_rows)
             case InsertStatement():
                 result = _execute_insert(statement, database, context)
+            case UpdateStatement():
+                result = _execute_update(statement, database, context)
+            case DeleteStatement():
+                result = _execute_delete(statement, database, context)
             case SelectStatement():
                 result = _execute_select(statement, database, context)
             case _:
@@ -597,33 +654,74 @@ def _execute_explain(
     context: ExecutionContext,
     max_rows: int,
 ) -> QueryResult:
-    """Plan the inner statement, optionally run it, and return the plan as rows."""
-    inner = statement.statement
-    if not isinstance(inner, SelectStatement):
-        raise BindingError(
-            f"EXPLAIN can only explain a SELECT, not {inner.node_type}; "
-            f"nothing else has an operator tree",
-            start=inner.span.start,
-            end=inner.span.end,
-            line=inner.span.line,
-            column=inner.span.column,
-        )
+    """Plan the inner statement, optionally run it, and return the plan as rows.
 
-    bound = bind_select(inner, database.catalog)
-    planned = plan_query(
-        bound,
-        database,
-        tracer=context.tracer,
-        options=context.planner_options or DEFAULT_PLANNER_OPTIONS,
-    )
+    ``UPDATE`` and ``DELETE`` are explainable because the interesting half of
+    each — finding the rows — *is* a plan, and it is the half where a missing
+    index shows up. What comes after it is not planned and gets one honest line
+    saying so, rather than a fabricated node with an invented cost.
+    """
+    inner = statement.statement
+    options = context.planner_options or DEFAULT_PLANNER_OPTIONS
+    epilogue: str | None = None
+
+    match inner:
+        case SelectStatement():
+            planned = plan_query(
+                bind_select(inner, database.catalog),
+                database,
+                tracer=context.tracer,
+                options=options,
+            )
+        case UpdateStatement():
+            planned = plan_row_source(
+                bind_update(inner, database.catalog),
+                database,
+                tracer=context.tracer,
+                options=options,
+            )
+            epilogue = (
+                "then, per row: tombstone it, insert a new version, rewrite every index"
+            )
+        case DeleteStatement():
+            planned = plan_row_source(
+                bind_delete(inner, database.catalog),
+                database,
+                tracer=context.tracer,
+                options=options,
+            )
+            epilogue = "then, per row: set xmax, remove it from every index"
+        case _:
+            raise BindingError(
+                f"EXPLAIN can only explain a SELECT, UPDATE or DELETE, not "
+                f"{inner.node_type}; nothing else locates rows",
+                start=inner.span.start,
+                end=inner.span.end,
+                line=inner.span.line,
+                column=inner.span.column,
+            )
 
     actual: QueryResult | None = None
     if statement.analyze:
         # EXPLAIN ANALYZE runs the query. The row counts it reports are the real
-        # ones, which is the only way to see where an estimate went wrong.
-        actual = _execute_select(inner, database, context, planned=planned)
+        # ones, which is the only way to see where an estimate went wrong. For a
+        # DELETE or UPDATE that means the rows really are changed — PostgreSQL
+        # behaves the same way, and the usual advice applies: wrap it in a
+        # transaction you intend to roll back.
+        match inner:
+            case SelectStatement():
+                actual = _execute_select(inner, database, context, planned=planned)
+            case UpdateStatement():
+                actual = _execute_update(inner, database, context, planned=planned)
+            case DeleteStatement():
+                actual = _execute_delete(inner, database, context, planned=planned)
 
-    lines = _explain_lines(planned, actual)
+    prologue = (
+        None
+        if epilogue is None
+        else f"{inner.node_type.removesuffix('Statement')} on {inner.table.name}"
+    )
+    lines = _explain_lines(planned, actual, prologue=prologue, epilogue=epilogue)
     return QueryResult(
         statement_kind=statement.node_type,
         columns=_EXPLAIN_COLUMNS,
@@ -634,8 +732,19 @@ def _execute_explain(
     )
 
 
-def _explain_lines(planned: PlannedQuery, actual: QueryResult | None) -> list[str]:
-    """The plan as text, in the order PostgreSQL prints it."""
+def _explain_lines(
+    planned: PlannedQuery,
+    actual: QueryResult | None,
+    *,
+    prologue: str | None = None,
+    epilogue: str | None = None,
+) -> list[str]:
+    """The plan as text, in the order PostgreSQL prints it.
+
+    ``prologue`` and ``epilogue`` bracket the tree for a statement whose plan is
+    only part of the work — the ``Delete on users`` header and the line saying
+    what happens to each row it finds.
+    """
     lines = describe_physical(planned.root).split("\n")
     if actual is not None and actual.plan is not None:
         measured = {op.operator_id: op for op in _walk(actual.plan)}
@@ -643,6 +752,10 @@ def _explain_lines(planned: PlannedQuery, actual: QueryResult | None) -> list[st
             _annotate(line, node, measured.get(node.node_id))
             for line, node in zip(lines, walk_physical(planned.root), strict=False)
         ]
+    if prologue is not None:
+        lines = [prologue, *(f"  {line}" for line in lines)]
+    if epilogue is not None:
+        lines.append(f"  {epilogue}")
 
     lines.append("")
     lines.append(
@@ -708,6 +821,172 @@ def _execute_insert(
         stats=stats,
         message=f"inserted {len(record_ids)} row(s) into {bound.table_name}",
     )
+
+
+@dataclass(slots=True)
+class _Located:
+    """The rows a DELETE or UPDATE is about to change, and how they were found."""
+
+    record_ids: tuple[RecordId, ...]
+    rows: tuple[Row, ...]
+    planned: PlannedQuery
+    plan: Operator
+    stats: ExecutionStats
+
+
+def _locate_rows(
+    bound: BoundUpdate | BoundDelete,
+    database: Database,
+    context: ExecutionContext,
+    *,
+    planned: PlannedQuery | None = None,
+) -> _Located:
+    """Run the row-locating plan to completion, *before* changing anything.
+
+    Draining the scan first is not laziness deferred — it is required, and the
+    reason has a name. Halloween::
+
+        UPDATE salaries SET pay = pay * 1.1 WHERE pay < 50000
+
+    If the scan is still open while the update runs, and the update writes a new
+    version of each row, the scan reaches the new version too. It still matches
+    (``pay`` is only 10% higher), so it is raised again, and again, until it
+    escapes the predicate. The bug was found at IBM on Hallowe'en 1976 and the
+    name stuck.
+
+    ChenDB is exposed to it for a reason worth naming: an MVCC update *inserts*,
+    and a transaction can always see its own writes, so the new version is
+    genuinely reachable by the scan that produced the old one. Materialising the
+    row set closes the loop. PostgreSQL relies on the fact that its scan will not
+    return a tuple its own command already made; SQL Server inserts an explicit
+    ``Eager Spool`` into the plan, which is this function with an operator around
+    it.
+
+    The cost is memory proportional to the rows matched — the ceiling on which
+    is ``context.max_rows``, so a statement cannot buffer the whole table.
+    """
+    if planned is None:
+        planned = plan_row_source(
+            bound,
+            database,
+            tracer=context.tracer,
+            options=context.planner_options or DEFAULT_PLANNER_OPTIONS,
+        )
+    plan = materialise(planned.root, database, context)
+
+    record_ids: list[RecordId] = []
+    rows: list[Row] = []
+    stats = ExecutionStats()
+    scan = _find_scan(plan)
+    limit = context.max_rows if context.max_rows is not None else DEFAULT_MAX_ROWS
+
+    try:
+        context.controller.arm()
+        plan.open()
+        while (row := plan.next()) is not None:
+            if scan is None or scan.last_record_id is None:  # pragma: no cover
+                raise ExecutionError("row source produced a row with no address")
+            record_ids.append(scan.last_record_id)
+            rows.append(row)
+            if len(record_ids) >= limit:
+                # Silently changing the first 10,000 matches and reporting
+                # success would be the worst possible outcome, so this raises.
+                raise ExecutionError(
+                    f"more than {limit} rows match; ChenDB will not change part "
+                    f"of a statement's rows and call it done"
+                )
+    finally:
+        plan.close()
+
+    stats.rows_scanned = scan.stats.input_rows if scan else 0
+    stats.rows_rejected = sum(
+        operator.rows_rejected for operator in _walk(plan) if isinstance(operator, Filter)
+    )
+    return _Located(tuple(record_ids), tuple(rows), planned, plan, stats)
+
+
+def _execute_delete(
+    statement: DeleteStatement,
+    database: Database,
+    context: ExecutionContext,
+    *,
+    planned: PlannedQuery | None = None,
+) -> QueryResult:
+    bound = bind_delete(statement, database.catalog)
+    located = _locate_rows(bound, database, context, planned=planned)
+    deleted = database.delete_many(bound.table_name, located.record_ids)
+    database.sync()
+
+    stats = located.stats
+    stats.rows_affected = deleted
+    return QueryResult(
+        statement_kind=statement.node_type,
+        record_ids=located.record_ids,
+        stats=stats,
+        plan=located.plan,
+        planned=located.planned,
+        message=_mutation_message(
+            "deleted", deleted, len(located.record_ids), bound.table_name, "from"
+        ),
+    )
+
+
+def _execute_update(
+    statement: UpdateStatement,
+    database: Database,
+    context: ExecutionContext,
+    *,
+    planned: PlannedQuery | None = None,
+) -> QueryResult:
+    bound = bind_update(statement, database.catalog)
+    located = _locate_rows(bound, database, context, planned=planned)
+
+    # Every right-hand side is evaluated against the row as it was, so
+    # `SET a = b, b = a` swaps rather than assigning `a` to both.
+    updates: list[tuple[RecordId, list[Any]]] = []
+    for record_id, row in zip(located.record_ids, located.rows, strict=True):
+        values = list(row)
+        for assignment in bound.assignments:
+            values[assignment.column_index] = evaluate(
+                assignment.value,
+                row,
+                tracer=context.tracer,
+                operator_id="update_1",
+            )
+        updates.append((record_id, values))
+
+    replaced = database.update_many(bound.table_name, updates)
+    database.sync()
+
+    stats = located.stats
+    stats.rows_affected = len(replaced)
+    return QueryResult(
+        statement_kind=statement.node_type,
+        record_ids=tuple(replaced),
+        stats=stats,
+        plan=located.plan,
+        planned=located.planned,
+        message=_mutation_message(
+            "updated", len(replaced), len(located.record_ids), bound.table_name, "in"
+        ),
+    )
+
+
+def _mutation_message(
+    verb: str, changed: int, matched: int, table: str, preposition: str
+) -> str:
+    """Report the change, and any gap between matched and changed.
+
+    The gap is rows another session got to first. Reporting only the number
+    changed would make a lost update look like a clean one.
+    """
+    message = f"{verb} {changed} row(s) {preposition} {table}"
+    if changed != matched:
+        message += (
+            f"; {matched - changed} of the {matched} matched were changed by "
+            f"another session first and were skipped"
+        )
+    return message
 
 
 def _execute_select(
@@ -828,7 +1107,10 @@ def execute_script(
             for statement in statements
         ]
 
-    outer = database.transactions.active
+    # This *session's* transaction, not the default session's — the two
+    # differ the moment a client passes ``?session=``, and asking the wrong one
+    # leaves an implicit transaction open that nothing ever commits.
+    outer = database.active_transaction
     if outer is None:
         database.begin(implicit=True)
     results: list[QueryResult] = []
@@ -847,7 +1129,7 @@ def execute_script(
     except BaseException:
         # Only unwind what this call started. A caller that had its own
         # transaction open keeps it, and decides for itself.
-        if outer is None and database.transactions.active is not None:
+        if outer is None and database.active_transaction is not None:
             database.rollback()
         raise
 
@@ -855,7 +1137,7 @@ def execute_script(
     # the implicit transaction explicit, which means the client has taken
     # ownership and is going to send its own COMMIT — possibly in a later
     # request. Committing it here would make a lone ``BEGIN;`` a no-op.
-    active = database.transactions.active
+    active = database.active_transaction
     if outer is None and active is not None and active.implicit:
         database.commit()
     return results

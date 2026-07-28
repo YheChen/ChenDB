@@ -28,7 +28,16 @@ class TableStorageModel(ApiModel):
     last_page: int
     page_ids: list[int]
     page_count: int
-    row_count: int = Field(description="Live rows. O(pages) to compute — no cached count.")
+    row_count: int = Field(
+        description="Rows a reader can see. O(pages) to compute — no cached count."
+    )
+    version_count: int = Field(
+        description=(
+            "Row versions physically present, including ones only an older "
+            "snapshot could still want. The gap from row_count is what a vacuum "
+            "would reclaim."
+        )
+    )
     bytes_allocated: int = Field(description="page_count * page_size")
     free_space: int = Field(description="Contiguous free bytes across the table's pages")
     reclaimable_space: int = Field(
@@ -40,7 +49,7 @@ class TableSummary(ApiModel):
     table_id: int
     name: str
     column_count: int
-    row_count: int
+    row_count: int = Field(description="Rows a reader can see, not versions on disk")
     page_count: int
     is_system: bool = Field(
         description="True for chendb_* tables, which belong to the engine"

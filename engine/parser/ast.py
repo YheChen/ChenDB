@@ -47,6 +47,7 @@ from engine.serialization.types import DataType
 
 __all__ = [
     "AnalyzeStatement",
+    "Assignment",
     "BeginStatement",
     "BinaryOp",
     "BinaryOperator",
@@ -56,6 +57,7 @@ __all__ = [
     "CommitStatement",
     "CreateIndexStatement",
     "CreateTableStatement",
+    "DeleteStatement",
     "ExplainStatement",
     "Expression",
     "InsertStatement",
@@ -70,6 +72,7 @@ __all__ = [
     "TableRef",
     "UnaryOp",
     "UnaryOperator",
+    "UpdateStatement",
     "ValuesRow",
     "walk",
 ]
@@ -392,6 +395,49 @@ class InsertStatement(Statement):
     """``None`` when the statement omits the column list, meaning "all columns
     in declaration order"."""
     rows: tuple[ValuesRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Assignment(Node):
+    """One ``column = expression`` inside ``UPDATE ... SET``.
+
+    A node rather than a ``(str, Expression)`` pair so the value is reachable
+    through the generic tree walk, and so the UI can highlight ``price = price *
+    2`` as a unit. The left side is a bare name, not a :class:`ColumnRef`: SQL
+    does not let you assign to ``other_table.col`` or to an expression, and
+    modelling the target as something evaluable would invite exactly that.
+    """
+
+    column: str
+    value: Expression
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateStatement(Statement):
+    """``UPDATE table SET col = expr [, ...] [ WHERE expr ]``.
+
+    Note what is *not* here: a ``FROM`` clause. PostgreSQL's ``UPDATE ... FROM``
+    and the standard's ``UPDATE ... WHERE CURRENT OF`` both need a second row
+    source, and there are no joins yet.
+    """
+
+    table: TableRef
+    assignments: tuple[Assignment, ...]
+    where: Expression | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteStatement(Statement):
+    """``DELETE FROM table [ WHERE expr ]``.
+
+    ``where`` of ``None`` means every row, which is the correct reading and also
+    the most expensive mistake in SQL. Nothing here second-guesses it — a
+    confirmation prompt belongs in a client, not a grammar — but the executor's
+    message says how many rows went, so the mistake is at least visible.
+    """
+
+    table: TableRef
+    where: Expression | None = None
 
 
 @dataclass(frozen=True, slots=True)

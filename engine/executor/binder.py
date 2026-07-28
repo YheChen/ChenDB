@@ -35,10 +35,12 @@ from typing import TYPE_CHECKING
 
 from engine.errors import BindingError, SchemaError
 from engine.parser.ast import (
+    Assignment,
     BinaryOp,
     ColumnDefinition,
     ColumnRef,
     CreateTableStatement,
+    DeleteStatement,
     Expression,
     InsertStatement,
     IsNullTest,
@@ -48,6 +50,7 @@ from engine.parser.ast import (
     Star,
     Statement,
     UnaryOp,
+    UpdateStatement,
 )
 from engine.serialization.schema import Column, Schema
 from engine.serialization.types import DataType
@@ -60,15 +63,21 @@ if TYPE_CHECKING:
     CatalogLike = Catalog
 
 __all__ = [
+    "BoundAssignment",
     "BoundColumnRef",
+    "BoundDelete",
     "BoundInsert",
     "BoundSelect",
     "BoundStatement",
+    "BoundUpdate",
     "ResultColumn",
     "bind_create_table",
+    "bind_delete",
     "bind_expression",
     "bind_insert",
     "bind_select",
+    "bind_update",
+    "identity_projection",
 ]
 
 
@@ -130,8 +139,40 @@ class BoundInsert:
     statement: InsertStatement
 
 
+@dataclass(frozen=True, slots=True)
+class BoundAssignment:
+    """One ``SET`` target, resolved to a column position."""
+
+    column_index: int
+    column: Column
+    value: Expression
+    """Bound against the table's own schema, so it can read the row it is
+    replacing: ``SET n = n + 1`` is evaluated over the *old* version."""
+
+
+@dataclass(frozen=True, slots=True)
+class BoundUpdate:
+    """An ``UPDATE`` with its targets resolved and its values bound."""
+
+    table_name: str
+    schema: Schema
+    assignments: tuple[BoundAssignment, ...]
+    where: Expression | None
+    statement: UpdateStatement
+
+
+@dataclass(frozen=True, slots=True)
+class BoundDelete:
+    """A ``DELETE`` with its table resolved."""
+
+    table_name: str
+    schema: Schema
+    where: Expression | None
+    statement: DeleteStatement
+
+
 #: Anything the executor can run.
-BoundStatement = BoundSelect | BoundInsert
+BoundStatement = BoundSelect | BoundInsert | BoundUpdate | BoundDelete
 
 
 # --------------------------------------------------------------------------
@@ -322,7 +363,7 @@ def bind_insert(statement: InsertStatement, catalog: CatalogLike) -> BoundInsert
     executor should not have to care, so every row comes out of here full-width
     and in declaration order, with ``NULL`` literals filled in for omissions.
     """
-    info = _resolve_table(statement.table.name, catalog, statement)
+    info = _resolve_writable_table(statement.table.name, catalog, statement)
     table_name, schema = info.name, info.schema
 
     if statement.columns is None:
@@ -415,6 +456,127 @@ def _require_omitted_columns_are_nullable(
         )
 
 
+def identity_projection(
+    schema: Schema, node: Statement
+) -> tuple[tuple[Expression, ...], tuple[ResultColumn, ...]]:
+    """Every column of ``schema``, in order — what ``SELECT *`` expands to.
+
+    ``UPDATE`` and ``DELETE`` need the whole row even though they return none of
+    it: the predicate can name any column, an index entry is keyed on the value
+    it holds, and ``SET n = n + 1`` reads the version it is replacing. Sharing
+    the expansion with ``SELECT *`` is what lets the same planner cost all three.
+    """
+    projections = tuple(
+        BoundColumnRef(
+            node_id=node.node_id,
+            span=node.span,
+            name=column.name,
+            column_index=index,
+            data_type=column.data_type,
+        )
+        for index, column in enumerate(schema)
+    )
+    outputs = tuple(ResultColumn(column.name, column.data_type) for column in schema)
+    return projections, outputs
+
+
+def bind_delete(statement: DeleteStatement, catalog: CatalogLike) -> BoundDelete:
+    """Bind a ``DELETE``. Only the table and the predicate need resolving."""
+    info = _resolve_writable_table(statement.table.name, catalog, statement)
+    where = bind_expression(statement.where, info.schema) if statement.where else None
+    return BoundDelete(
+        table_name=info.name,
+        schema=info.schema,
+        where=where,
+        statement=statement,
+    )
+
+
+def bind_update(statement: UpdateStatement, catalog: CatalogLike) -> BoundUpdate:
+    """Bind an ``UPDATE``: resolve each target, bind each value and the predicate.
+
+    Assignments keep the order they were written in, but that order is *not*
+    semantic. ``SET a = b, b = a`` swaps the two columns, because both right-hand
+    sides are evaluated against the row as it was before any of them ran. Every
+    SQL engine does this, and it is the one thing about ``SET`` that surprises
+    people coming from a procedural language.
+    """
+    info = _resolve_writable_table(statement.table.name, catalog, statement)
+    schema = info.schema
+
+    assignments: list[BoundAssignment] = []
+    seen: dict[int, str] = {}
+    for assignment in statement.assignments:
+        try:
+            index = schema.index_of(assignment.column)
+        except SchemaError:
+            raise BindingError(
+                f"no column named {assignment.column!r}; "
+                f"this table has {', '.join(schema.column_names)}",
+                start=assignment.span.start,
+                end=assignment.span.end,
+                line=assignment.span.line,
+                column=assignment.span.column,
+            ) from None
+
+        if index in seen:
+            raise BindingError(
+                f"column {schema[index].name!r} is assigned twice",
+                start=assignment.span.start,
+                end=assignment.span.end,
+                line=assignment.span.line,
+                column=assignment.span.column,
+            )
+        seen[index] = assignment.column
+
+        value = bind_expression(assignment.value, schema)
+        _check_assignable(assignment, schema[index], value)
+        assignments.append(BoundAssignment(index, schema[index], value))
+
+    where = bind_expression(statement.where, schema) if statement.where else None
+    return BoundUpdate(
+        table_name=info.name,
+        schema=schema,
+        assignments=tuple(assignments),
+        where=where,
+        statement=statement,
+    )
+
+
+def _check_assignable(assignment: Assignment, column: Column, value: Expression) -> None:
+    """Reject what is statically known to be wrong, and only that.
+
+    The encoder catches the rest at write time, but it has no source position and
+    fires half-way through a statement. Anything whose type is not known until a
+    row is in hand — ``SET a = b`` between two columns, arithmetic over mixed
+    types — is left to it rather than guessed at here.
+    """
+    if isinstance(value, Literal) and value.value is None and not column.nullable:
+        raise BindingError(
+            f"column {column.name!r} is NOT NULL",
+            start=assignment.span.start,
+            end=assignment.span.end,
+            line=assignment.span.line,
+            column=assignment.span.column,
+        )
+
+    static = _static_type(value)
+    if static is None or static is column.data_type:
+        return
+    # INTEGER into FLOAT widens without loss and every dialect allows it. The
+    # reverse does not, so it is rejected rather than silently truncated.
+    if column.data_type is DataType.FLOAT and static is DataType.INTEGER:
+        return
+    raise BindingError(
+        f"cannot assign {static.sql_name} to column {column.name!r}, "
+        f"which is {column.data_type.sql_name}",
+        start=assignment.span.start,
+        end=assignment.span.end,
+        line=assignment.span.line,
+        column=assignment.span.column,
+    )
+
+
 def bind_create_table(statement: CreateTableStatement) -> tuple[str, Schema]:
     """Turn a ``CREATE TABLE`` into a name and a :class:`Schema`.
 
@@ -455,6 +617,11 @@ def _column_from(definition: ColumnDefinition) -> Column:
         ) from None
 
 
+#: Statements that name a table in a ``table`` field, so an error about the name
+#: can point at the name rather than at the whole statement.
+_TABLE_BEARING = SelectStatement | InsertStatement | UpdateStatement | DeleteStatement
+
+
 def _resolve_table(
     referenced: str, catalog: CatalogLike, statement: Statement
 ) -> TableInfo:
@@ -469,18 +636,39 @@ def _resolve_table(
 
     known = ", ".join(table.name for table in catalog.list_tables())
     detail = f"this database has {known}" if known else "this database has no tables"
+    span = statement.table.span if isinstance(statement, _TABLE_BEARING) else statement.span
     raise BindingError(
         f"no table named {referenced!r}; {detail}",
-        start=statement.table.span.start
-        if isinstance(statement, SelectStatement | InsertStatement)
-        else statement.span.start,
-        end=statement.table.span.end
-        if isinstance(statement, SelectStatement | InsertStatement)
-        else statement.span.end,
-        line=statement.table.span.line
-        if isinstance(statement, SelectStatement | InsertStatement)
-        else statement.span.line,
-        column=statement.table.span.column
-        if isinstance(statement, SelectStatement | InsertStatement)
-        else statement.span.column,
+        start=span.start,
+        end=span.end,
+        line=span.line,
+        column=span.column,
+    )
+
+
+def _resolve_writable_table(
+    referenced: str, catalog: CatalogLike, statement: Statement
+) -> TableInfo:
+    """:func:`_resolve_table`, refusing the catalog's own tables.
+
+    ``chendb_tables`` and ``chendb_columns`` are readable — that is how the UI
+    shows a schema — but writing to them through SQL would let a ``DELETE`` drop
+    a table's definition out from under the heap that still holds its rows. DDL
+    is the only supported way to change them, and it goes through
+    :class:`~engine.catalog.catalog.Catalog`, which keeps both sides in step.
+
+    PostgreSQL's rule is the same in spirit and stricter in practice: even a
+    superuser is refused ``DELETE FROM pg_class`` unless
+    ``allow_system_table_mods`` is on.
+    """
+    info = _resolve_table(referenced, catalog, statement)
+    if not info.is_system:
+        return info
+    span = statement.table.span if isinstance(statement, _TABLE_BEARING) else statement.span
+    raise BindingError(
+        f"{info.name!r} is a system table; it can be read but not written to",
+        start=span.start,
+        end=span.end,
+        line=span.line,
+        column=span.column,
     )

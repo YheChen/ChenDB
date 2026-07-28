@@ -423,6 +423,40 @@ non-zero `xmax` is a **dead version**: physically present, invisible to any new
 reader, waiting for a vacuum. That is what a delete leaves behind since
 Milestone 10, and it is what PostgreSQL's page inspector shows too.
 
+### Milestone 11 — UPDATE and DELETE
+
+**No new endpoints.** Both statements go through `POST /query`, which is the
+point: a client that could run an `INSERT` can run these without knowing they
+were added. What changed is what comes back.
+
+`statement_kind` now also takes `UpdateStatement` and `DeleteStatement`. Both
+have `returns_rows: false` and report their work in `rows_affected` and
+`message`; `record_ids` holds the **new** addresses after an update, so the page
+inspector can jump straight to the version just written exactly as it does after
+an insert.
+
+`message` reports a gap when there is one:
+
+```
+updated 3 row(s) in staff; 1 of the 4 matched were changed by another
+session first and were skipped
+```
+
+Reporting only "updated 3" would make a lost update look like a clean one. See
+`docs/milestone-11-dml.md` for why the row is skipped rather than retried.
+
+**`EXPLAIN` accepts both.** The plan covers the half of the statement that has
+more than one right answer — finding the rows — and one line names what happens
+to each of them afterwards, rather than inventing an operator with a made-up
+cost.
+
+**`TableStorageModel` gained `version_count`, and `row_count` changed meaning.**
+It was `heap.count()`, which counts *slots*, so it had been reporting dead
+versions as rows ever since Milestone 10 gave a delete something to leave
+behind. It is now what a reader can see, and `version_count` is what is
+physically on the pages. The gap between them is exactly what `POST /vacuum`
+would reclaim, and a panel showing both cannot disagree with a `SELECT`.
+
 ## Errors
 
 Every non-2xx response carries the same envelope:

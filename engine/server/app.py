@@ -60,6 +60,7 @@ FEATURES: dict[str, bool] = {
     "transactions": True,  # Milestone 8 — undo log, BEGIN/COMMIT/ROLLBACK
     "wal": True,  # Milestone 9 — log, checkpoints, ARIES recovery
     "mvcc": True,  # Milestone 10 — row versions, snapshots, locks
+    "dml": True,  # Milestone 11 — UPDATE ... SET, DELETE ... WHERE
 }
 
 _DESCRIPTION = """

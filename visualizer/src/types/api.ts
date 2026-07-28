@@ -559,7 +559,7 @@ export interface QueryRequest {
 
 /** The outcome of one statement. */
 export interface QueryResultModel {
-  /** SelectStatement, InsertStatement, CreateTableStatement or CreateIndexStatement */
+  /** The AST node type: SelectStatement, InsertStatement, UpdateStatement, DeleteStatement, CreateTableStatement, CreateIndexStatement, ExplainStatement, AnalyzeStatement, or one of the transaction statements */
   statement_kind: string;
   returns_rows: boolean;
   /** Summary for statements that return no rows */
@@ -751,8 +751,10 @@ export interface TableStorageModel {
   last_page: number;
   page_ids: number[];
   page_count: number;
-  /** Live rows. O(pages) to compute — no cached count. */
+  /** Rows a reader can see. O(pages) to compute — no cached count. */
   row_count: number;
+  /** Row versions physically present, including ones only an older snapshot could still want. The gap from row_count is what a vacuum would reclaim. */
+  version_count: number;
   /** page_count * page_size */
   bytes_allocated: number;
   /** Contiguous free bytes across the table's pages */
@@ -765,6 +767,7 @@ export interface TableSummary {
   table_id: number;
   name: string;
   column_count: number;
+  /** Rows a reader can see, not versions on disk */
   row_count: number;
   page_count: number;
   /** True for chendb_* tables, which belong to the engine */

@@ -8,12 +8,13 @@ record encoding, checksums, a page allocator with a free list, a SQL front end,
 a volcano executor, a persistent catalog, disk-backed B+ tree indexes, a
 cost-based planner, a buffer pool, transactions with rollback, a write-ahead log
 that recovers the database after a crash, and MVCC so a reader never waits for a
-writer. The visualizer is not a mock — every byte it renders was read back from the actual
-file on disk.
+writer — where an `UPDATE` leaves the old version of the row readable rather than
+overwriting it. The visualizer is not a mock — every byte it renders was read
+back from the actual file on disk.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M10    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M11    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -39,7 +40,7 @@ file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**All ten milestones are complete.** Nothing is stubbed ahead of time: a
+**Eleven milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -58,7 +59,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.0.0 — Milestone 10 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC)
+ChenDB 1.1.0 — Milestone 11 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -134,6 +135,7 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Persistence** | survives process death; `SIGKILL` tests prove it |
 | **Diagnostics** | 5 trace levels · 37 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
+| **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
 | **Execution** | volcano operators (scan / filter / project) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
@@ -141,11 +143,11 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Buffer pool** | write-back · exact LRU · counters for every frame |
 | **Transactions** | `BEGIN` / `COMMIT` / `ROLLBACK` · page-level undo log · implicit transactions · atomic DDL |
 | **Durability** | write-ahead log · LSN per page · checkpoints · ARIES recovery (analysis / redo / undo) · a crash button that proves it |
-| **Concurrency** | row versions (`xmin`/`xmax`) · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
+| **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
 
-Two claims worth checking rather than believing:
+Three claims worth checking rather than believing:
 
 **A committed transaction survives `SIGKILL` without a sync.** The pages may
 still be in memory; the log is enough to put them back. An uncommitted one is
@@ -157,10 +159,15 @@ runs a `SELECT` and gets its answer immediately, without the uncommitted row and
 without taking a lock of its own. `tests/unit/test_mvcc.py` asserts it and the
 MVCC workspace shows it.
 
+**An update does not overwrite anything.** It writes eight bytes to the old
+version and appends a new one, so a transaction that took its snapshot first
+still reads the old value — and the table panel shows `rows 4 · versions 5`
+until you press Vacuum. `tests/unit/test_dml.py` asserts it.
+
 Deliberately not built — and each has a paragraph in the milestone docs saying
-why: serializable isolation, `UPDATE` (so version chains are one deep), parallel
-statement execution, lock escalation, autovacuum, joins, aggregation, `ORDER BY`,
-and overflow pages for rows larger than a page.
+why: serializable isolation, `RETURNING`, heap-only tuples, parallel statement
+execution, lock escalation, autovacuum, joins, aggregation, `ORDER BY`, and
+overflow pages for rows larger than a page.
 
 ---
 
@@ -293,6 +300,7 @@ change the system observed.
 | `python examples/milestone8_transactions.py` | narrated walkthrough of transactions and rollback |
 | `python examples/milestone9_wal.py` | narrated walkthrough of the log, checkpoints and recovery |
 | `python examples/milestone10_mvcc.py` | narrated walkthrough of snapshots, locks and deadlocks |
+| `python examples/milestone11_dml.py` | narrated walkthrough of `UPDATE`, `DELETE` and the Halloween problem |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
 | `make help` | all of the above |
@@ -317,6 +325,7 @@ change the system observed.
 | [Milestone 8](docs/milestone-08-transactions.md) | physical undo, why it made DDL atomic for free, and where atomicity stops |
 | [Milestone 9](docs/milestone-09-wal.md) | write-ahead logging, ARIES recovery, and a 197× log made 5× |
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
+| [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
 | [Roadmap](docs/roadmap.md) | Milestones 2–10 |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |
