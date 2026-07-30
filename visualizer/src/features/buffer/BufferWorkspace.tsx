@@ -76,7 +76,7 @@ export function BufferWorkspace({
         <div className="space-y-2 p-3">
           {!table ? (
             <p className="text-muted text-[11px]">
-              Create a table and insert some rows first — the pool has nothing to
+              Create a table and insert some rows first. The pool has nothing to
               cache until the engine reads something.
             </p>
           ) : (

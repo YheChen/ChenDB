@@ -303,7 +303,7 @@
             "type": "integer"
           },
           "log_size_after": {
-            "description": "Zero \u2014 a checkpoint discards the log",
+            "description": "Zero: a checkpoint discards the log",
             "title": "Log Size After",
             "type": "integer"
           },
@@ -1407,7 +1407,7 @@
             "type": "object"
           },
           "resource": {
-            "description": "'table:page.slot' \u2014 a single row. Not a page and not a table: page granularity would make two sessions inserting into the same heap page conflict, which is most inserts.",
+            "description": "'table:page.slot', a single row. Not a page and not a table: page granularity would make two sessions inserting into the same heap page conflict, which is most inserts.",
             "title": "Resource",
             "type": "string"
           },
@@ -1481,7 +1481,7 @@
             "$ref": "#/components/schemas/LockStatsModel"
           },
           "wait_for": {
-            "description": "The graph. A cycle in it is a deadlock \u2014 that is the definition, not a heuristic \u2014 and it is always empty by the time you read it, because the detector breaks cycles as they form.",
+            "description": "The graph. A cycle in it is a deadlock (that is the definition, not a heuristic) and it is always empty by the time you read it, because the detector breaks cycles as they form.",
             "items": {
               "$ref": "#/components/schemas/WaitForEdge"
             },
@@ -2014,7 +2014,7 @@
           },
           "decision": {
             "default": "access path",
-            "description": "Which question this answered \u2014 'how to read users', 'what order to join in'. A query over several tables makes several independent decisions, and a flat list of winners reads as a contradiction.",
+            "description": "Which question this answered: 'how to read users', 'what order to join in'. A query over several tables makes several independent decisions, and a flat list of winners reads as a contradiction.",
             "title": "Decision",
             "type": "string"
           },
@@ -2630,7 +2630,7 @@
             "type": "integer"
           },
           "oldest_snapshot_xmin": {
-            "description": "Vacuum's horizon. A long-running transaction holds this down and stops dead versions being reclaimed \u2014 the same mechanism behind PostgreSQL's most common 'why is my disk full'.",
+            "description": "Vacuum's horizon. A long-running transaction holds this down and stops dead versions being reclaimed; the same mechanism behind PostgreSQL's most common 'why is my disk full'.",
             "title": "Oldest Snapshot Xmin",
             "type": "integer"
           },
@@ -3015,7 +3015,7 @@
             "type": "integer"
           },
           "row_count": {
-            "description": "Rows a reader can see. O(pages) to compute \u2014 no cached count.",
+            "description": "Rows a reader can see. O(pages) to compute; no cached count.",
             "title": "Row Count",
             "type": "integer"
           },
@@ -3344,7 +3344,7 @@
             "type": "boolean"
           },
           "pages_held": {
-            "description": "Distinct pages with a before-image. Zero once finished \u2014 the undo log is released at commit and at rollback.",
+            "description": "Distinct pages with a before-image. Zero once finished; the undo log is released at commit and at rollback.",
             "title": "Pages Held",
             "type": "integer"
           },
@@ -3553,7 +3553,7 @@
             "type": "integer"
           },
           "reason": {
-            "description": "What was about to write the page \u2014 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason.",
+            "description": "What was about to write the page: 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason.",
             "title": "Reason",
             "type": "string"
           },
@@ -3641,7 +3641,7 @@
             "type": "integer"
           },
           "before_image_size": {
-            "description": "Non-zero only on a transaction's first write to a page \u2014 first-write-wins, the same rule the in-memory undo log follows",
+            "description": "Non-zero only on a transaction's first write to a page; first-write-wins, the same rule the in-memory undo log follows",
             "title": "Before Image Size",
             "type": "integer"
           },
@@ -3721,7 +3721,7 @@
             "type": "integer"
           },
           "path": {
-            "description": "Filename only \u2014 never a path from the host",
+            "description": "Filename only, never a path from the host",
             "title": "Path",
             "type": "string"
           },
@@ -3746,7 +3746,7 @@
             "type": "integer"
           },
           "truncated_tail": {
-            "description": "The last record in the file is incomplete. Normal after a crash \u2014 the process died part-way through a write.",
+            "description": "The last record in the file is incomplete. Normal after a crash. The process died part-way through a write.",
             "title": "Truncated Tail",
             "type": "boolean"
           }
@@ -4142,7 +4142,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Simulate a crash \u2014 destroys uncommitted work, then recovers",
+        "summary": "Simulate a crash: destroys uncommitted work, then recovers",
         "tags": [
           "wal"
         ]
@@ -5589,7 +5589,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "COMMIT \u2014 keep the work and release the undo log",
+        "summary": "COMMIT: keep the work and release the undo log",
         "tags": [
           "transactions"
         ]
@@ -5645,7 +5645,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "ROLLBACK \u2014 put every touched page back as it was",
+        "summary": "ROLLBACK: put every touched page back as it was",
         "tags": [
           "transactions"
         ]

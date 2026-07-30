@@ -152,7 +152,7 @@ export async function createWasmTransport(
     await clearStoredData();
     throw new Error(
       `stored databases were written in format ${stored}, this build reads ` +
-        `${current}. They have been cleared — reload to start fresh.`,
+        `${current}. They have been cleared. Reload to start fresh.`,
     );
   }
 
@@ -270,7 +270,7 @@ async function fetchManifest(): Promise<Manifest> {
   if (!response.ok) {
     throw new Error(
       `no wasm-manifest.json (${response.status}). ` +
-        `Run \`npm run bundle:engine\` — the WASM build cannot make it up.`,
+        `Run \`npm run bundle:engine\`; the WASM build cannot make it up.`,
     );
   }
   return (await response.json()) as Manifest;

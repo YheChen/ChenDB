@@ -36,7 +36,7 @@ class UndoRecordModel(ApiModel):
     page_id: int
     before_image_size: int = Field(description="Always one page")
     reason: str = Field(
-        description="What was about to write the page — 'insert', 'index split' "
+        description="What was about to write the page: 'insert', 'index split' "
         "and so on. Diagnostic only; the undo itself needs no reason."
     )
 
@@ -56,7 +56,7 @@ class TransactionModel(ApiModel):
         description="Page writes seen, including repeats of the same page"
     )
     pages_held: int = Field(
-        description="Distinct pages with a before-image. Zero once finished — "
+        description="Distinct pages with a before-image. Zero once finished; "
         "the undo log is released at commit and at rollback."
     )
     pages_restored: int = Field(

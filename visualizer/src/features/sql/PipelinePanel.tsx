@@ -130,7 +130,7 @@ function TokenList({
         hint={
           lexedOk
             ? "The input is empty or contains only comments."
-            : "The scanner could not get past a character — see the error under the editor."
+            : "The scanner could not get past a character. See the error under the editor."
         }
       />
     );

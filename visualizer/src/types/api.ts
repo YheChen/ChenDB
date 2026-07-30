@@ -86,7 +86,7 @@ export interface CheckpointResponse {
   pages_flushed: number;
   bytes_reclaimed: number;
   log_size_before: number;
-  /** Zero — a checkpoint discards the log */
+  /** Zero: a checkpoint discards the log */
   log_size_after: number;
   base_lsn: number;
   message: string;
@@ -359,7 +359,7 @@ export interface InsertRecordsResponse {
 
 /** One resource, everyone holding it, and everyone queued behind them. */
 export interface LockEntryModel {
-  /** 'table:page.slot' — a single row. Not a page and not a table: page granularity would make two sessions inserting into the same heap page conflict, which is most inserts. */
+  /** 'table:page.slot', a single row. Not a page and not a table: page granularity would make two sessions inserting into the same heap page conflict, which is most inserts. */
   resource: string;
   /** Transaction id (as a string, because JSON objects have string keys) to the mode it holds */
   holders: Record<string, "shared" | "exclusive">;
@@ -378,7 +378,7 @@ export interface LockStatsModel {
 
 export interface LockTableResponse {
   entries: LockEntryModel[];
-  /** The graph. A cycle in it is a deadlock — that is the definition, not a heuristic — and it is always empty by the time you read it, because the detector breaks cycles as they form. */
+  /** The graph. A cycle in it is a deadlock (that is the definition, not a heuristic) and it is always empty by the time you read it, because the detector breaks cycles as they form. */
   wait_for: WaitForEdge[];
   stats: LockStatsModel;
   /** Always zero, and reported so the zero is visible. Under MVCC a reader takes no lock at all; every entry above is a writer. */
@@ -526,7 +526,7 @@ export interface PlanAlternativeModel {
   /** Why this lost, e.g. '3.6x the cost of the chosen plan'. Empty for the winner. */
   rejected_because: string;
   index_name: null | string;
-  /** Which question this answered — 'how to read users', 'what order to join in'. A query over several tables makes several independent decisions, and a flat list of winners reads as a contradiction. */
+  /** Which question this answered: 'how to read users', 'what order to join in'. A query over several tables makes several independent decisions, and a flat list of winners reads as a contradiction. */
   decision?: string;
 }
 
@@ -667,7 +667,7 @@ export interface SessionListResponse {
   /** Transaction ids below this committed before this process started. ChenDB's entire commit log, in one number. */
   frozen_xid: number;
   next_xid: number;
-  /** Vacuum's horizon. A long-running transaction holds this down and stops dead versions being reclaimed — the same mechanism behind PostgreSQL's most common 'why is my disk full'. */
+  /** Vacuum's horizon. A long-running transaction holds this down and stops dead versions being reclaimed; the same mechanism behind PostgreSQL's most common 'why is my disk full'. */
   oldest_snapshot_xmin: number;
 }
 
@@ -753,7 +753,7 @@ export interface TableStorageModel {
   last_page: number;
   page_ids: number[];
   page_count: number;
-  /** Rows a reader can see. O(pages) to compute — no cached count. */
+  /** Rows a reader can see. O(pages) to compute; no cached count. */
   row_count: number;
   /** Row versions physically present, including ones only an older snapshot could still want. The gap from row_count is what a vacuum would reclaim. */
   version_count: number;
@@ -847,7 +847,7 @@ export interface TransactionModel {
   statements: number;
   /** Page writes seen, including repeats of the same page */
   pages_written: number;
-  /** Distinct pages with a before-image. Zero once finished — the undo log is released at commit and at rollback. */
+  /** Distinct pages with a before-image. Zero once finished; the undo log is released at commit and at rollback. */
   pages_held: number;
   /** Pages written back by a rollback. Zero for anything else. */
   pages_restored: number;
@@ -898,7 +898,7 @@ export interface UndoRecordModel {
   page_id: number;
   /** Always one page */
   before_image_size: number;
-  /** What was about to write the page — 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason. */
+  /** What was about to write the page: 'insert', 'index split' and so on. Diagnostic only; the undo itself needs no reason. */
   reason: string;
 }
 
@@ -919,7 +919,7 @@ export interface WalRecordModel {
   page_id: number;
   /** Bytes on disk, header and images together */
   size: number;
-  /** Non-zero only on a transaction's first write to a page — first-write-wins, the same rule the in-memory undo log follows */
+  /** Non-zero only on a transaction's first write to a page; first-write-wins, the same rule the in-memory undo log follows */
   before_image_size: number;
   after_image_size: number;
 }
@@ -927,7 +927,7 @@ export interface WalRecordModel {
 export interface WalResponse {
   /** False for a handle opened without a log */
   enabled: boolean;
-  /** Filename only — never a path from the host */
+  /** Filename only, never a path from the host */
   path: string;
   /** The LSN of the log file's first byte. Non-zero after a checkpoint has truncated it, which is why the meta page has to carry it. */
   base_lsn: number;
@@ -940,7 +940,7 @@ export interface WalResponse {
   /** The log file on disk */
   size_bytes: number;
   records: WalRecordModel[];
-  /** The last record in the file is incomplete. Normal after a crash — the process died part-way through a write. */
+  /** The last record in the file is incomplete. Normal after a crash. The process died part-way through a write. */
   truncated_tail: boolean;
   /** Before the response limit was applied */
   total_records: number;

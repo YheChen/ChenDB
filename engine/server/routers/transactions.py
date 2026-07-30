@@ -82,7 +82,7 @@ def begin_transaction(
 @router.post(
     "/transactions/commit",
     response_model=TransactionResultResponse,
-    summary="COMMIT — keep the work and release the undo log",
+    summary="COMMIT: keep the work and release the undo log",
 )
 def commit_transaction(
     managed: DatabaseDep, session: SessionParam = DEFAULT_SESSION
@@ -119,7 +119,7 @@ def commit_transaction(
 @router.post(
     "/transactions/rollback",
     response_model=TransactionResultResponse,
-    summary="ROLLBACK — put every touched page back as it was",
+    summary="ROLLBACK: put every touched page back as it was",
 )
 def rollback_transaction(
     managed: DatabaseDep, session: SessionParam = DEFAULT_SESSION

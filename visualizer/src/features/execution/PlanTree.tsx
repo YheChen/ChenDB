@@ -76,7 +76,7 @@ export function PlanTree({
     return (
       <EmptyState
         title="No plan"
-        hint="INSERT and CREATE TABLE have no operator tree — they call straight into the storage engine. Run a SELECT to see one."
+        hint="INSERT and CREATE TABLE have no operator tree; they call straight into the storage engine. Run a SELECT to see one."
       />
     );
   }
@@ -166,7 +166,7 @@ function PlanRow({
         {node.rows_rejected > 0 ? (
           <Badge
             tone="danger"
-            title="Rows whose predicate was not exactly TRUE — including NULL, which is not TRUE"
+            title="Rows whose predicate was not exactly TRUE, including NULL, which is not TRUE"
           >
             −{formatCount(node.rows_rejected)}
           </Badge>
@@ -209,7 +209,7 @@ function EstimateBadge({ node }: { node: OperatorNodeModel }) {
       ? `; estimated cost ${node.estimated_cost.toFixed(1)}`
       : "") +
     (wrong
-      ? `. Off by ${error!.toFixed(1)}x — a bad row estimate is where a bad plan usually comes from.`
+      ? `. Off by ${error!.toFixed(1)}x. A bad row estimate is where a bad plan usually comes from.`
       : "");
 
   return (
@@ -331,7 +331,7 @@ function StatisticsNote({ statistics }: { statistics: PlanStatisticsModel }) {
       {statistics.stale ? (
         <p
           className="mt-1 rounded bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-400"
-          title="Statistics are not refreshed on every write — that would cost a full scan per row. Run ANALYZE."
+          title="Statistics are not refreshed on every write; that would cost a full scan per row. Run ANALYZE."
         >
           Stale: the table has been written to since ANALYZE, so every estimate
           above is based on the numbers shown. Run <code>ANALYZE</code> to refresh.

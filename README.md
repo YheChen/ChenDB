@@ -72,7 +72,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.8.0 — Milestone 18 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins)
+ChenDB 1.8.0 - Milestone 18 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER

@@ -52,14 +52,16 @@ export function TopBar({
       <div className="mx-2 h-5 w-px bg-[var(--border-subtle)]" />
 
       <label className="flex items-center gap-1.5">
-        <span className="text-muted text-[10px] tracking-wide uppercase">database</span>
+        <span className="text-muted text-[10px] tracking-wide uppercase">
+          database
+        </span>
         <select
           aria-label="Select database"
           value={databaseId ?? ""}
           onChange={(event) => onSelectDatabase(event.target.value || null)}
           className="surface-sunken min-w-32 rounded border border-[var(--border-subtle)] px-2 py-1 font-mono text-xs"
         >
-          <option value="">— none —</option>
+          <option value="">(none)</option>
           {databases.data?.databases.map((entry) => (
             <option key={entry.database_id} value={entry.database_id}>
               {entry.database_id} ({formatBytes(entry.size_bytes)})
@@ -68,7 +70,10 @@ export function TopBar({
         </select>
       </label>
 
-      <Button onClick={() => setCreating((open) => !open)} aria-expanded={creating}>
+      <Button
+        onClick={() => setCreating((open) => !open)}
+        aria-expanded={creating}
+      >
         + New
       </Button>
 
@@ -85,7 +90,9 @@ export function TopBar({
           aria-label="Trace level"
           value={traceLevel}
           disabled={!databaseId}
-          onChange={(event) => setTrace.mutate(event.target.value as TraceLevelName)}
+          onChange={(event) =>
+            setTrace.mutate(event.target.value as TraceLevelName)
+          }
           className="surface-sunken rounded border border-[var(--border-subtle)] px-2 py-1 font-mono text-xs disabled:opacity-40"
         >
           {TRACE_LEVELS.map((level) => (
@@ -137,7 +144,11 @@ export function TopBar({
   );
 }
 
-function CreateDatabaseForm({ onDone }: { onDone: (id: string | null) => void }) {
+function CreateDatabaseForm({
+  onDone,
+}: {
+  onDone: (id: string | null) => void;
+}) {
   const [databaseId, setDatabaseId] = useState("demo");
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const create = useCreateDatabase();
@@ -156,7 +167,9 @@ function CreateDatabaseForm({ onDone }: { onDone: (id: string | null) => void })
       className="surface flex w-full flex-wrap items-end gap-2 rounded border p-2"
     >
       <label className="block">
-        <span className="text-muted text-[10px] tracking-wide uppercase">name</span>
+        <span className="text-muted text-[10px] tracking-wide uppercase">
+          name
+        </span>
         <input
           autoFocus
           value={databaseId}
@@ -191,7 +204,10 @@ function CreateDatabaseForm({ onDone }: { onDone: (id: string | null) => void })
       </Button>
       <Button onClick={() => onDone(null)}>Cancel</Button>
       {create.isError ? (
-        <span role="alert" className="text-[11px] text-red-600 dark:text-red-400">
+        <span
+          role="alert"
+          className="text-[11px] text-red-600 dark:text-red-400"
+        >
           {(create.error as Error).message}
         </span>
       ) : null}

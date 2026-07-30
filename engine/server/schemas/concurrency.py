@@ -33,7 +33,7 @@ class LockEntryModel(ApiModel):
     """One resource, everyone holding it, and everyone queued behind them."""
 
     resource: str = Field(
-        description="'table:page.slot' — a single row. Not a page and not a "
+        description="'table:page.slot', a single row. Not a page and not a "
         "table: page granularity would make two sessions inserting into the "
         "same heap page conflict, which is most inserts."
     )
@@ -64,8 +64,8 @@ class LockStatsModel(ApiModel):
 class LockTableResponse(ApiModel):
     entries: list[LockEntryModel]
     wait_for: list[WaitForEdge] = Field(
-        description="The graph. A cycle in it is a deadlock — that is the "
-        "definition, not a heuristic — and it is always empty by the time you "
+        description="The graph. A cycle in it is a deadlock (that is the "
+        "definition, not a heuristic) and it is always empty by the time you "
         "read it, because the detector breaks cycles as they form."
     )
     stats: LockStatsModel
@@ -110,6 +110,6 @@ class SessionListResponse(ApiModel):
     next_xid: int
     oldest_snapshot_xmin: int = Field(
         description="Vacuum's horizon. A long-running transaction holds this "
-        "down and stops dead versions being reclaimed — the same mechanism "
+        "down and stops dead versions being reclaimed; the same mechanism "
         "behind PostgreSQL's most common 'why is my disk full'."
     )

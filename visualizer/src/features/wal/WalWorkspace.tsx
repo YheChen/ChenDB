@@ -79,7 +79,7 @@ export function WalWorkspace({
               disabled={busy || inTransaction}
               title={
                 inTransaction
-                  ? "A transaction is open — truncating the log would discard the before-images it needs to roll back"
+                  ? "A transaction is open; truncating the log would discard the before-images it needs to roll back"
                   : "Flush every dirty page, then discard the log"
               }
               onClick={() => {
@@ -109,7 +109,7 @@ export function WalWorkspace({
               <Button
                 variant="danger"
                 disabled={busy}
-                title="Abandon the handle without flushing, then reopen — which runs recovery"
+                title="Abandon the handle without flushing, then reopen, which runs recovery"
                 onClick={() => setArmed(true)}
               >
                 Simulate crash
@@ -132,8 +132,8 @@ export function WalWorkspace({
               // the difference between a demonstration and a claim.
               <p className="text-muted border-b border-[var(--border-subtle)] px-3 py-2 text-[11px]">
                 This build keeps its pages in memory, so <code>fsync</code> has
-                nowhere to write. The crash below is real — the buffer pool is
-                lost and recovery replays the log to get the rows back — but it
+                nowhere to write. The crash below is real (the buffer pool is
+                lost and recovery replays the log to get the rows back), but it
                 proves survival of a <em>process</em> death, not a power cut.
                 The <code>SIGKILL</code> tests in <code>tests/recovery/</code>{" "}
                 prove the other one.
@@ -142,7 +142,7 @@ export function WalWorkspace({
             <WalCounters wal={wal.data} />
             {armed ? (
               <p className="border-t border-[var(--border-subtle)] px-3 py-2 text-[11px]">
-                This discards everything not yet committed — dirty pages are
+                This discards everything not yet committed: dirty pages are
                 dropped, no checkpoint runs, and the file is reopened as it
                 lies. Committed rows survive, because their commit records were
                 already on the disk. That difference is the demonstration.
@@ -176,7 +176,7 @@ export function WalWorkspace({
         <div className="space-y-2 p-3">
           {!table ? (
             <p className="text-muted text-[11px]">
-              Create a table and insert some rows first — there is nothing to
+              Create a table and insert some rows first. There is nothing to
               lose, and therefore nothing to demonstrate, until then.
             </p>
           ) : (

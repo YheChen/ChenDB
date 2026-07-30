@@ -29,7 +29,7 @@ class TableStorageModel(ApiModel):
     page_ids: list[int]
     page_count: int
     row_count: int = Field(
-        description="Rows a reader can see. O(pages) to compute — no cached count."
+        description="Rows a reader can see. O(pages) to compute; no cached count."
     )
     version_count: int = Field(
         description=(

@@ -81,7 +81,7 @@ export function TransactionWorkspace({
               disabled={busy || state?.in_explicit_transaction}
               title={
                 state?.in_explicit_transaction
-                  ? "A transaction is already open — ChenDB has no savepoints, so they do not nest"
+                  ? "A transaction is already open. ChenDB has no savepoints, so they do not nest"
                   : "Open a transaction"
               }
               onClick={() => {
@@ -150,7 +150,7 @@ export function TransactionWorkspace({
         <div className="space-y-2 p-3">
           {!table ? (
             <p className="text-muted text-[11px]">
-              Create a table first — atomicity is only visible when there is
+              Create a table first. Atomicity is only visible when there is
               something to leave behind.
             </p>
           ) : (
@@ -182,7 +182,7 @@ export function TransactionWorkspace({
                   <span className="text-[var(--accent)]">rejected:</span>{" "}
                   {String((run.error as Error)?.message ?? run.error)}
                   <span className="text-muted block pt-0.5">
-                    Which is the point. Check the row count in Storage — nothing
+                    Which is the point. Check the row count in Storage: nothing
                     from that statement is there.
                   </span>
                 </p>
@@ -257,7 +257,7 @@ function Summary({
   if (!active) {
     return (
       <p className="text-muted text-[11px]">
-        Nothing open. Statements still run transactionally — the engine opens an
+        Nothing open. Statements still run transactionally: the engine opens an
         implicit transaction around each one and commits it, which is why a
         multi-row INSERT that fails leaves nothing behind.
       </p>
@@ -269,7 +269,7 @@ function Summary({
       {failed ? (
         <p className="font-mono text-[11px] text-red-600 dark:text-red-400">
           A statement in this transaction failed. Nothing else will run until it
-          ends — COMMIT will roll it back.
+          ends. COMMIT will roll it back.
         </p>
       ) : null}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-4">
@@ -294,7 +294,7 @@ function Summary({
         <p className="text-muted text-[11px]">
           {formatCount(active.pages_written)} writes cost{" "}
           {formatCount(active.pages_held)} before-image
-          {active.pages_held === 1 ? "" : "s"} — a page is captured once,
+          {active.pages_held === 1 ? "" : "s"}. A page is captured once,
           however many times it changes.
         </p>
       ) : null}

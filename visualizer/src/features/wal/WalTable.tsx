@@ -87,7 +87,7 @@ export function WalTable({
       </table>
       {wal.truncated_tail ? (
         <p className="px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
-          The last record in the file is incomplete — the process died part-way
+          The last record in the file is incomplete. The process died part-way
           through writing it. Recovery stops here, which is correct.
         </p>
       ) : null}
@@ -117,7 +117,7 @@ function Row({
         "border-t border-[var(--border-subtle)]",
         !durable && "opacity-60",
       )}
-      title={durable ? undefined : "Staged in memory — not on the disk yet"}
+      title={durable ? undefined : "Staged in memory, not on the disk yet"}
     >
       <td className="text-muted px-2 py-1 tabular-nums">{record.lsn}</td>
       <td className="px-2 py-1 tabular-nums">
@@ -162,7 +162,7 @@ function Row({
         ) : (
           <span
             className="text-muted"
-            title="Redo only — this page was already captured"
+            title="Redo only. This page was already captured"
           >
             —
           </span>
@@ -212,7 +212,7 @@ export function WalCounters({ wal }: { wal: WalResponse }) {
             ? `${formatCount(Math.round(commitsPerSecond))}/s`
             : "—"
         }
-        hint="One second divided by the fsync. Nothing about how much work each transaction did — which is why real systems batch commits."
+        hint="One second divided by the fsync. Nothing about how much work each transaction did, which is why real systems batch commits."
       />
       <Stat
         label="images avoided"

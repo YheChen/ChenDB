@@ -111,7 +111,7 @@ def run_checkpoint(managed: DatabaseDep) -> CheckpointResponse:
 @router.post(
     "/crash",
     response_model=CrashResponse,
-    summary="Simulate a crash — destroys uncommitted work, then recovers",
+    summary="Simulate a crash: destroys uncommitted work, then recovers",
 )
 def simulate_crash(managed: DatabaseDep, workspace: WorkspaceDep) -> CrashResponse:
     """Abandon the handle without flushing, reopen, and report what survived.

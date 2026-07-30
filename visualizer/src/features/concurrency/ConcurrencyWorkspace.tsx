@@ -105,7 +105,7 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
               <Stat
                 label="frozen xid"
                 value={formatCount(sessions.data.frozen_xid)}
-                hint="Ids below this committed before this process started. ChenDB's entire commit log, in one number — possible only because a rollback here physically removes the work."
+                hint="Ids below this committed before this process started. ChenDB's entire commit log, in one number, possible only because a rollback here physically removes the work."
               />
               <Stat
                 label="next xid"
@@ -114,7 +114,7 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
               <Stat
                 label="vacuum horizon"
                 value={formatCount(sessions.data.oldest_snapshot_xmin)}
-                hint="The oldest open snapshot. Nothing deleted at or above this can be reclaimed — a long-running transaction holds it down, which is the same mechanism behind PostgreSQL's most common 'why is my disk full'."
+                hint="The oldest open snapshot. Nothing deleted at or above this can be reclaimed. A long-running transaction holds it down, which is the same mechanism behind PostgreSQL's most common 'why is my disk full'."
               />
             </dl>
             {vacuum.data ? (
@@ -162,7 +162,7 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
           </div>
           <p className="text-muted text-[11px]">
             {note ??
-              "Each of these loads a statement into both consoles. You run them — in the order the hint gives — because the order is the thing being demonstrated."}
+              "Each of these loads a statement into both consoles. You run them, in the order the hint gives, because the order is the thing being demonstrated."}
           </p>
         </div>
       </Panel>
@@ -203,7 +203,7 @@ export function ConcurrencyWorkspace({ databaseId }: { databaseId: string }) {
       <Panel
         className="min-h-[160px] shrink-0"
         title="Locks"
-        subtitle="writers only — a reader takes none"
+        subtitle="writers only; a reader takes none"
       >
         {locks.isPending ? (
           <Spinner label="Reading the lock table" />

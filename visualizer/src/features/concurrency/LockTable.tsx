@@ -26,7 +26,7 @@ export function LockTable({ locks }: { locks: LockTableResponse }) {
     return (
       <EmptyState
         title="Nothing is locked"
-        hint="Which is the usual state. A reader never takes a lock — only two writers on the same row need one."
+        hint="Which is the usual state. A reader never takes a lock; only two writers on the same row need one."
       />
     );
   }
@@ -47,7 +47,7 @@ export function LockTable({ locks }: { locks: LockTableResponse }) {
               key={entry.resource}
               className="border-t border-[var(--border-subtle)]"
             >
-              <td className="px-2 py-1" title="table : page . slot — one row">
+              <td className="px-2 py-1" title="table : page . slot, one row">
                 {entry.resource}
               </td>
               <td className="px-2 py-1">

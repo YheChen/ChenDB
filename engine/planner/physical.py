@@ -769,7 +769,7 @@ def _plan_chain(
         alternatives.append(
             Alternative(
                 description=(
-                    f"{_order_of(result.node)} — an outer join runs where it was "
+                    f"{_order_of(result.node)}: an outer join runs where it was "
                     f"written, so the search may not reorder across it"
                 ),
                 access_path=result.node.node_type,
@@ -911,7 +911,7 @@ def _greedy_join_order(
         Alternative(
             description=(
                 f"greedy over {len(relations)} tables, above the "
-                f"{MAX_TABLES_TO_ENUMERATE}-table enumeration limit — "
+                f"{MAX_TABLES_TO_ENUMERATE}-table enumeration limit, "
                 f"this may not be the cheapest order"
             ),
             access_path="GreedyJoinOrder",

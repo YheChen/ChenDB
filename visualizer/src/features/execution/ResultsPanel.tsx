@@ -250,7 +250,7 @@ function CostFooter({ result }: { result: QueryResultModel }) {
       {accessPath(result.plan) ? (
         <Badge
           tone="neutral"
-          title="The access path the planner actually chose. An index scan needs an index covering the predicate and a cost model that believes it is cheaper — EXPLAIN shows what it rejected."
+          title="The access path the planner actually chose. An index scan needs an index covering the predicate and a cost model that believes it is cheaper. EXPLAIN shows what it rejected."
         >
           {accessPath(result.plan)}
         </Badge>

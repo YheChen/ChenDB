@@ -263,7 +263,7 @@ class BTreeNode:
         if payload is None:
             raise CorruptPageError(
                 f"page {self.page_id}: slot {index} is dead, but B+ tree nodes "
-                f"have no tombstones — delete_at removes entries outright"
+                f"have no tombstones; delete_at removes entries outright"
             )
         return self._decode(payload)
 

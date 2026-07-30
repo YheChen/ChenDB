@@ -95,7 +95,7 @@ export function SessionConsole({
               snapshot {info.snapshot}
             </p>
           ) : (
-            <p className="text-muted">no snapshot — nothing read yet</p>
+            <p className="text-muted">no snapshot; nothing read yet</p>
           )}
           <p className="text-muted flex flex-wrap gap-x-3">
             <span>{info?.statements ?? 0} stmt</span>

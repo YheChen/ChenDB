@@ -63,7 +63,7 @@ export function RecoveryPanel({ report }: { report: RecoveryReportModel }) {
           detail={`${formatCount(report.pages_redone)} replayed`}
         >
           <span className="text-muted">
-            {formatCount(report.pages_skipped)} already current — the page's own
+            {formatCount(report.pages_skipped)} already current: the page's own
             LSN was past the record's
           </span>
         </Phase>
@@ -75,7 +75,7 @@ export function RecoveryPanel({ report }: { report: RecoveryReportModel }) {
         >
           <span className="text-muted">
             {report.losers.length === 0
-              ? "nothing to undo — every transaction finished"
+              ? "nothing to undo; every transaction finished"
               : "the interrupted transactions' pages, restored from their before-images"}
           </span>
         </Phase>
@@ -83,7 +83,7 @@ export function RecoveryPanel({ report }: { report: RecoveryReportModel }) {
 
       {report.truncated_tail ? (
         <p className="text-muted">
-          The last record in the log was incomplete — the process died part-way
+          The last record in the log was incomplete. The process died part-way
           through writing it. Expected after a crash, and not corruption.
         </p>
       ) : null}
