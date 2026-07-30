@@ -39,6 +39,7 @@ strings pays roughly 3 bytes per row per column here.
 
 from __future__ import annotations
 
+import math
 import struct
 from abc import ABC, abstractmethod
 from enum import IntEnum
@@ -47,6 +48,8 @@ from typing import Any, ClassVar, Final
 from engine.errors import SerializationError, TypeMismatchError
 
 __all__ = [
+    "INT64_MAX",
+    "INT64_MIN",
     "BooleanCodec",
     "Codec",
     "DataType",
@@ -62,8 +65,11 @@ _FLOAT64: Final = struct.Struct("<d")
 _UINT8: Final = struct.Struct("<B")
 _UINT32: Final = struct.Struct("<I")
 
-_INT64_MIN: Final = -(2**63)
-_INT64_MAX: Final = 2**63 - 1
+#: The range of an ``INTEGER``. Public because the expression evaluator needs
+#: the same bound: an arithmetic result that does not fit is an error there
+#: too, and two copies of a constant are two chances to disagree.
+INT64_MIN: Final = -(2**63)
+INT64_MAX: Final = 2**63 - 1
 
 
 class DataType(IntEnum):
@@ -164,9 +170,9 @@ class IntegerCodec(Codec):
         # silently change a value's type.
         if isinstance(value, bool) or not isinstance(value, int):
             raise TypeMismatchError(f"expected INTEGER, got {python_type_name(value)}")
-        if not _INT64_MIN <= value <= _INT64_MAX:
+        if not INT64_MIN <= value <= INT64_MAX:
             raise TypeMismatchError(
-                f"integer {value} does not fit in 64 bits [{_INT64_MIN}, {_INT64_MAX}]"
+                f"integer {value} does not fit in 64 bits [{INT64_MIN}, {INT64_MAX}]"
             )
 
     def encode(self, value: Any) -> bytes:
@@ -178,7 +184,35 @@ class IntegerCodec(Codec):
 
 
 class FloatCodec(Codec):
-    """IEEE-754 double."""
+    """IEEE-754 double, restricted to the finite ones.
+
+    **NaN and the infinities are refused**, and that restriction is the whole
+    interesting part of this codec. It is not squeamishness about odd values; it
+    is that IEEE comparison is a *partial* order and every layer above here
+    assumes a total one:
+
+    * ``ORDER BY f`` returned ``2.0, NaN, 1.0, inf`` — literally unsorted, because
+      Python's sort compares with ``<`` and every comparison against NaN is
+      false. A sort that silently does not sort is the worst thing in this list.
+    * ``MIN``/``MAX`` seeded themselves with the first value and never displaced
+      it, so the answer depended on insertion order.
+    * :mod:`engine.index.key` orders NaN *above* ``+inf`` by its bit pattern,
+      while the evaluator says ``NaN > 398.0`` is false. So an index scan and a
+      sequential scan returned different rows for the same query — adding an
+      index changed the answer.
+
+    PostgreSQL keeps them and defines a total order instead, with NaN equal to
+    itself and greater than everything. That is the more complete answer and it
+    is four coordinated changes: comparison, sort, the aggregates, and the key
+    encoding. Refusing costs one check and removes the whole class today, so it
+    is what ChenDB does — and it mirrors ``INTEGER`` being exactly int64 rather
+    than Python's unbounded integer. SQLite converts a non-finite result to NULL
+    on store, which is a third answer and the only one that loses data silently.
+
+    An arithmetic result is checked the same way, in
+    :func:`~engine.executor.expression.check_numeric_range`, so ``1e308 * 10``
+    cannot produce a value this column would reject.
+    """
 
     data_type: ClassVar[DataType] = DataType.FLOAT
     fixed_size: ClassVar[int | None] = 8
@@ -186,6 +220,11 @@ class FloatCodec(Codec):
     def validate(self, value: Any) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeMismatchError(f"expected FLOAT, got {python_type_name(value)}")
+        if not math.isfinite(value):
+            raise TypeMismatchError(
+                f"FLOAT cannot store {value}; NaN and infinity have no total "
+                f"order, so a sort or an index over them would not be sorted"
+            )
 
     def encode(self, value: Any) -> bytes:
         # Widening int to float here mirrors SQL, where `1` is a valid value

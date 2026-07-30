@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from engine.errors import BindingError, SchemaError
 from engine.parser.ast import (
@@ -547,6 +547,34 @@ def _reject_aggregates(expression: Expression, where: str, *, hint: str = "") ->
     )
 
 
+def _require_predicate(expression: Expression, clause: str, *, hint: str = "") -> None:
+    """Refuse a condition that is not a boolean, when the type is already known.
+
+    ``WHERE v`` over an INTEGER column is not a condition, and until Milestone 17
+    it silently matched nothing: the filter asked ``value is True``, ``5`` is not,
+    and a rejected row looks exactly like a row that failed a test. The runtime
+    now raises (:func:`~engine.executor.expression.is_true`), but the honest
+    place to say so is here, before a page is read — and a bind error carries the
+    span, so the editor underlines the offending expression.
+
+    Only refuses when :func:`_static_type` *knows* the type. It returns ``None``
+    for anything it cannot work out statically, and guessing would reject valid
+    queries; those are caught at runtime instead. Two checks rather than one,
+    because neither covers the other.
+    """
+    static = _static_type(expression)
+    if static is None or static is DataType.BOOLEAN:
+        return
+    raise BindingError(
+        f"{clause} must be a boolean, not {static.sql_name}; "
+        f"a bare value is not a condition" + (f" — {hint}" if hint else ""),
+        start=expression.span.start,
+        end=expression.span.end,
+        line=expression.span.line,
+        column=expression.span.column,
+    )
+
+
 def _label_of(expression: Expression) -> str:
     """A readable name for an aggregate, for EXPLAIN and error messages."""
     if isinstance(expression, FunctionCall):
@@ -557,6 +585,52 @@ def _label_of(expression: Expression) -> str:
     if isinstance(expression, Literal):
         return repr(expression.value)
     return expression.node_type.lower()
+
+
+#: Aggregates that need arithmetic, and so a number to do it on.
+_NUMERIC_AGGREGATES: Final = frozenset({AggregateFunction.SUM, AggregateFunction.AVG})
+
+
+def _require_aggregable(call: FunctionCall) -> None:
+    """Refuse ``SUM`` and ``AVG`` over a type they cannot add up.
+
+    Three bugs came out of the missing check, and each was worse than it looks:
+
+    * ``SUM(text)`` returned ``'abd'``. Python's ``+`` concatenates strings, the
+      accumulator never asked what it was adding, and the result column was
+      labelled TEXT — so the engine reported a string as the sum of a column.
+    * ``AVG(text)`` raised a bare ``TypeError`` from ``str / int``. Not a
+      :class:`~engine.errors.ChenDBError`, so it escaped the error envelope
+      entirely and would have been a 500 rather than a 400.
+    * ``SUM(boolean)`` returned ``True`` over one row and ``2`` over two, still
+      declaring the type BOOLEAN — a result whose Python type depended on how
+      many rows were in the group, and which ``SUM(b) > 0`` then refused to
+      compare because the *declared* type disagreed with the value.
+
+    ``MIN`` and ``MAX`` are deliberately left alone. They only ever compare and
+    return one of the inputs, so they are total on every type ChenDB has —
+    ``MAX(name)`` and ``MAX(active)`` both mean something. PostgreSQL has no
+    ``min(boolean)``, but refusing it here would be strictness for its own sake.
+
+    ``COUNT`` takes anything, including ``*``: it counts rows, not values.
+    """
+    if call.function not in _NUMERIC_AGGREGATES or call.argument is None:
+        return
+    argument = _static_type(call.argument)
+    if argument is None or argument in (DataType.INTEGER, DataType.FLOAT):
+        return
+    raise BindingError(
+        f"{call.function.value} needs a number, not {argument.sql_name}"
+        + (
+            "; use COUNT to count rows or MIN/MAX to compare them"
+            if argument in (DataType.TEXT, DataType.BOOLEAN)
+            else ""
+        ),
+        start=call.span.start,
+        end=call.span.end,
+        line=call.span.line,
+        column=call.span.column,
+    )
 
 
 def _plan_aggregation(
@@ -580,6 +654,7 @@ def _plan_aggregation(
 
     def register(call: FunctionCall) -> BoundAggregate:
         # `SELECT COUNT(*) FROM t HAVING COUNT(*) > 1` computes it once.
+        _require_aggregable(call)
         key = _signature(call)
         if key not in seen:
             slot = len(group_keys) + len(aggregates)
@@ -954,6 +1029,7 @@ def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect
         assert entry is not None
         condition = bind_expression(clause.on, scope)
         _reject_aggregates(condition, "a JOIN condition")
+        _require_predicate(condition, "a JOIN condition")
         joins.append(BoundJoin(binding_name=entry.binding_name, condition=condition))
 
     where = bind_expression(statement.where, scope) if statement.where else None
@@ -964,6 +1040,7 @@ def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect
         _reject_aggregates(
             where, "WHERE", hint="use HAVING for a condition on an aggregate"
         )
+        _require_predicate(where, "WHERE", hint="did you mean a comparison?")
 
     group_keys = tuple(bind_expression(key, scope) for key in statement.group_by)
     for key in group_keys:
@@ -977,6 +1054,8 @@ def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect
             output_columns.append(ResultColumn(name, _static_type(expression)))
 
     having = bind_expression(statement.having, scope) if statement.having else None
+    if having is not None:
+        _require_predicate(having, "HAVING")
     if having is not None and not group_keys and not _any_aggregate(having):
         raise BindingError(
             "HAVING without GROUP BY needs an aggregate; a plain condition "
@@ -1200,10 +1279,29 @@ def identity_projection(
     return projections, outputs
 
 
+def _writable_scope(info: Any) -> Scope:
+    """A one-table scope that knows the table's *name*.
+
+    ``UPDATE`` and ``DELETE`` used to bind against a bare :class:`Schema`, which
+    :func:`bind_expression` wraps in a scope whose binding name is the empty
+    string. So the table had no name to qualify with and
+    ``DELETE FROM child WHERE child.c_int = 2`` was refused — with
+    ``no table named 'child' in FROM; this query has `` and nothing after the
+    ``has``, because the one entry it could have listed was nameless.
+
+    Standard SQL allows the target table to be qualified, and both SQLite and
+    PostgreSQL accept it. Naming the entry fixes the refusal and the message
+    together.
+    """
+    return Scope.of(info.schema, info.name)
+
+
 def bind_delete(statement: DeleteStatement, catalog: CatalogLike) -> BoundDelete:
     """Bind a ``DELETE``. Only the table and the predicate need resolving."""
     info = _resolve_writable_table(statement.table.name, catalog, statement)
-    where = bind_expression(statement.where, info.schema) if statement.where else None
+    where = (
+        bind_expression(statement.where, _writable_scope(info)) if statement.where else None
+    )
     return BoundDelete(
         table_name=info.name,
         schema=info.schema,
@@ -1223,6 +1321,7 @@ def bind_update(statement: UpdateStatement, catalog: CatalogLike) -> BoundUpdate
     """
     info = _resolve_writable_table(statement.table.name, catalog, statement)
     schema = info.schema
+    scope = _writable_scope(info)
 
     assignments: list[BoundAssignment] = []
     seen: dict[int, str] = {}
@@ -1249,11 +1348,11 @@ def bind_update(statement: UpdateStatement, catalog: CatalogLike) -> BoundUpdate
             )
         seen[index] = assignment.column
 
-        value = bind_expression(assignment.value, schema)
+        value = bind_expression(assignment.value, scope)
         _check_assignable(assignment, schema[index], value)
         assignments.append(BoundAssignment(index, schema[index], value))
 
-    where = bind_expression(statement.where, schema) if statement.where else None
+    where = bind_expression(statement.where, scope) if statement.where else None
     return BoundUpdate(
         table_name=info.name,
         schema=schema,

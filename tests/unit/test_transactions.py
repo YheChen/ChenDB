@@ -315,9 +315,12 @@ def test_a_rolled_back_create_index_leaves_the_file_unchanged(db: Database):
     before = digest(db)
     db.begin()
     db.create_index("t_label", "t", "label")
-    assert [index.name for index in db.indexes()] == ["t_label"]
+    # `t` has a PRIMARY KEY, so `t_pkey` was built with the table — before this
+    # transaction began, and therefore not part of what rolls back. The
+    # assertion is about what this transaction did, which is the point.
+    assert [index.name for index in db.indexes()] == ["t_label", "t_pkey"]
     db.rollback()
-    assert db.indexes() == []
+    assert [index.name for index in db.indexes()] == ["t_pkey"]
     assert digest(db) == before
 
 

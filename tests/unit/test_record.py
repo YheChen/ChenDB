@@ -86,12 +86,36 @@ def test_ninth_column_null_flips_a_bit_in_the_second_byte():
     assert raw[1] == 0b0000_0001
 
 
-def test_float_special_values_survive():
+def test_negative_zero_survives():
+    """``-0.0`` is finite, so it round-trips — and it is worth pinning.
+
+    It equals ``0.0`` and has a different bit pattern, which is exactly the sort
+    of value a codec can lose without any test noticing.
+    """
     schema = Schema.of(Column("x", DataType.FLOAT))
-    for value in (float("inf"), float("-inf"), -0.0):
-        assert decode_record(schema, encode_record(schema, (value,))) == (value,)
-    (nan,) = decode_record(schema, encode_record(schema, (float("nan"),)))
-    assert math.isnan(nan)
+    (value,) = decode_record(schema, encode_record(schema, (-0.0,)))
+    assert value == 0.0
+    assert math.copysign(1.0, value) == -1.0
+
+
+def test_nan_and_infinity_are_refused():
+    """This test used to assert that NaN and the infinities round-trip.
+
+    They did, and the codec was happy to store them — but nothing above the
+    codec could cope, because IEEE comparison is a partial order:
+    ``ORDER BY f`` came back genuinely unsorted, ``MIN``/``MAX`` depended on
+    insertion order, and a B+ tree index (which orders NaN above ``+inf`` by its
+    bit pattern) returned different rows than a sequential scan for the same
+    predicate. Round-tripping was the *only* property they had.
+
+    Milestone 17 made ``FLOAT`` mean a finite double, the way ``INTEGER`` already
+    meant exactly int64. PostgreSQL instead defines a total order over them; that
+    is the more complete answer and four coordinated changes rather than one.
+    """
+    schema = Schema.of(Column("x", DataType.FLOAT))
+    for value in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(TypeMismatchError, match="no total order"):
+            encode_record(schema, (value,))
 
 
 # -- validation ------------------------------------------------------------

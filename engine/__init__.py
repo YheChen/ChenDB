@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -77,6 +77,7 @@ MILESTONE_FEATURES: tuple[str, ...] = (
     "MVCC",
     "UPDATE and DELETE",
     "joins and aggregation",
+    "enforced primary keys",
 )
 """What the engine can do, in the order the milestones added it.
 
@@ -107,6 +108,14 @@ MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15, 16})
   paths, and the browser workspace backed by IndexedDB. *Where* the bytes are
   kept is not a capability either — the file format is byte-identical, and a
   page written in the browser has the same checksum it would on disk.
+
+Milestone 17 is *not* on this list, and that is worth a word. It shipped a
+differential tester, which is a statement about the engine like Milestone 12's
+CI — but it also found seven real bugs, and closing one of them gave the engine
+something it could not do before: **a PRIMARY KEY is now enforced.** The index
+machinery had existed since Milestone 5 and nothing connected it to the
+constraint, which two milestone documents recorded as a known gap. That is a
+capability, so it is named above rather than excused here.
 """
 
 __all__ = [

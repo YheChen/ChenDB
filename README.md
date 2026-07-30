@@ -72,7 +72,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.6.0 — Milestone 16 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation)
+ChenDB 1.7.0 — Milestone 17 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -151,7 +151,7 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
 | **Queries** | inner joins with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
 | **Execution** | volcano operators (scan / filter / project / join / aggregate / sort / limit) · three-valued logic · step-through debugger with real cancellation |
-| **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk |
+| **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk · a `PRIMARY KEY` builds a real unique index |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
 | **Planner** | logical and physical plans · statistics · a cost model calibrated by measurement · predicate pushdown · System R join-order search · `EXPLAIN` |
 | **Buffer pool** | write-back · exact LRU · counters for every frame |
@@ -160,8 +160,9 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
+| **Correctness** | 1,409 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
-Four claims worth checking rather than believing:
+Five claims worth checking rather than believing:
 
 **A committed transaction survives `SIGKILL` without a sync.** The pages may
 still be in memory; the log is enough to put them back. An uncommitted one is
@@ -183,6 +184,13 @@ because a build costs more than a probe, and pushes your `WHERE` below the join.
 version and appends a new one, so a transaction that took its snapshot first
 still reads the old value — and the table panel shows `rows 4 · versions 5`
 until you press Vacuum. `tests/unit/test_dml.py` asserts it.
+
+**The answers agree with SQLite's.** Random schemas, random rows and random
+queries are run against both engines and compared — 160,000 query pairs in two
+minutes, 1,024 of them on every push. It found seven bugs on its first campaign,
+two of which returned a wrong answer without any sign of trouble.
+`tests/differential/` is the suite and `docs/milestone-17-differential.md` lists
+all seven.
 
 Deliberately not built — and each has a paragraph in the milestone docs saying
 why: serializable isolation, `RETURNING`, heap-only tuples, outer joins, bushy
@@ -323,6 +331,8 @@ change the system observed.
 | `python examples/milestone10_mvcc.py` | narrated walkthrough of snapshots, locks and deadlocks |
 | `python examples/milestone11_dml.py` | narrated walkthrough of `UPDATE`, `DELETE` and the Halloween problem |
 | `python examples/milestone13_joins.py` | narrated walkthrough of joins, join order and aggregation |
+| `python examples/milestone17_differential.py` | the seven bugs SQLite found, and why a test can agree with one |
+| `python scripts/differential.py --seeds 0:5000` | a real differential campaign, ~80,000 query pairs |
 | `make ci` | lint, typecheck, both test suites and every example — CI's order |
 | `make demo-sql` | every SQL statement the explorer's buttons will produce |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
@@ -351,6 +361,7 @@ change the system observed.
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
 | [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
 | [Milestone 12](docs/milestone-12-ci.md) | CI, and running every demo button against the real engine |
+| [Milestone 17](docs/milestone-17-differential.md) | seven bugs a second engine found, and the line between a rule and an excuse |
 | [Milestone 16](docs/milestone-16-persistence.md) | keeping a database in IndexedDB, and the escape hatch persistence needs |
 | [Milestone 15](docs/milestone-15-wasm.md) | shipping a database engine as a static file, and the three things that broke |
 | [Milestone 14](docs/milestone-14-transport.md) | running the whole engine in a browser tab, and the seam that allows it |
