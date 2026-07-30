@@ -130,7 +130,7 @@ function PageHeaderSummary({ page }: { page: PageDetailModel }) {
         <Field
           label="lsn"
           value={summary.lsn}
-          title="Log sequence number. Always 0 until the write-ahead log arrives in Milestone 9."
+          title="Log sequence number: the log record that last described this page. Recovery replays anything whose LSN is newer than this, and skips the rest."
         />
         <Field label="next page" value={summary.next_page_id ?? "—"} />
         <Field label="page size" value={formatBytes(page.page_size)} />
