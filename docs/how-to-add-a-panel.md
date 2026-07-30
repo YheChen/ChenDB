@@ -167,3 +167,40 @@ Check it with:
 ```bash
 make demo-sql
 ```
+
+## Don't tell the user a feature is missing
+
+A tooltip is written once, while it is true, and then nobody reads it again. Six
+of them had gone stale by Milestone 16 — `"nothing executes yet (that is
+Milestone 3)"`, `"There is no buffer pool yet"`, `"No index exists until
+Milestone 5"` — every one a confident statement of fact about an engine that had
+done that thing for eight milestones or more.
+
+`src/test/uiText.test.ts` now reads every `.ts`/`.tsx` under `src/`, strips
+comments, and fails on text that defers to a milestone:
+
+```
+src/features/pages/PageInspector.tsx:128
+  title="Log sequence number. Always 0 until the write-ahead log arrives in …"
+  → reads as pending. If it has shipped, describe what it does; if not, hide
+    the control.
+```
+
+The comment/string division is the whole test. *"The buffer pool arrives in
+Milestone 7"* in a comment is documentation of history and belongs there; the
+same sentence in a `title=` is a lie told to a user.
+
+So:
+
+- **Describe what it does, not what it lacks.** "A hit served from the buffer
+  pool costs about a third of a miss" instead of "there is no buffer pool yet".
+- **A past reference is fine** — the transactions demo says "Before Milestone 8
+  they would have stayed", which is the point of it.
+- **For something genuinely unbuilt, use the feature flag**, not prose. `/health`
+  reports what exists and the UI hides the rest; see `useFeature` and the WASM
+  build's `execution_stepping`.
+
+And do not hardcode a value the engine can tell you. The results footer's access
+path badge was the literal string `seq scan` from Milestone 3 to Milestone 16, so
+every index scan chosen from Milestone 5 on was mislabelled — persuasively, by
+naming a real access path with total confidence.
