@@ -973,7 +973,7 @@
         "type": "object"
       },
       "FrameModel": {
-        "description": "One slot of the pool.\n\nThere is no ``pin_count``. ChenDB's pool copies out of a frame rather than\nlending it, so nothing can be holding one when it is reused and a pin count\nwould always read zero \u2014 a number that never prevents anything. See\n``engine/storage/buffer.py`` for when that stops being true.",
+        "description": "One slot of the pool.\n\nThere is no ``pin_count``. ChenDB's pool copies out of a frame rather than\nlending it, so nothing can be holding one when it is reused and a pin count\nwould always read zero, a number that never prevents anything. See\n``engine/storage/buffer.py`` for when that stops being true.",
         "properties": {
           "dirty": {
             "description": "Written since it was loaded, so the disk copy is stale",
@@ -1168,7 +1168,7 @@
         "type": "object"
       },
       "IndexSearchResponse": {
-        "description": "One traced point lookup.\n\n``path`` is what the tree view highlights: the page ids from root to leaf.\n``pages_visited`` can exceed its length when duplicates spill across leaves\nand the search has to step right \u2014 which is exactly the case worth seeing.",
+        "description": "One traced point lookup.\n\n``path`` is what the tree view highlights: the page ids from root to leaf.\n``pages_visited`` can exceed its length when duplicates spill across leaves\nand the search has to step right, which is exactly the case worth seeing.",
         "properties": {
           "found": {
             "title": "Found",
@@ -1498,7 +1498,7 @@
         "type": "object"
       },
       "OperatorNodeModel": {
-        "description": "One node of the physical plan: what it will cost, and what it did.\n\nEstimated and actual sit side by side because the gap between them is the\nsingle most useful thing a plan view can show. A plan that is slow is almost\nalways a plan whose row estimate was wrong, and no amount of staring at the\nchosen operators reveals that \u2014 only the comparison does.",
+        "description": "One node of the physical plan: what it will cost, and what it did.\n\nEstimated and actual sit side by side because the gap between them is the\nsingle most useful thing a plan view can show. A plan that is slow is almost\nalways a plan whose row estimate was wrong, and no amount of staring at the\nchosen operators reveals that, only the comparison does.",
         "properties": {
           "children": {
             "description": "operator_ids of inputs, left to right",
@@ -1931,7 +1931,7 @@
         "type": "object"
       },
       "ParseResponse": {
-        "description": "Tokens, AST and error together \u2014 all three are partial-result friendly.\n\n``tokens`` can be non-empty while ``statements`` is empty and ``error`` is\nset: that is a half-typed query, the normal state of one being written.",
+        "description": "Tokens, AST and error together: all three are partial-result friendly.\n\n``tokens`` can be non-empty while ``statements`` is empty and ``error`` is\nset: that is a half-typed query, the normal state of one being written.",
         "properties": {
           "ast": {
             "$ref": "#/components/schemas/AstTreeModel"
@@ -4058,7 +4058,7 @@
     },
     "/api/v1/databases/{database_id}/checkpoint": {
       "post": {
-        "description": "Refused while a transaction is open \u2014 see :meth:`Database.checkpoint`.",
+        "description": "Refused while a transaction is open, see :meth:`Database.checkpoint`.",
         "operationId": "run_checkpoint_api_v1_databases__database_id__checkpoint_post",
         "parameters": [
           {
@@ -4104,7 +4104,7 @@
     },
     "/api/v1/databases/{database_id}/crash": {
       "post": {
-        "description": "Abandon the handle without flushing, reopen, and report what survived.\n\nThe row counts are gathered on both sides of the crash by this endpoint\nrather than left to the caller, because a caller that forgot to ask first\nwould have nothing to compare against \u2014 and \"some rows are gone\" is not a\ndemonstration without the number they were.",
+        "description": "Abandon the handle without flushing, reopen, and report what survived.\n\nThe row counts are gathered on both sides of the crash by this endpoint\nrather than left to the caller, because a caller that forgot to ask first\nwould have nothing to compare against, and \"some rows are gone\" is not a\ndemonstration without the number they were.",
         "operationId": "simulate_crash_api_v1_databases__database_id__crash_post",
         "parameters": [
           {
@@ -4581,7 +4581,7 @@
     },
     "/api/v1/databases/{database_id}/pages": {
       "get": {
-        "description": "Summarize all pages in the file.\n\nReads every page, so it is O(pages) syscalls \u2014 fine for the sizes a\nvisualizer works with, and it will get cheap once Milestone 7's buffer pool\nkeeps hot pages in memory.",
+        "description": "Summarize all pages in the file.\n\nReads every page, so it is O(pages) syscalls, fine for the sizes a\nvisualizer works with, and it will get cheap once Milestone 7's buffer pool\nkeeps hot pages in memory.",
         "operationId": "list_pages_api_v1_databases__database_id__pages_get",
         "parameters": [
           {
@@ -4737,7 +4737,7 @@
     },
     "/api/v1/databases/{database_id}/query": {
       "post": {
-        "description": "Execute every statement in ``sql``, returning one result each.\n\nA list rather than a single object because a script is a normal thing to\nsend: ``CREATE TABLE \u2026; INSERT \u2026; SELECT \u2026`` is one request and three results.\n\nUnlike ``/parse``, a failure here *is* a failed request \u2014 422 with the source\nposition attached \u2014 because there is no useful partial answer to return.\n\n``session`` says whose transaction this statement belongs to. Two consoles\non one database pass different ones and get different transactions, which\ncan then see different data and block each other \u2014 the whole of Milestone\n10 from the client's side. Omitting it means the default session, which is\nwhat every request before Milestone 10 was doing implicitly.",
+        "description": "Execute every statement in ``sql``, returning one result each.\n\nA list rather than a single object because a script is a normal thing to\nsend: ``CREATE TABLE \u2026; INSERT \u2026; SELECT \u2026`` is one request and three results.\n\nUnlike ``/parse``, a failure here *is* a failed request (422 with the source\nposition attached) because there is no useful partial answer to return.\n\n``session`` says whose transaction this statement belongs to. Two consoles\non one database pass different ones and get different transactions, which\ncan then see different data and block each other, which is the whole of\nMilestone 10 from the client's side. Omitting it means the default session, which is\nwhat every request before Milestone 10 was doing implicitly.",
         "operationId": "run_query_api_v1_databases__database_id__query_post",
         "parameters": [
           {
@@ -5540,7 +5540,7 @@
     },
     "/api/v1/databases/{database_id}/transactions/commit": {
       "post": {
-        "description": "Commit, unless a statement already failed \u2014 then this rolls back.\n\nPostgreSQL's behaviour, and the reason ``action`` reports the *outcome*\nrather than echoing the request: a caller that asked to commit and got a\nrollback needs to be told in the field it is going to switch on, not only in\nprose it might not render.",
+        "description": "Commit, unless a statement already failed, then this rolls back.\n\nPostgreSQL's behaviour, and the reason ``action`` reports the *outcome*\nrather than echoing the request: a caller that asked to commit and got a\nrollback needs to be told in the field it is going to switch on, not only in\nprose it might not render.",
         "operationId": "commit_transaction_api_v1_databases__database_id__transactions_commit_post",
         "parameters": [
           {
@@ -5653,7 +5653,7 @@
     },
     "/api/v1/databases/{database_id}/vacuum": {
       "post": {
-        "description": "Manual, on purpose.\n\nA background daemon in a teaching engine would make row counts move on\ntheir own while somebody was reading them, and the *reason* space is not\nreclaimed at delete time is exactly what this milestone is trying to show.\n\nReuses ``CheckpointResponse`` because it is answering the same question in\nthe same units \u2014 how much space came back \u2014 and a second near-identical\nmodel would only mean two things to keep in step.",
+        "description": "Manual, on purpose.\n\nA background daemon in a teaching engine would make row counts move on\ntheir own while somebody was reading them, and the *reason* space is not\nreclaimed at delete time is exactly what this milestone is trying to show.\n\nReuses ``CheckpointResponse`` because it is answering the same question in\nthe same units (how much space came back) and a second near-identical\nmodel would only mean two things to keep in step.",
         "operationId": "run_vacuum_api_v1_databases__database_id__vacuum_post",
         "parameters": [
           {

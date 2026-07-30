@@ -86,8 +86,8 @@ def run_query(
 
     ``session`` says whose transaction this statement belongs to. Two consoles
     on one database pass different ones and get different transactions, which
-    can then see different data and block each other. The whole of Milestone
-    10 from the client's side. Omitting it means the default session, which is
+    can then see different data and block each other, which is the whole of
+    Milestone 10 from the client's side. Omitting it means the default session, which is
     what every request before Milestone 10 was doing implicitly.
     """
     max_rows = payload.max_rows or request.app.state.config.max_rows_per_query

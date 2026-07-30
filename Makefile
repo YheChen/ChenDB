@@ -10,7 +10,7 @@ NPM     := npm --prefix visualizer
 
 .DEFAULT_GOAL := help
 .PHONY: help install engine server ui test test-engine test-api test-ui \
-        lint typecheck bench example examples types demo-sql wasm ci clean
+        lint typecheck bench example examples types types-check demo-sql wasm ci clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -35,7 +35,7 @@ ui:  ## Start the visualizer on localhost:5173
 wasm:  ## Build and serve the browser-only build (engine included, no server)
 	$(NPM) run preview:wasm
 
-ci: lint typecheck test examples  ## Everything CI runs, in the same order
+ci: lint typecheck types-check test examples  ## Everything CI runs, in the same order
 
 test: test-engine test-ui  ## Run every test
 
@@ -72,6 +72,11 @@ examples:  ## Run every narrated walkthrough, as CI does
 
 types:  ## Regenerate TypeScript types from the OpenAPI schema
 	$(BIN)/python scripts/generate_api_types.py
+
+types-check:  ## Fail if the committed types have drifted from the live schema
+	@$(BIN)/python scripts/generate_api_types.py > /dev/null
+	@git diff --exit-code -- docs/openapi.json visualizer/src/types/api.ts \
+		|| { echo "api.ts is stale, run 'make types' and commit"; exit 1; }
 
 coverage:  ## Python tests with a coverage report
 	$(BIN)/python -m pytest -q --cov=engine --cov-report=term-missing

@@ -104,7 +104,7 @@ class ParseRequest(RequestModel):
 
 
 class ParseResponse(ApiModel):
-    """Tokens, AST and error together, all three are partial-result friendly.
+    """Tokens, AST and error together: all three are partial-result friendly.
 
     ``tokens`` can be non-empty while ``statements`` is empty and ``error`` is
     set: that is a half-typed query, the normal state of one being written.
