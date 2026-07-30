@@ -71,7 +71,7 @@ def list_databases(workspace: WorkspaceDep) -> DatabaseListResponse:
             )
             for entry in workspace.list_databases()
         ],
-        # The directory name only — never an absolute path to the browser.
+        # The directory name only: never an absolute path to the browser.
         workspace=workspace.root.name,
     )
 

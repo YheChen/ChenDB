@@ -1,7 +1,7 @@
 /**
  * The page inspector: header fields, slot directory, decoded records, raw hex.
  *
- * Everything shown comes from `GET /pages/{id}` — real bytes read from the real
+ * Everything shown comes from `GET /pages/{id}`, real bytes read from the real
  * file. Nothing here is reconstructed client-side.
  */
 

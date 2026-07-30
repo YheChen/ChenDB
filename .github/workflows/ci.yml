@@ -7,7 +7,7 @@
 #
 # The jobs are split by what they need rather than by what they are, so a
 # failure names its own cause. `engine` proves the "no runtime dependencies"
-# claim by running on a bare interpreter with nothing installed — if that job
+# claim by running on a bare interpreter with nothing installed: if that job
 # passes and the others do not, the engine is fine and the server is not.
 
 name: CI
@@ -72,7 +72,7 @@ jobs:
       - run: pip install -e '.[server,dev]'
 
       - name: ruff check
-        # visualizer/src/lib holds wasmBootstrap.py — the browser's Python is
+        # visualizer/src/lib holds wasmBootstrap.py: the browser's Python is
         # held to the same standard as the engine's.
         run: ruff check engine tests benchmarks examples scripts visualizer/src/lib
 
@@ -91,7 +91,7 @@ jobs:
         run: |
           python scripts/generate_api_types.py
           git diff --exit-code -- docs/openapi.json visualizer/src/types/api.ts \
-            || { echo "::error::api.ts is stale — run 'make types' and commit"; exit 1; }
+            || { echo "::error::api.ts is stale, run 'make types' and commit"; exit 1; }
 
   frontend:
     name: Frontend typecheck, tests and build

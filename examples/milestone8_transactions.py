@@ -7,7 +7,7 @@ Six things: what a half-failed statement used to leave behind and what it leaves
 now, why the undo log is measured in pages rather than rows, how `CREATE TABLE`
 became atomic without the catalog learning what a transaction is, what a rollback
 has to fix beyond the bytes, what the failed state is for, and where the
-atomicity stops — which is where Milestone 9 starts.
+atomicity stops, which is where Milestone 9 starts.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def rule(title: str) -> None:
 
 
 def digest(db: Database) -> str:
-    """A hash of every page the meta page claims — the strongest "unchanged"."""
+    """A hash of every page the meta page claims. The strongest "unchanged"."""
     db.sync()
     return hashlib.sha256(db.path.read_bytes()[: db.page_count * db.page_size]).hexdigest()
 

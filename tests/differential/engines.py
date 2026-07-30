@@ -1,6 +1,6 @@
 """The two engines, behind one interface.
 
-Both adapters answer the same question — "run this, and tell me what happened" —
+Both adapters answer the same question ("run this, and tell me what happened")
 and both refuse to interpret. An :class:`Outcome` records whether the statement
 succeeded, the rows, the column names, a DML row count, and the *class* of any
 error. Never the error message, for anything the oracle branches on: two engines
@@ -53,7 +53,7 @@ class Outcome:
 
 @dataclass(slots=True)
 class _Failure:
-    """A setup that did not apply. Not a divergence — a broken fixture."""
+    """A setup that did not apply. Not a divergence, a broken fixture."""
 
     engine: str
     statement: str
@@ -67,7 +67,7 @@ class Run:
 
 
 def _state_sql(instance: Case) -> list[str]:
-    """``SELECT * ... ORDER BY <key>`` per table — a total order, so comparable.
+    """``SELECT * ... ORDER BY <key>`` per table, a total order, so comparable.
 
     The primary key is unique and non-null by construction, so this read-back has
     exactly one right answer and can be compared as a sequence. It is what makes
@@ -149,7 +149,7 @@ def sqlite_outcomes(instance: Case) -> Run:
 
     ``isolation_level=None`` turns off the driver's implicit transaction
     management, which is what makes an explicit ``BEGIN`` behave the way ChenDB's
-    does — without it, ``sqlite3`` opens and commits transactions on its own and
+    does, without it, ``sqlite3`` opens and commits transactions on its own and
     the DML rollback would not roll anything back.
     """
     run = Run()

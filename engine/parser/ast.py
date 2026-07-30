@@ -2,9 +2,9 @@
 
 Every node is a frozen dataclass carrying two things beyond its own contents:
 
-* ``node_id`` — a per-parse sequence number, so the visualizer can address a
+* ``node_id``. A per-parse sequence number, so the visualizer can address a
   node and the parser can report events about it;
-* ``span`` — the character range of the source it was built from, spanning
+* ``span``. The character range of the source it was built from, spanning
   *all* the tokens involved. Selecting a ``BinaryOp`` in the UI therefore
   highlights ``age >= 18``, not just the ``>=``.
 
@@ -116,7 +116,7 @@ class Node:
     def attributes(self) -> dict[str, Any]:
         """Scalar fields worth showing, excluding ``node_id`` and ``span``.
 
-        Enums are rendered by value and nested nodes are omitted — they are
+        Enums are rendered by value and nested nodes are omitted. They are
         already reachable through :meth:`children`.
         """
         out: dict[str, Any] = {}
@@ -330,7 +330,7 @@ class CreateTableStatement(Statement):
 
 @dataclass(frozen=True, slots=True)
 class BeginStatement(Statement):
-    """``BEGIN`` — from here, writes can be taken back.
+    """``BEGIN``, from here, writes can be taken back.
 
     No isolation level: there is one writer, so there is nothing to be isolated
     *from*. ``READ COMMITTED`` and friends arrive with MVCC in Milestone 10.
@@ -339,12 +339,12 @@ class BeginStatement(Statement):
 
 @dataclass(frozen=True, slots=True)
 class CommitStatement(Statement):
-    """``COMMIT`` — accept the work and discard the undo log."""
+    """``COMMIT``, accept the work and discard the undo log."""
 
 
 @dataclass(frozen=True, slots=True)
 class RollbackStatement(Statement):
-    """``ROLLBACK`` — put every touched page back as it was."""
+    """``ROLLBACK``, put every touched page back as it was."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,13 +352,13 @@ class ExplainStatement(Statement):
     """``EXPLAIN [ANALYZE] <statement>``.
 
     Wraps another statement rather than being a flag on it, so nothing
-    downstream has to check "am I being explained?" — the executor branches
+    downstream has to check "am I being explained?", the executor branches
     once, at the top.
 
     ``analyze`` here means PostgreSQL's ``EXPLAIN ANALYZE``: *run* the query and
     report actual rows beside the estimates. It is unrelated to the ``ANALYZE``
     statement, which gathers statistics. Sharing the word is SQL's fault, and
-    the collision is worth knowing about because the two do opposite things —
+    the collision is worth knowing about because the two do opposite things,
     one executes, the other only measures.
     """
 
@@ -368,7 +368,7 @@ class ExplainStatement(Statement):
 
 @dataclass(frozen=True, slots=True)
 class AnalyzeStatement(Statement):
-    """``ANALYZE [table]`` — recompute statistics. Omit the name for every table."""
+    """``ANALYZE [table]``, recompute statistics. Omit the name for every table."""
 
     table: TableRef | None = None
 
@@ -450,8 +450,8 @@ class DeleteStatement(Statement):
     """``DELETE FROM table [ WHERE expr ]``.
 
     ``where`` of ``None`` means every row, which is the correct reading and also
-    the most expensive mistake in SQL. Nothing here second-guesses it — a
-    confirmation prompt belongs in a client, not a grammar — but the executor's
+    the most expensive mistake in SQL. Nothing here second-guesses it (a
+    confirmation prompt belongs in a client, not a grammar) but the executor's
     message says how many rows went, so the mistake is at least visible.
     """
 
@@ -483,7 +483,7 @@ class JoinKind(StrEnum):
     """How unmatched rows are treated. The one thing a join's *name* decides.
 
     ``INNER`` drops a row with no partner. The other three keep it and fill the
-    missing side with NULLs — ``LEFT`` preserves the rows written to the left of
+    missing side with NULLs, ``LEFT`` preserves the rows written to the left of
     the keyword, ``RIGHT`` those to its right, ``FULL`` both.
 
     This is not a flag on a common case. An inner join is commutative and
@@ -517,7 +517,7 @@ class JoinClause(Node):
     """One ``JOIN b ON …`` appended to a ``FROM``.
 
     A flat list of these rather than a nested tree, because for an *inner* join
-    the written order is not the order it runs in — the planner reorders freely,
+    the written order is not the order it runs in. The planner reorders freely,
     and a tree here would suggest a nesting the user does not control. That is
     what the SQL standard means by joins being commutative and associative, and
     the whole reason join ordering is a search problem.

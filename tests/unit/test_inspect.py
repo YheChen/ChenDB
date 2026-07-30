@@ -20,7 +20,7 @@ def test_every_page_is_summarised_and_attributed(db: Database, sample_rows):
     assert [s.page_id for s in summaries] == list(range(db.page_count))
     by_owner = {s.page_id: s.owner for s in summaries}
     assert by_owner[META_PAGE_ID] == "meta"
-    # Every page now belongs to a named table — including the catalog's own.
+    # Every page now belongs to a named table: including the catalog's own.
     assert "chendb_tables" in by_owner.values()
     assert "chendb_columns" in by_owner.values()
     assert "users" in by_owner.values()
@@ -82,7 +82,7 @@ def test_a_deleted_row_is_a_live_slot_holding_a_dead_version(db: Database):
 
     Before MVCC, deleting cleared the slot and the inspector showed a tombstone.
     Now it writes four bytes of ``xmax`` into the row's header and leaves
-    everything else alone — because a transaction whose snapshot predates the
+    everything else alone, because a transaction whose snapshot predates the
     delete still has to be able to read the row.
 
     So the slot is still live, the record still decodes, and the *header* is the
@@ -110,7 +110,7 @@ def test_a_deleted_row_is_a_live_slot_holding_a_dead_version(db: Database):
 
 
 def test_vacuum_turns_a_dead_version_into_a_tombstone(db: Database):
-    # The space does come back — just not at delete time. Nothing else can
+    # The space does come back: just not at delete time. Nothing else can
     # reclaim it, because only a vacuum knows no snapshot still wants the row.
     record_id = db.insert("users", (1, "gone", None, True, 0.0))
     db.delete("users", record_id)

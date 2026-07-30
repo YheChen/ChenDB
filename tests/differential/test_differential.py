@@ -1,8 +1,8 @@
 """The suite itself: one test per seed, so a failure names its own repro.
 
 Sixty-four seeds of sixteen queries is about a thousand query pairs, which costs a
-couple of seconds. ``CHENDB_DIFFERENTIAL_SEEDS`` widens it — ``0:5000`` for a
-nightly or a long local run — without a code change.
+couple of seconds. ``CHENDB_DIFFERENTIAL_SEEDS`` widens it (``0:5000`` for a
+nightly or a long local run) without a code change.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def test_sqlite_is_new_enough():
     """Fails rather than skips, deliberately.
 
     ``NULLS LAST`` needs SQLite 3.30, and without it every generated ``ORDER BY``
-    would ask SQLite a different question than it asks ChenDB — the suite would
+    would ask SQLite a different question than it asks ChenDB. The suite would
     stay green while comparing the wrong thing. ``sqlite3`` is in the standard
     library and cannot be absent, so there is nothing here to be lenient about.
     This is the ``CHENDB_REQUIRE_NODE`` lesson with no escape hatch needed: a

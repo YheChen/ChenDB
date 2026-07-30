@@ -125,7 +125,7 @@ def test_ids_are_assigned_in_order_from_the_reserved_boundary(catalog: Catalog):
     assert first.table_id == FIRST_USER_OBJECT_ID
 
     # Not +1. `SCHEMA` has a primary key, and since Milestone 17 that means an
-    # implied unique index — which draws from the same id sequence, because
+    # implied unique index: which draws from the same id sequence, because
     # tables and indexes share one counter the way PostgreSQL shares OIDs. So
     # the gap is the demonstration rather than a surprise: table, its index,
     # next table.
@@ -199,7 +199,7 @@ def test_column_order_comes_from_position_not_physical_order(catalog: Catalog):
     """A heap scan returns physical order, which is not column order.
 
     With enough columns to span pages, and after a delete that lets a slot be
-    reused, physical order genuinely diverges — so `position` is what makes the
+    reused, physical order genuinely diverges, so `position` is what makes the
     rebuild correct rather than lucky.
     """
     wide = Schema(
@@ -391,7 +391,7 @@ def test_the_catalog_reopens_from_the_meta_pointers(db_path):
 
 def test_many_tables_spill_the_catalog_across_pages(db_path):
     # 40 tables x 3 columns is 120 chendb_columns rows, well past one 256-byte
-    # page — so the catalog's own heaps have to chain correctly too.
+    # page: so the catalog's own heaps have to chain correctly too.
     with Pager(db_path, page_size=256) as pager:
         instance = Catalog(pager)
         instance.bootstrap()

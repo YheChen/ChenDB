@@ -10,8 +10,8 @@ The AST crosses the wire as a **flattened node list**, not a nested tree:
 
 Two reasons. A recursive Pydantic model produces a self-referential OpenAPI
 schema, which most TypeScript generators handle badly. And the frontend needs
-random access by ``node_id`` anyway — clicking a token has to find the smallest
-node containing it — which a flat map gives for free.
+random access by ``node_id`` anyway (clicking a token has to find the smallest
+node containing it) which a flat map gives for free.
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ class ParseRequest(RequestModel):
 
 
 class ParseResponse(ApiModel):
-    """Tokens, AST and error together — all three are partial-result friendly.
+    """Tokens, AST and error together, all three are partial-result friendly.
 
     ``tokens`` can be non-empty while ``statements`` is empty and ``error`` is
     set: that is a half-typed query, the normal state of one being written.

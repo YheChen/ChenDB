@@ -162,7 +162,7 @@ def test_compaction_reclaims_dead_space_and_preserves_slot_ids():
     reclaimed = page.compact()
 
     assert reclaimed == 30
-    # The surviving records keep their original slot numbers — the whole
+    # The surviving records keep their original slot numbers: the whole
     # reason external RecordIds stay valid across compaction.
     assert page.read(0) == b"x" * 30
     assert page.read(1) is None
@@ -174,8 +174,8 @@ def test_compaction_trims_trailing_dead_slots_only():
     page = make_page()
     for _ in range(4):
         page.insert(b"abcd")
-    page.delete(1)  # interior — must be kept so slot 2 and 3 do not renumber
-    page.delete(3)  # trailing — can be dropped
+    page.delete(1)  # interior (must be kept so slot 2 and 3 do not renumber
+    page.delete(3)  # trailing) can be dropped
     page.compact()
     assert page.slot_count == 3
     assert page.read(0) == b"abcd"

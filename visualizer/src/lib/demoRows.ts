@@ -4,7 +4,7 @@
  * Every "try it" button in the explorer writes real rows into whatever table
  * happens to be there, and the tables are the user's. Hardcoding
  * `VALUES (1, 'x')` works right up until someone's table has three columns,
- * and then the button reports `row has 2 values but 3 columns` — which is the
+ * and then the button reports `row has 2 values but 3 columns`, which is the
  * demonstration failing for a reason that has nothing to do with what it was
  * demonstrating. This module exists because that has now happened twice.
  */
@@ -29,7 +29,7 @@ export function literalFor(column: ColumnModel, seed: number): string {
  * One `INSERT` covering every column, with `nullIn` set to NULL if given.
  *
  * The NULL is how a demonstration causes a failure *during* the insert rather
- * than before it — which is the only kind of failure that leaves earlier rows
+ * than before it, which is the only kind of failure that leaves earlier rows
  * for an undo log to take back.
  */
 export function insertRow(
@@ -61,7 +61,7 @@ export function insertRows(
  * NOT NULL is the one constraint ChenDB enforces on every table without an
  * index. A duplicate key would be the more familiar way to make an insert fail,
  * but `PRIMARY KEY` here is metadata and uniqueness comes from a UNIQUE index
- * the table may not have — so a duplicate-key demonstration would silently
+ * the table may not have, so a duplicate-key demonstration would silently
  * succeed, which is worse than not offering it.
  */
 export function notNullColumn(table: TableDetail): ColumnModel | undefined {

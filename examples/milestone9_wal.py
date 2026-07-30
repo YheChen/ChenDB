@@ -8,8 +8,8 @@ two hundred times the size of the data, what a real crash leaves behind, what
 recovery does about it in three passes, what a checkpoint is for, and where the
 remaining limits are.
 
-The crash is a **real** one — a child process killed with SIGKILL, no cleanup
-handlers, no fsync on the way out — because any cooperative shutdown would
+The crash is a **real** one (a child process killed with SIGKILL, no cleanup
+handlers, no fsync on the way out) because any cooperative shutdown would
 quietly flush the very buffers whose loss is the point.
 """
 
@@ -40,7 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: The crash demonstration uses small pages and a tiny pool on purpose. With the
 #: defaults the whole workload is resident, nothing is ever evicted, and an
-#: uncommitted transaction never reaches the disk at all — which is a true
+#: uncommitted transaction never reaches the disk at all, which is a true
 #: outcome and a boring one. Forcing the pool to *steal* is what makes recovery
 #: have something to undo.
 CRASH_PAGE_SIZE = 512

@@ -1,7 +1,7 @@
 """The B+ tree: turning O(pages) into O(log pages).
 
 A sequential scan of a million-row table reads every page to find one row.  A
-B+ tree finds it in the height of the tree — three page reads at ChenDB's
+B+ tree finds it in the height of the tree, three page reads at ChenDB's
 fanout.  That single change is what makes a database a database rather than a
 file of rows.
 
@@ -22,7 +22,7 @@ Shape
 Three properties are doing all the work.
 
 **Every value lives in a leaf.**  Internal nodes hold separators only, so they
-are pure routing and stay small — which is what makes the fanout large and the
+are pure routing and stay small, which is what makes the fanout large and the
 tree short.  A plain B-tree stores values in internal nodes too, so its internal
 nodes hold fewer keys and it is taller for the same data.
 
@@ -33,7 +33,7 @@ leaves the range actually touches, with no re-descent per row.
 **Growth is at the root.**  A node that overflows splits and pushes a separator
 up; when the *root* splits, a new root is allocated above it and the tree gets
 one level taller.  Every leaf is therefore always at the same depth, with no
-rebalancing pass — the property that makes worst-case and average-case lookup
+rebalancing pass. The property that makes worst-case and average-case lookup
 the same cost.
 
 Complexity
@@ -45,7 +45,7 @@ Operation               Cost, *n* rows, fanout *f*
 ``insert``              O(log_f n) reads; a split adds O(1) writes
 ``delete``              O(log_f n) reads, one write
 ``range_scan``          O(log_f n) + O(matching leaves)
-build from *n* rows     O(n log_f n) — see the note on bulk loading
+build from *n* rows     O(n log_f n), see the note on bulk loading
 ======================  ==========================================
 
 At *f* = 214 and *n* = 10⁶: ``log_f n`` ≈ 2.6, so three page reads, against
@@ -66,8 +66,8 @@ returned to the file.
 
 **No bulk loading.**  Building an index over an existing table inserts row by
 row, at O(n log n) with a split every *f*/2 rows.  A real system sorts the keys
-first and packs leaves to capacity in one pass — O(n log n) for the sort, then
-O(n) — which also produces a tree with no wasted space.  ``CREATE INDEX`` on a
+first and packs leaves to capacity in one pass (O(n log n) for the sort, then
+O(n)) which also produces a tree with no wasted space.  ``CREATE INDEX`` on a
 large table would notice.
 
 **No concurrency.**  One writer at a time, enforced by the database-level lock.
@@ -140,13 +140,13 @@ class NodeSnapshot:
     """One node, decoded for display.
 
     Frozen and self-contained so the API can serialise it without holding any
-    engine lock — the same reason :mod:`engine.storage.inspect` returns
+    engine lock. The same reason :mod:`engine.storage.inspect` returns
     dataclasses rather than live pages.
     """
 
     page_id: int
     level: int
-    """0 at the leaves, increasing toward the root — so sibling leaves match."""
+    """0 at the leaves, increasing toward the root, so sibling leaves match."""
     is_leaf: bool
     keys: tuple[str, ...]
     """Rendered separators or keys, in slot order."""
@@ -288,7 +288,7 @@ class BPlusTree:
 
         Returns the leaf and the path taken as ``(page_id, child_index)`` pairs,
         innermost last.  The path is what makes a bottom-up split possible
-        without parent pointers on disk — storing parents on the page would mean
+        without parent pointers on disk, storing parents on the page would mean
         rewriting every child of a node that moves, and would have to be kept
         correct under splits, which is a large amount of work for something a
         16-entry Python list gives away.
@@ -322,8 +322,8 @@ class BPlusTree:
     def search(self, key: bytes) -> list[RecordId]:
         """Every record id stored under ``key``, in tree order.
 
-        Duplicates may straddle a leaf boundary — the record-id tiebreaker means
-        a split can fall inside a run of equal keys — so this follows the
+        Duplicates may straddle a leaf boundary (the record-id tiebreaker means
+        a split can fall inside a run of equal keys) so this follows the
         sibling links until it sees a larger key.
         """
         started = time.perf_counter_ns()
@@ -332,7 +332,7 @@ class BPlusTree:
 
         # Descending with no record id lands on the *first* leaf that could hold
         # the key. When the key exactly equals a separator, that is the leaf to
-        # its left, which may hold no match at all — so this always has to be
+        # its left, which may hold no match at all: so this always has to be
         # willing to step right. PostgreSQL calls the same manoeuvre "moving
         # right", and needs it for a stronger reason: a concurrent split may
         # have moved the key after the descent read the parent.
@@ -396,7 +396,7 @@ class BPlusTree:
         """Yield ``(key, record_id)`` in key order between the bounds.
 
         ``None`` means unbounded on that side, so ``range_scan()`` is a full
-        ordered scan of the index — which is how ``ORDER BY`` on an indexed
+        ordered scan of the index, which is how ``ORDER BY`` on an indexed
         column avoids a sort.
 
         A generator: the caller pulls one entry at a time, so ``LIMIT 10`` over
@@ -479,7 +479,7 @@ class BPlusTree:
         For a unique index, a duplicate non-NULL key raises
         :class:`~engine.errors.UniqueViolation`.  NULLs are exempt: SQL treats
         two unknowns as not known to be equal, so ``UNIQUE`` permits any number
-        of them — the behaviour of PostgreSQL, SQLite and the standard alike.
+        of them. The behaviour of PostgreSQL, SQLite and the standard alike.
         """
         if self._unique and not is_null_key(key) and self.contains(key):
             raise UniqueViolation(
@@ -547,7 +547,7 @@ class BPlusTree:
         # An internal split *moves* the middle separator up rather than copying
         # it. It is pure routing information, not a value, so leaving a copy
         # behind would waste a slot and, worse, make the same separator appear
-        # at two levels — which is legal but confusing to read in the tree view.
+        # at two levels: which is legal but confusing to read in the tree view.
         promoted = entries[cut]
         left = entries[:cut]
         right = [minus_infinity_entry(promoted.child_page_id), *entries[cut + 1 :]]
@@ -612,7 +612,7 @@ class BPlusTree:
     def delete(self, key: bytes, record_id: RecordId) -> bool:
         """Remove one entry. ``False`` if it was not there.
 
-        Leaves the node underfull rather than merging — see the module
+        Leaves the node underfull rather than merging, see the module
         docstring for why that is a choice and not a shortcut.
         """
         leaf, _ = self._descend(key, record_id)
@@ -645,7 +645,7 @@ class BPlusTree:
         return height
 
     def count(self) -> int:
-        """Entries in the tree. O(leaves) — nothing caches a count."""
+        """Entries in the tree. O(leaves). Nothing caches a count."""
         return sum(1 for _ in self.range_scan())
 
     def page_ids(self) -> list[int]:
@@ -734,8 +734,8 @@ class BPlusTree:
         Checks that keys are sorted within each node, that every separator
         actually bounds its subtree, that all leaves are at the same depth, and
         that the sibling chain visits every leaf exactly once in key order. A
-        tree can be subtly wrong in ways no single operation notices — a split
-        that promoted the wrong key still answers most queries correctly — so
+        tree can be subtly wrong in ways no single operation notices (a split
+        that promoted the wrong key still answers most queries correctly) so
         the tests assert the whole shape rather than sampled lookups.
         """
         leaf_depths: set[int] = set()

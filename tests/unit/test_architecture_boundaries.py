@@ -150,8 +150,8 @@ def test_importing_the_engine_pulls_in_no_third_party_package():
 
 # -- one milestone number ---------------------------------------------------
 #
-# It used to be written out three times — engine/__init__, the CLI banner and
-# the server's /health — and the CLI's copy sat a whole release behind, because
+# It used to be written out three times: engine/__init__, the CLI banner and
+# the server's /health: and the CLI's copy sat a whole release behind, because
 # a stale string breaks nothing. Now they all derive from the version, and these
 # tests are what stop the derivation quietly coming apart again.
 
@@ -183,7 +183,7 @@ def test_the_feature_list_accounts_for_every_milestone():
 
     # One entry per milestone, minus the ones that shipped no new engine
     # capability and say so by name. This was `==`, then `>= MILESTONE - 1`,
-    # and the next milestone without a feature would have made it `- 2` — at
+    # and the next milestone without a feature would have made it `- 2`: at
     # which point it asserts nothing. Naming the exceptions keeps it exact.
     expected = engine.MILESTONE - len(engine.MILESTONES_WITHOUT_ENGINE_FEATURES)
     assert len(engine.MILESTONE_FEATURES) == expected, (

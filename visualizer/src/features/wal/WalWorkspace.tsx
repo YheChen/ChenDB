@@ -15,7 +15,7 @@
  * claim becomes believable rather than asserted.
  *
  * It is guarded behind a confirm, because it genuinely destroys uncommitted
- * work — that being exactly the point. What it cannot destroy is anything the
+ * work, that being exactly the point. What it cannot destroy is anything the
  * engine promised to keep, and the before/after row counts it reports are how
  * you check that rather than take it on trust.
  */
@@ -125,7 +125,7 @@ export function WalWorkspace({
         ) : (
           <>
             {durable ? null : (
-              // The crash really does replay the log — it is the loss of the
+              // The crash really does replay the log. It is the loss of the
               // buffer pool that recovery undoes, and that is genuine here.
               // What an in-memory filesystem cannot demonstrate is a power
               // cut, because there is nothing for fsync to reach. Saying so is

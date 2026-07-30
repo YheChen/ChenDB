@@ -7,19 +7,19 @@ without also swallowing genuine Python bugs such as ``AttributeError``.
 The tree mirrors the layering of the engine itself::
 
     ChenDBError
-    ├── StorageError          storage/  — pages, files, the page allocator
+    ├── StorageError          storage/: pages, files, the page allocator
     │   ├── CorruptDatabaseError
     │   ├── CorruptPageError
     │   │   └── ChecksumMismatchError
     │   ├── PageNotFoundError
     │   ├── RecordTooLargeError
     │   └── RecordNotFoundError
-    ├── SerializationError    serialization/ — encoding tuples to bytes
+    ├── SerializationError    serialization/: encoding tuples to bytes
     │   ├── SchemaMismatchError
     │   ├── TypeMismatchError
     │   └── NullConstraintViolation
     ├── SchemaError           an invalid schema *definition*
-    └── IndexingError         index/ — B+ tree structure and constraints
+    └── IndexingError         index/: B+ tree structure and constraints
         └── UniqueViolation
 """
 
@@ -144,7 +144,7 @@ class UniqueViolation(IndexingError):
     """A key already present was inserted into a unique index.
 
     A constraint failure rather than a structural one, but it surfaces from the
-    index because the index is the thing that *knows* — which is precisely why
+    index because the index is the thing that *knows*, which is precisely why
     PostgreSQL and SQLite both implement ``UNIQUE`` as an index rather than as a
     check: the enforcement and the lookup are the same data structure.
     """
@@ -271,7 +271,7 @@ class QueryCancelledError(ExecutionError):
 class LockTimeout(TransactionError):
     """A transaction waited too long for a lock somebody else was holding.
 
-    Not a deadlock — the wait-for graph had no cycle. Something is simply
+    Not a deadlock, the wait-for graph had no cycle. Something is simply
     holding a lock for a long time, which for an interactive explorer usually
     means a session left a transaction open.
     """
@@ -281,7 +281,7 @@ class DeadlockError(TransactionError):
     """Two or more transactions are each waiting for something the other holds.
 
     Detected by finding a cycle in the wait-for graph, not by giving up after a
-    timeout — the two are distinguishable and conflating them means either
+    timeout. The two are distinguishable and conflating them means either
     killing healthy work or leaving real deadlocks to sit.
 
     The message names the whole cycle, because being told only that *you*

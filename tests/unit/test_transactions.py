@@ -1,14 +1,14 @@
 """Transactions.
 
 The property under test is one sentence: **after a rollback every page the
-database references is byte-for-byte what it was.** Not "the rows come back" —
+database references is byte-for-byte what it was.** Not "the rows come back",
 byte-for-byte, because a physical undo either restores every page it touched or
 it has a hole in it, and a hole shows up as corruption weeks later rather than
 as a failing assertion now.
 
 So the strongest tests here hash the file before and after. The one thing that
-is *not* restored — trailing pages left by a transaction that extended the file
-— is asserted directly rather than hidden by the helper; see :func:`digest` and
+is *not* restored (trailing pages left by a transaction that extended the file
+) is asserted directly rather than hidden by the helper; see :func:`digest` and
 ``test_a_rollback_may_leave_trailing_pages``.
 
 The rest cover the pieces that make the property possible, and the two places
@@ -72,7 +72,7 @@ def digest(db: Database) -> str:
 
     **The LSN and the checksum that covers it.** Since Milestone 9 every page
     carries the LSN of the log record that last changed it, and a rollback *is*
-    a change — the restore has to be logged, or recovery could not tell whether
+    a change. The restore has to be logged, or recovery could not tell whether
     it reached the disk. So a rolled-back page comes back with the same contents
     and a higher LSN, and demanding byte-for-byte equality would be demanding
     that the rollback be unrecoverable.
@@ -93,7 +93,7 @@ def _without_lsn(page: bytes, page_id: int) -> bytes:
     """One page with its LSN and checksum blanked.
 
     The two layouts differ, and the offsets are read from the modules that own
-    them rather than written out here — Milestone 9 put the LSN at 60 in the
+    them rather than written out here, Milestone 9 put the LSN at 60 in the
     meta page and Milestone 10 pushed the checksum from 80 to 84, and a
     hardcoded copy silently blanked the wrong four bytes until a rollback test
     started failing for a reason that had nothing to do with rollback.
@@ -142,7 +142,7 @@ def test_an_undo_log_that_outgrows_memory_stops_caching():
     Before Milestone 9 this raised: the in-memory log was the only copy, so
     running out of room meant the transaction could not be rolled back. The WAL
     now holds the same before-images on disk under the same first-write-wins
-    rule, so overflowing is a cache miss rather than a failure — the log flags
+    rule, so overflowing is a cache miss rather than a failure. The log flags
     itself and :meth:`Database.rollback` reads what it needs from the WAL.
     """
     log = UndoLog()
@@ -160,7 +160,7 @@ def test_a_rollback_past_the_cap_still_restores_every_page(
     """The fallback, end to end, with the ceiling lowered so it is reachable.
 
     64 MiB of pages would take a while to write; 8 KiB does not, and exercises
-    exactly the same path — the in-memory log gives up after two pages and the
+    exactly the same path. The in-memory log gives up after two pages and the
     rest of the rollback comes off the disk.
     """
     monkeypatch.setattr("engine.transaction.undo.MAX_UNDO_BYTES", 2 * 512)
@@ -257,7 +257,7 @@ def test_the_history_is_bounded():
 
 def test_a_capture_needs_the_page_only_once():
     # before_write takes a callable so a page is read only when a record will
-    # actually be kept — which, with first-write-wins, is the minority of writes.
+    # actually be kept: which, with first-write-wins, is the minority of writes.
     manager = TransactionManager()
     reads = 0
 
@@ -315,7 +315,7 @@ def test_a_rolled_back_create_index_leaves_the_file_unchanged(db: Database):
     before = digest(db)
     db.begin()
     db.create_index("t_label", "t", "label")
-    # `t` has a PRIMARY KEY, so `t_pkey` was built with the table — before this
+    # `t` has a PRIMARY KEY, so `t_pkey` was built with the table: before this
     # transaction began, and therefore not part of what rolls back. The
     # assertion is about what this transaction did, which is the point.
     assert [index.name for index in db.indexes()] == ["t_label", "t_pkey"]
@@ -364,7 +364,7 @@ def test_rollback_survives_the_pages_having_been_evicted(tmp_path: Path):
 
 def test_rolling_back_an_allocation_restores_the_page_count(db: Database):
     # The meta page is a decoded dataclass, so restoring its bytes is not
-    # enough — page_count and next_object_id have to be re-read.
+    # enough: page_count and next_object_id have to be re-read.
     before = db.page_count
     db.begin()
     db.insert_many("t", [(2000 + n, f"grow{n}") for n in range(200)])
@@ -391,7 +391,7 @@ def test_a_rollback_may_leave_trailing_pages(db: Database):
 
 
 def test_a_file_longer_than_its_meta_page_still_opens(db: Database):
-    # A rolled-back allocation leaves trailing pages nothing references — the
+    # A rolled-back allocation leaves trailing pages nothing references: the
     # same state a crash between extending the file and updating the meta page
     # leaves. Refusing to open it would make rollback unable to shrink.
     path = db.path
@@ -438,7 +438,7 @@ def test_a_rollback_moves_the_lsn_forward(db: Database):
     """The restore is itself a logged change, and the page says so.
 
     This is what :func:`digest` excludes, asserted directly. A rolled-back page
-    holds the same data at a higher LSN — because if it came back with its old
+    holds the same data at a higher LSN, because if it came back with its old
     LSN, recovery would compare the log record for the restore against it, find
     the page already ahead, and skip putting it back.
     """
@@ -563,7 +563,7 @@ def test_a_lone_begin_leaves_the_transaction_open(db: Database):
 
     Sending ``BEGIN;`` and nothing else is how the explorer's SQL console opens
     a transaction it intends to close in a *later* request. If ``execute_script``
-    committed whatever was open at the end, that would be a silent no-op — the
+    committed whatever was open at the end, that would be a silent no-op. The
     user would type BEGIN, see success, and have no transaction.
     """
     execute_script("BEGIN;", db)
@@ -581,7 +581,7 @@ def test_a_lone_begin_leaves_the_transaction_open(db: Database):
 #
 # PostgreSQL's rule, because the alternative is worse. A client that opened the
 # transaction in an earlier request owns it, so `execute_script` will not unwind
-# it — which used to mean an error left the partial work in place and a later
+# it: which used to mean an error left the partial work in place and a later
 # COMMIT kept it. Half a transaction, committed, is the one outcome this
 # milestone exists to prevent.
 
@@ -591,7 +591,7 @@ def test_a_failed_statement_marks_an_explicit_transaction_failed(db: Database):
     with pytest.raises(BindingError):
         execute_script("INSERT INTO t VALUES (701, 'a'); INSERT INTO nope VALUES (1);", db)
 
-    assert db.in_transaction, "still open — the client owns it"
+    assert db.in_transaction, "still open. The client owns it"
     assert db.transactions.is_failed
     assert db.transactions.active is not None
     assert db.transactions.active.state is TransactionState.FAILED

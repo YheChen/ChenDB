@@ -1,14 +1,14 @@
 """Differences that are not bugs, written down as rules.
 
 Two engines that disagree about *anything* need somewhere to record the
-disagreements that are legitimate — or the suite is red forever and gets turned
+disagreements that are legitimate, or the suite is red forever and gets turned
 off. That register is also the obvious place to hide a bug, so the interesting
 part of this module is the constraints on what may go in it. Each is enforced by a
 test in ``test_registry.py`` rather than by anyone's discipline:
 
 1. **An entry may excuse an error, never a value.** Exactly one side must have
    erred. There is deliberately nowhere to record "both engines returned rows and
-   the rows differed" — that is precisely what the tester exists to find, and no
+   the rows differed". That is precisely what the tester exists to find, and no
    wrong row is fine.
 
 2. **A defensible difference in a *value* is fixed in the SQL, not in the
@@ -18,7 +18,7 @@ test in ``test_registry.py`` rather than by anyone's discipline:
    would bury it inside the oracle, where nobody looks.
 
 3. **Entries match on rules, not on identity.** :meth:`Entry.matches` is given
-   only the two outcomes — an error class, and optionally a pattern over the
+   only the two outcomes. An error class, and optionally a pattern over the
    message. It cannot see the SQL, the seed, the shape or a case id, so **there is
    no "known failing seeds" list**. That is the whole line: a divergence you can
    state as a rule over outcomes is knowledge, and a seed you excuse is a bug you
@@ -36,7 +36,7 @@ test in ``test_registry.py`` rather than by anyone's discipline:
 
 And it cannot rot: every entry carries a canonical minimal example, and a test
 runs it and asserts the divergence **still happens**. When ChenDB stops raising on
-division by zero, that test goes red and the entry has to go — the mechanism the
+division by zero, that test goes red and the entry has to go. The mechanism the
 project's stale CLI milestone string never had.
 """
 
@@ -51,7 +51,7 @@ from tests.differential.engines import Outcome
 
 __all__ = ["ENTRIES", "MAXIMUM_ENTRIES", "Entry", "Kind", "find"]
 
-#: See constraint 5. Not a technical limit — a forcing function.
+#: See constraint 5. Not a technical limit, a forcing function.
 MAXIMUM_ENTRIES: Final = 20
 
 
@@ -69,7 +69,7 @@ class Entry:
     rule: str
     kind: Kind
     classification: str
-    """``DELIBERATE`` or ``HARNESS``. Never ``BUG`` — there is no such value, by
+    """``DELIBERATE`` or ``HARNESS``. Never ``BUG``. There is no such value, by
     construction, so a bug cannot be filed here instead of being fixed."""
     reason: str
     """Must say what PostgreSQL does. ChenDB follows PostgreSQL where it and
@@ -112,7 +112,7 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         classification="DELIBERATE",
         reason=(
             "SQLite returns NULL for x/0. ChenDB raises, which is what PostgreSQL "
-            "does — a NULL here would hide an arithmetic mistake in the query "
+            "does. A NULL here would hide an arithmetic mistake in the query "
             "rather than report it, and the aggregate above would then silently "
             "skip the row."
         ),
@@ -175,7 +175,7 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         reason=(
             "SQLite promotes an overflowing integer expression to a float, changing "
             "the type of the answer to avoid an error. ChenDB raises, as PostgreSQL "
-            "does, so INTEGER means exactly int64 wherever the value came from — "
+            "does, so INTEGER means exactly int64 wherever the value came from, "
             "the storage codec has always enforced that and the evaluator did not."
         ),
         setup=_ONE_ROW,
@@ -191,8 +191,8 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         reason=(
             "SQLite coerces text to a number for SUM, giving 0 for non-numeric "
             "text. PostgreSQL has no sum(text) and refuses; so does ChenDB. Before "
-            "Milestone 17 it returned 'abd' — Python's + concatenating strings "
-            "inside the accumulator — and AVG leaked a raw TypeError out of the "
+            "Milestone 17 it returned 'abd' (Python's + concatenating strings "
+            "inside the accumulator) and AVG leaked a raw TypeError out of the "
             "engine, which was not even a ChenDBError."
         ),
         setup="CREATE TABLE t (k INTEGER PRIMARY KEY, s TEXT);\nINSERT INTO t VALUES (1, 'a');",
@@ -224,8 +224,8 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         reason=(
             "In SQLite an INTEGER PRIMARY KEY is the rowid, so a NULL is replaced "
             "by the next free one. PRIMARY KEY implies NOT NULL in the standard and "
-            "in PostgreSQL, and ChenDB enforces that. Never generated — keys are "
-            "numbered — but recorded because it is why they are numbered."
+            "in PostgreSQL, and ChenDB enforces that. Never generated (keys are "
+            "numbered) but recorded because it is why they are numbered."
         ),
         setup="CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER);",
         sql="INSERT INTO t VALUES (NULL, 1);",
@@ -237,7 +237,7 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         kind=Kind.RESTRICTION,
         classification="HARNESS",
         reason=(
-            "ChenDB sorts NULLs last on ASC and first on DESC — PostgreSQL's "
+            "ChenDB sorts NULLs last on ASC and first on DESC, PostgreSQL's "
             "default, and the opposite of SQLite, which treats NULL as smaller "
             "than everything. The standard leaves it implementation-defined. Fixed "
             "in the SQL rather than in the oracle: every generated sort key carries "
@@ -256,7 +256,7 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         reason=(
             "SQLite's % casts both operands to integers first, so 7.5 % 2 is 1.0 "
             "there and 1.5 here, which is PostgreSQL's answer. A difference in what "
-            "the operator *means*, so the generator does not emit a float modulo — "
+            "the operator *means*, so the generator does not emit a float modulo, "
             "visible in the SQL, rather than hidden in a comparison that looks away."
         ),
         setup=_ONE_ROW,
@@ -271,7 +271,7 @@ ENTRIES: Final[tuple[Entry, ...]] = (
         reason=(
             "ChenDB has a BOOLEAN type with a one-byte codec; SQLite has none and "
             "stores 0/1, as does PostgreSQL's wire format for some clients. Purely "
-            "representational, so it is normalised — bool to int, never the other "
+            "representational, so it is normalised, bool to int, never the other "
             "way, because every bool is a 0 or a 1 but 2 is not a bool."
         ),
         setup="CREATE TABLE t (k INTEGER PRIMARY KEY, b BOOLEAN);\nINSERT INTO t VALUES (1, TRUE);",
@@ -287,7 +287,7 @@ def find(mine: Outcome, theirs: Outcome) -> Entry | None:
 
     Only ``DIVERGENCE`` entries can excuse anything. A ``RESTRICTION`` documents
     something the generator does not emit, so if one ever matched at runtime the
-    generator has drifted — and silently accepting it would hide that.
+    generator has drifted, and silently accepting it would hide that.
     """
     for entry in ENTRIES:
         if entry.kind is Kind.DIVERGENCE and entry.matches(mine, theirs):

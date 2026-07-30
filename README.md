@@ -8,15 +8,19 @@ shows you what it is doing while it does it.
 The engine is real: a file of fixed-size pages, slotted heap pages, binary
 record encoding, checksums, a page allocator with a free list, a SQL front end,
 a volcano executor, a persistent catalog, disk-backed B+ tree indexes, a
-cost-based planner, a buffer pool, transactions with rollback, a write-ahead log
-that recovers the database after a crash, and MVCC so a reader never waits for a
-writer — where an `UPDATE` leaves the old version of the row readable rather than
-overwriting it. The visualizer is not a mock — every byte it renders was read
-back from the actual file on disk.
+cost-based planner that reorders joins, a buffer pool, transactions with
+rollback, a write-ahead log that recovers the database after a crash, and MVCC so
+a reader never waits for a writer, where an `UPDATE` leaves the old version of the
+row readable rather than overwriting it. The visualizer is not a mock. Every byte
+it renders was read back from the actual file on disk.
+
+Its answers are checked against SQLite's: random schemas, random rows and random
+queries run through both engines and compared, 160,000 query pairs in two
+minutes. That found seven bugs the 1,243 hand-written tests had missed.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M16    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M18    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -26,8 +30,8 @@ back from the actual file on disk.
 │   h3 · 600 · 33p ├───────────────────────────────────────────────────────┤
 │  users_email     │  B+ TREE   height 3 · 33 nodes                        │
 │   users.email    │                    ┌────┬────┐  p82                   │
-│  users_pk unique │                    │ -∞ │ 37 │                        │
-│   users.id       │                 ┌──┴────┴──┬─┘                        │
+│  users_pkey      │                    │ -∞ │ 37 │                        │
+│   users.id uniq  │                 ┌──┴────┴──┬─┘                        │
 │                  │        ┌────┬───▼┬────┐ ┌──▼─┬────┬────┐              │
 │                  │        │ -∞ │ 19 │ 35 │ │ -∞ │ 38 │ 61 │              │
 │                  │        └────┴────┴────┘ └────┴────┴────┘              │
@@ -42,7 +46,7 @@ back from the actual file on disk.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Sixteen milestones are complete.** Nothing is stubbed ahead of time: a
+**Eighteen milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -54,7 +58,7 @@ feature absent from the engine is absent from the API and hidden in the UI. See
 git clone https://github.com/YheChen/ChenDB.git && cd ChenDB
 ```
 
-### In a browser — no clone, no install
+### In a browser: no clone, no install
 
 The visualizer ships with the engine inside it: CPython compiled to
 WebAssembly, the same `.py` files, no server anywhere. Every visitor gets a
@@ -65,7 +69,7 @@ Deployed to Vercel from `vercel.json`; build it yourself with:
 npm --prefix visualizer run preview:wasm
 ```
 
-### The engine alone — no dependencies
+### The engine alone: no dependencies
 
 ```bash
 python -m engine demo.chendb
@@ -75,6 +79,7 @@ python -m engine demo.chendb
 ChenDB 1.8.0 - Milestone 18 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
+opened demo.chendb (4 page(s))
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
 created table users with 3 column(s)
 chendb> INSERT INTO users VALUES (1,'ada@example.com',36),(2,'alan@example.com',NULL);
@@ -85,19 +90,37 @@ chendb> SELECT email FROM users WHERE age = 36
 email
 ------------
 ada@example.com
-(1 row(s), 2 page(s) read, 0.09 ms)
+(1 row(s), 4 page(s) read, 0.66 ms)
 Project  email
-  └─ IndexScan  index=users_age key = 36
+  └─ Filter  (age = 36)
+    └─ SeqScan  table=users
+chendb> .indexes
+index                  on                     type      h   entries  pages  unique
+users_age              users.age              INTEGER   1         2      1  -
+users_pkey             users.id               INTEGER   1         2      1  yes
 chendb> .tree users_age
-root page 5, height 1
+root page 6, height 1
 
 leaves:
-  p5     [NULL 36]
+  p6     [NULL 36]
 ```
+
+Two things in there are worth a second look, and both are the engine being
+honest rather than flattering.
+
+`SELECT ... WHERE age = 36` **does not use the index it just built.** Two rows fit
+in one page, so a sequential scan is cheaper than descending a tree and then
+fetching from the heap anyway, and the cost model says so. `EXPLAIN` names the
+index it turned down and by how much. `benchmarks/index_vs_scan.py` finds the
+crossover.
+
+`users_pkey` was never asked for. A `PRIMARY KEY` builds a real unique index,
+which is what makes it a constraint rather than a note in the catalog, and it is
+listed like any other index because it costs real pages.
 
 `.help` lists the commands: `.tables`, `.schema`, `.indexes`, `.tree`, `.find`,
 `.page`, `.hex`, `.events` and the rest. The engine imports with zero
-third-party packages installed — a constraint enforced by a test, not a
+third-party packages installed, a constraint enforced by a test rather than a
 promise.
 
 ### Embedded
@@ -133,8 +156,8 @@ npm --prefix visualizer install
 npm --prefix visualizer run dev
 ```
 
-Then open <http://localhost:5173>. Create a database with **256-byte pages** —
-a handful of rows will fill a page and you can watch the heap chain grow.
+Then open <http://localhost:5173>. Create a database with **256-byte pages**.
+A handful of rows will fill a page and you can watch the heap chain grow.
 
 ---
 
@@ -146,7 +169,7 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Records** | INTEGER / FLOAT / BOOLEAN / TEXT · null bitmap · schema-driven encode and decode |
 | **Heap** | linked page chain · O(1) append · lazy scan · tombstone deletes |
 | **Persistence** | survives process death; `SIGKILL` tests prove it |
-| **Diagnostics** | 5 trace levels · 37 event types · bounded retention · provably result-neutral |
+| **Diagnostics** | 5 trace levels · 47 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
 | **Queries** | inner and outer joins (`LEFT`/`RIGHT`/`FULL`) with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
@@ -160,7 +183,7 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
-| **Correctness** | 1,409 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
+| **Correctness** | 1,441 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
 Five claims worth checking rather than believing:
 
@@ -174,7 +197,7 @@ runs a `SELECT` and gets its answer immediately, without the uncommitted row and
 without taking a lock of its own. `tests/unit/test_mvcc.py` asserts it and the
 MVCC workspace shows it.
 
-**The planner does not join in the order you wrote — unless it may not.** Give
+**The planner does not join in the order you wrote, unless it may not.** Give
 it two tables and it re-derives the order from statistics, builds the hash table
 on the smaller side because a build costs more than a probe, and pushes your
 `WHERE` below the join. An outer join takes all three away: it is neither
@@ -185,17 +208,17 @@ asserts it.
 
 **An update does not overwrite anything.** It writes eight bytes to the old
 version and appends a new one, so a transaction that took its snapshot first
-still reads the old value — and the table panel shows `rows 4 · versions 5`
+still reads the old value, and the table panel shows `rows 4 · versions 5`
 until you press Vacuum. `tests/unit/test_dml.py` asserts it.
 
 **The answers agree with SQLite's.** Random schemas, random rows and random
-queries are run against both engines and compared — 160,000 query pairs in two
+queries are run against both engines and compared, 160,000 query pairs in two
 minutes, 1,024 of them on every push. It found seven bugs on its first campaign,
 two of which returned a wrong answer without any sign of trouble.
 `tests/differential/` is the suite and `docs/milestone-17-differential.md` lists
 all seven.
 
-Deliberately not built — and each has a paragraph in the milestone docs saying
+Deliberately not built, and each has a paragraph in the milestone docs saying
 why: serializable isolation, `RETURNING`, heap-only tuples, bushy plans, index
 nested-loop joins, reordering across an outer join, outer-join simplification,
 `USING` and `NATURAL JOIN`, subqueries, `DISTINCT`, parallel statement execution,
@@ -244,7 +267,7 @@ SelectStatement                    SELECT email, age * 2 AS doubled FROM users �
 
 `AND` sits above `>=` because precedence is encoded in the *shape* of the
 grammar rules, not a table. And `IS NOT NULL` is its own node, never an
-equality against `NULL` — those mean different things in three-valued logic.
+equality against `NULL`. Those mean different things in three-valued logic.
 
 **The page inspector shows real bytes.** Select a slot and the Hex tab
 highlights exactly the range it points at:
@@ -265,7 +288,7 @@ slot 0  offset 227  len 29
   null bitmap 0x04 = 0010  ·  29 bytes total
 ```
 
-`0x04` is bit 2 — `age` is NULL, and it occupies no bytes at all. The full
+`0x04` is bit 2, `age` is NULL, and it occupies no bytes at all. The full
 layout is documented in [docs/storage-format.md](docs/storage-format.md).
 
 ---
@@ -284,7 +307,7 @@ Four rules, enforced by `tests/unit/test_architecture_boundaries.py`:
 2. Nothing under `engine/` except `engine/server/` may import anything outside
    the standard library.
 3. `engine/server/` imports `engine`, never the reverse.
-4. Diagnostic events cannot serialize themselves — that happens only at the
+4. Diagnostic events cannot serialize themselves, that happens only at the
    boundary.
 
 The result is an engine you can embed, test and reason about with no web
@@ -296,14 +319,14 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 619 tests
-npm --prefix visualizer test            # 62 tests
+.venv/bin/python -m pytest              # 1,441 tests
+npm --prefix visualizer test            # 160 tests
 ```
 
 Two are worth singling out.
 
 **Crash tests `SIGKILL` a child process.** No `close()`, no `fsync`, no atexit
-hooks — any cooperative shutdown would quietly flush the very buffers whose
+hooks, any cooperative shutdown would quietly flush the very buffers whose
 loss is under test.
 
 **Tracing tests compare file bytes.** The same workload at `OFF`, `STORAGE` and
@@ -337,7 +360,7 @@ change the system observed.
 | `python examples/milestone17_differential.py` | the seven bugs SQLite found, and why a test can agree with one |
 | `python examples/milestone18_outer_joins.py` | outer joins, and the licence the planner had to give up |
 | `python scripts/differential.py --seeds 0:5000` | a real differential campaign, ~80,000 query pairs |
-| `make ci` | lint, typecheck, both test suites and every example — CI's order |
+| `make ci` | lint, typecheck, both test suites and every example, CI's order |
 | `make demo-sql` | every SQL statement the explorer's buttons will produce |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
 | `python scripts/generate_api_types.py` | regenerate TypeScript from OpenAPI |
@@ -365,13 +388,13 @@ change the system observed.
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
 | [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
 | [Milestone 12](docs/milestone-12-ci.md) | CI, and running every demo button against the real engine |
-| [Milestone 18](docs/milestone-18-outer-joins.md) | outer joins, why NULL-extension was free, and why the join search needed a barrier |
-| [Milestone 17](docs/milestone-17-differential.md) | seven bugs a second engine found, and the line between a rule and an excuse |
-| [Milestone 16](docs/milestone-16-persistence.md) | keeping a database in IndexedDB, and the escape hatch persistence needs |
-| [Milestone 15](docs/milestone-15-wasm.md) | shipping a database engine as a static file, and the three things that broke |
-| [Milestone 14](docs/milestone-14-transport.md) | running the whole engine in a browser tab, and the seam that allows it |
 | [Milestone 13](docs/milestone-13-joins.md) | joins, aggregation, and the first decision the cost model could get wrong |
-| [Roadmap](docs/roadmap.md) | Milestones 2–10 |
+| [Milestone 14](docs/milestone-14-transport.md) | the seam that lets the app carry the engine instead of calling one |
+| [Milestone 15](docs/milestone-15-wasm.md) | shipping a database engine as a static file, and the three things that broke |
+| [Milestone 16](docs/milestone-16-persistence.md) | keeping a database in IndexedDB, and the escape hatch persistence needs |
+| [Milestone 17](docs/milestone-17-differential.md) | seven bugs a second engine found, and the line between a rule and an excuse |
+| [Milestone 18](docs/milestone-18-outer-joins.md) | outer joins, why NULL-extension was free, and why the join search needed a barrier |
+| [Roadmap](docs/roadmap.md) | every milestone, and what each one added to the file format |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |
 | [Adding a panel](docs/how-to-add-a-panel.md) | engine → API → UI |

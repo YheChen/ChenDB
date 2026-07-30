@@ -1,4 +1,4 @@
-# API contract — v1
+# API contract: v1
 
 Base path `/api/v1`. The live OpenAPI schema is served at
 `/api/v1/openapi.json` and browsable at `/api/v1/docs`; a committed copy lives
@@ -17,7 +17,7 @@ GET /api/v1/databases/demo/pages/3        not  GET /api/v1/pages/3
 ```
 
 A workspace holds many databases, so a flat path needs an implicit "current
-database" in server-side session state — invisible in the URL, awkward to
+database" in server-side session state, invisible in the URL, awkward to
 share, and racy when two browser tabs disagree. Nesting makes the resource
 explicit. Versioning, the error envelope and the WebSocket path are unchanged.
 
@@ -48,7 +48,7 @@ Milestones 2–4 replaced the singular `/table` and `/records` with
 `/tables/{table}` collections, and added `/catalog`, `/parse`, `/query`,
 `/query/step` and `/executions/*`.
 
-### Milestone 5 — indexes
+### Milestone 5: indexes
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -58,7 +58,7 @@ Milestones 2–4 replaced the singular `/table` and `/records` with
 | `GET` | `/databases/{db}/indexes/{name}/search` | trace a point lookup, `?value=` |
 
 The tree comes back as a **flat node list plus a root page id**, not nested
-JSON — the same shape as the AST and the plan, for the same three reasons: a
+JSON. The same shape as the AST and the plan, for the same three reasons: a
 client wanting one node need not walk a recursive structure; a cycle in a corrupt
 tree becomes a visibly duplicated entry rather than a response that never ends;
 and the renderer computes its own layout anyway.
@@ -103,13 +103,13 @@ tolerate a `children` or `next_leaf_id` entry that names a page not in `nodes`.
   "path": [82, 81, 67], "pages_visited": 4, "height": 3 }
 ```
 
-`value` is text and is coerced to the index's declared type server-side — a query
+`value` is text and is coerced to the index's declared type server-side. A query
 string has no types, and guessing from JSON shape would make `?value=1`
 ambiguous between the integer and the string. A value the index cannot encode is
 `422 InvalidKey`, not a crash. `pages_visited` can exceed `path.length` when
 duplicates span leaves and the search steps right.
 
-### Milestone 6 — the planner
+### Milestone 6: the planner
 
 No new endpoints. `PlanModel` grows instead, because a plan belongs with the
 query that produced it:
@@ -143,21 +143,21 @@ query that produced it:
 Every operator carries **estimated beside actual**. The gap is the single most
 useful thing a plan view can show: a slow plan is almost always one whose row
 estimate was wrong, and no amount of staring at the chosen operators reveals
-that. `estimated_cost` on a node is cumulative — this node plus everything below
-it — matching what `EXPLAIN` prints.
+that. `estimated_cost` on a node is cumulative (this node plus everything below
+it) matching what `EXPLAIN` prints.
 
 Every candidate is reported, not just the winner, each with why it lost.
 
 `statistics.stale` is `true` when the table has been written to since it was last
 analyzed. The estimates are still computed from the old numbers, and are still
-used — a slightly stale estimate beats none. Saying so is the alternative to
+used, a slightly stale estimate beats none. Saying so is the alternative to
 pretending otherwise.
 
 `EXPLAIN` and `ANALYZE` go through the ordinary `POST /query`. `EXPLAIN` returns
 a one-column `QUERY PLAN` result set, so any client that can display a `SELECT`
 can display it.
 
-### Milestone 7 — the buffer pool
+### Milestone 7: the buffer pool
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -186,13 +186,13 @@ appearing in a slot reads as a change rather than as the whole layout reflowing.
 `recency` is `0` for the most recently used and `-1` for a free frame; the
 highest rank among resident frames is what eviction takes next.
 
-There is no `pin_count` — see the event schema for why.
+There is no `pin_count`, see the event schema for why.
 
 The gap between `logical_reads` and `physical_reads` is the pool working. Those
 two counters are cumulative for the open handle, not for the pool, so they
 survive a `clear()`.
 
-### Milestone 8 — transactions
+### Milestone 8: transactions
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -225,7 +225,7 @@ survive a `clear()`.
 ```
 
 **`records` is the active transaction only.** A finished one has released its
-undo log, so the field is always `[]` in `history` — reporting a stale copy
+undo log, so the field is always `[]` in `history`, reporting a stale copy
 would suggest a rollback was still possible.
 
 **`pages_held` is the number that matters.** It grows with distinct pages
@@ -253,21 +253,21 @@ other one opened.
 because ChenDB has no savepoints and will not pretend to nest.
 
 **Statelessness.** HTTP has no session, so an explicit transaction opened by one
-request stays open across requests until some later request ends it — the state
+request stays open across requests until some later request ends it, the state
 lives on the database handle. That is a footgun for a multi-client server, and
 it is acceptable here for the reason the whole workspace design is: this API
 serves one explorer looking at its own file. `GET` reports the open transaction
 on every call so the UI can show a persistent banner rather than letting one be
 forgotten.
 
-### Milestone 9 — the write-ahead log
+### Milestone 9: the write-ahead log
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/databases/{db}/wal` | the records, the LSNs, and what fsync costs |
 | `GET` | `/databases/{db}/recovery` | what the last open had to repair |
 | `POST` | `/databases/{db}/checkpoint` | flush every dirty page, discard the log |
-| `POST` | `/databases/{db}/crash` | **destructive** — abandon the handle, then recover |
+| `POST` | `/databases/{db}/crash` | **destructive**, abandon the handle, then recover |
 
 ```json
 {
@@ -291,7 +291,7 @@ forgotten.
 
 **Page images are not sent.** A record carries up to two of them, so a thousand
 records is eight megabytes of base64 that no panel renders. The *sizes* go out
-instead, because the sizes are the interesting part — and a non-zero
+instead, because the sizes are the interesting part, and a non-zero
 `before_image_size` marks the transaction's first write to that page, which is
 first-write-wins visible on the wire.
 
@@ -315,7 +315,7 @@ log would discard the before-images that transaction needs to roll back.
 **This endpoint destroys uncommitted work. That is what it is for.**
 
 It drops the database handle without flushing dirty pages, running a checkpoint,
-or rolling anything back — and the next request reopens the file, which runs
+or rolling anything back, and the next request reopens the file, which runs
 recovery. It exists because the alternative is a recovery panel that *describes*
 recovery, and a reader has no reason to believe a description.
 
@@ -336,10 +336,10 @@ forgot to ask first would have nothing to compare against.
 
 What it can lose is exactly what a power cut would lose. It deletes no files, it
 is scoped to one database in the workspace the server was pointed at, and it
-cannot touch anything the engine promised to keep — every committed row survives,
+cannot touch anything the engine promised to keep. Every committed row survives,
 because its commit record was `fsync`ed when it committed.
 
-### Milestone 10 — MVCC and concurrency
+### Milestone 10: MVCC and concurrency
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -352,7 +352,7 @@ endpoints. That parameter is the whole of the multi-console feature from a
 client's point of view: two browser tabs passing different sessions get
 different transactions, see different rows, and can block each other.
 
-A session is *not* a resource the server allocates and hands back — it is a
+A session is *not* a resource the server allocates and hands back. It is a
 label saying which transaction a statement belongs to. Inventing a
 create/destroy lifecycle for a label would be ceremony with no state behind it,
 so there is no `POST /sessions`. Omitting the parameter means the default
@@ -385,7 +385,7 @@ more useful than the API being silent.
 picture. A cycle is the only thing anybody reads one of these for, and a client
 with the adjacency can find one.
 
-**Resources are `table:page.slot`** — one row. Not a page and not a table: page
+**Resources are `table:page.slot`**: one row. Not a page and not a table: page
 granularity would make two sessions inserting into the same heap page conflict,
 which is most inserts.
 
@@ -404,7 +404,7 @@ which is most inserts.
 ```
 
 **`snapshots_taken` is where the isolation level becomes observable.** One per
-transaction under repeatable read, one per statement under read committed —
+transaction under repeatable read, one per statement under read committed,
 that is the entire difference between them.
 
 **`oldest_snapshot_xmin` is vacuum's horizon.** Nothing deleted at or above it
@@ -413,7 +413,7 @@ vacuum making progress. Same mechanism as PostgreSQL's most common "why is my
 disk full".
 
 `POST /vacuum` reuses `CheckpointResponse`, because it answers the same question
-in the same units — how much came back — and a second near-identical model would
+in the same units (how much came back) and a second near-identical model would
 only be two things to keep in step. `bytes_reclaimed` counts *versions*.
 
 ### Row versions on the page inspector
@@ -423,7 +423,7 @@ non-zero `xmax` is a **dead version**: physically present, invisible to any new
 reader, waiting for a vacuum. That is what a delete leaves behind since
 Milestone 10, and it is what PostgreSQL's page inspector shows too.
 
-### Milestone 11 — UPDATE and DELETE
+### Milestone 11: UPDATE and DELETE
 
 **No new endpoints.** Both statements go through `POST /query`, which is the
 point: a client that could run an `INSERT` can run these without knowing they
@@ -446,7 +446,7 @@ Reporting only "updated 3" would make a lost update look like a clean one. See
 `docs/milestone-11-dml.md` for why the row is skipped rather than retried.
 
 **`EXPLAIN` accepts both.** The plan covers the half of the statement that has
-more than one right answer — finding the rows — and one line names what happens
+more than one right answer (finding the rows) and one line names what happens
 to each of them afterwards, rather than inventing an operator with a made-up
 cost.
 
@@ -457,7 +457,7 @@ behind. It is now what a reader can see, and `version_count` is what is
 physically on the pages. The gap between them is exactly what `POST /vacuum`
 would reclaim, and a panel showing both cannot disagree with a `SELECT`.
 
-### Milestone 13 — joins and aggregation
+### Milestone 13: joins and aggregation
 
 **No new endpoints**, again. What changed is what a plan can contain.
 
@@ -467,7 +467,7 @@ operator types are `NestedLoopJoin`, `HashJoin`, `HashAggregate`, `Sort` and
 `Limit`.
 
 **`PlanAlternativeModel` gained `decision`.** With one table there was one
-question — how to read it — and a flat list of alternatives was right. A query
+question (how to read it) and a flat list of alternatives was right. A query
 over three tables answers four independent questions, and a flat list reads as a
 contradiction: several entries all marked `chosen`. The field says which
 question each answered (`"how to read customers"`, `"what order to join in"`),
@@ -475,7 +475,7 @@ and both `EXPLAIN` and the visualizer group by it. It defaults to
 `"access path"`, so a client that ignores it sees what it always saw.
 
 Join-order sub-plans are reported alongside the winner with
-`rejected_because: "a building block, not a rejected plan"` — they are the
+`rejected_because: "a building block, not a rejected plan"`: they are the
 pieces the chosen plan was assembled from, not options that lost, and saying so
 is cheaper than a second field.
 
@@ -492,7 +492,7 @@ Every non-2xx response carries the same envelope:
 | 400 | malformed database id or page id |
 | 404 | unknown database, page or table |
 | 409 | database already exists; second table (Milestone 1 allows one) |
-| 422 | validation failure — bad type, NOT NULL violation, wrong arity, unknown field |
+| 422 | validation failure, bad type, NOT NULL violation, wrong arity, unknown field |
 | 500 | unmapped engine error, i.e. a bug |
 
 Request bodies set `extra="forbid"`, so a typo'd field is a 422 rather than a
@@ -520,7 +520,7 @@ silently ignored value.
 }
 ```
 
-`workspace` is a directory *name*, never a path. Doubles as a liveness probe —
+`workspace` is a directory *name*, never a path. Doubles as a liveness probe,
 the visualizer polls it every 5 s.
 
 ### `POST /databases`
@@ -545,7 +545,7 @@ few rows, which makes page chaining easy to watch.
 }
 ```
 
-409 if a table already exists — Milestone 1 allows one per database.
+409 if a table already exists, Milestone 1 allows one per database.
 
 ### `GET /databases/{db}/records`
 
@@ -562,7 +562,7 @@ few rows, which makes page chaining easy to watch.
 
 `rows_scanned`, `pages_read` and `duration_ns` are the cost of the request, not
 decoration. There is no index and no `LIMIT` pushdown yet, so `offset` is
-honoured by discarding rows the scan already produced — the response says so
+honoured by discarding rows the scan already produced, the response says so
 rather than hiding it.
 
 ### `GET /databases/{db}/pages/{page_id}`
@@ -607,7 +607,7 @@ Notes:
 - `dirty` is always `false` in Milestone 1: with no buffer pool, no page is
   ever cached-and-dirty. The field exists so the shape does not change in
   Milestone 7.
-- `raw_hex` is the whole page — `2 × page_size` characters.
+- `raw_hex` is the whole page, `2 × page_size` characters.
 
 ### `GET /databases/{db}/events`
 

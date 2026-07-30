@@ -12,8 +12,8 @@
  * The workloads are the point. A cache's behaviour is only legible when you can
  * *cause* it: run a scan twice and watch the second one hit; run a scan of a
  * table bigger than the pool and watch it hit nothing at all, because every page
- * it wants was evicted by the pages behind it. That last one — sequential
- * flooding — is the reason real systems do not use plain LRU, and it is far
+ * it wants was evicted by the pages behind it. That last one, sequential
+ * flooding, is the reason real systems do not use plain LRU, and it is far
  * more convincing to watch than to read.
  *
  * Each button runs real SQL through the ordinary query endpoint. Nothing here

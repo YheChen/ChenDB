@@ -1,4 +1,4 @@
-# ChenDB — development tasks.
+# ChenDB: development tasks.
 #
 # The engine has no runtime dependencies; `make test-engine` runs against a
 # bare interpreter. Everything else needs the venv created by `make install`.

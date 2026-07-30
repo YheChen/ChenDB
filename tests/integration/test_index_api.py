@@ -1,8 +1,8 @@
 """Index endpoints, and indexes reached through SQL.
 
 The API's job here is narrow: expose the *real* tree, not a summary of it. So
-these tests check the shape the visualizer draws from — a flat node list, real
-page ids, real key strings, real sibling links — and that what the API reports
+these tests check the shape the visualizer draws from (a flat node list, real
+page ids, real key strings, real sibling links) and that what the API reports
 matches what the engine actually did.
 """
 
@@ -61,7 +61,7 @@ def test_an_index_appears_after_create_index(seeded: TestClient):
     body = seeded.get(f"{BASE}/indexes").json()
     # Two, not one: `users` has a primary key, and since Milestone 17 that
     # implies a unique index on it. It is listed like any other because it *is*
-    # one — a real B+ tree with real pages, not bookkeeping.
+    # one: a real B+ tree with real pages, not bookkeeping.
     assert sorted(i["name"] for i in body["indexes"]) == ["users_age", "users_pkey"]
 
     (index,) = [i for i in body["indexes"] if i["name"] == "users_age"]

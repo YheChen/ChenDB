@@ -2,12 +2,12 @@
  * The log as what it is: a list, in order, that only ever grows at one end.
  *
  *   LSN      txn   type        page   size    ↩ prev
- *   0        1     update      4      1 KiB   —
+ *   0        1     update      4      1 KiB,
  *   1068     1     update      7      552 B   0
- *   1620     1     commit      —      44 B    1068
+ *   1620     1     commit, 44 B    1068
  *
  * Newest **last**, unlike the undo log and unlike the event timeline. A log is
- * read forwards — recovery replays it forwards, and the `prev_lsn` chain only
+ * read forwards, recovery replays it forwards, and the `prev_lsn` chain only
  * makes sense pointing backwards up the page. Reversing it to match the other
  * panels would make the one thing this view is for harder to see.
  *

@@ -6,7 +6,7 @@
  * * the log is ordered forwards, marks what is not yet on disk, and says so
  *   when it is showing a window rather than everything;
  * * the recovery report distinguishes "clean shutdown" from "nothing was
- *   wrong", and gives "already current" the same billing as "replayed" —
+ *   wrong", and gives "already current" the same billing as "replayed",
  *   because a skipped record is the last checkpoint paying for itself.
  */
 

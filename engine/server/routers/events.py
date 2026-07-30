@@ -4,7 +4,7 @@ Backpressure
 ------------
 The engine emits events from whichever thread is doing the work.  A WebSocket
 client consumes them on the event loop.  If the client is slower than the
-engine — always true during a large scan at ``VERBOSE`` — something has to give.
+engine (always true during a large scan at ``VERBOSE``) something has to give.
 
 The policy is **drop oldest, and say so**.  Each connection owns a bounded
 queue; when it is full the oldest queued event is discarded and a counter

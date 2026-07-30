@@ -1,11 +1,11 @@
-# Milestone 2 — SQL parser and AST explorer
+# Milestone 2: SQL parser and AST explorer
 
 **Status: complete.** Engine version 0.2.0.
 
 ## Goal
 
 Turn SQL text into a tree, with every node knowing exactly which characters it
-came from — then make that link visible, so clicking a node in the AST
+came from, then make that link visible, so clicking a node in the AST
 highlights the SQL that produced it.
 
 Nothing executes. That is Milestone 3, and the API says so: there is a
@@ -15,7 +15,7 @@ Nothing executes. That is Milestone 3, and the API says so: there is a
 
 ## What was built
 
-### Engine — `engine/parser/`
+### Engine: `engine/parser/`
 
 | Module | Responsibility |
 |---|---|
@@ -23,7 +23,7 @@ Nothing executes. That is Milestone 3, and the API says so: there is a
 | `lexer.py` | hand-written scanner: one pass, one character of lookahead |
 | `ast.py` | frozen dataclass nodes; generic `children()` / `attributes()` |
 | `parser.py` | recursive descent, one method per grammar rule |
-| `analyze.py` | `analyze_sql()` — never raises, returns partial results |
+| `analyze.py` | `analyze_sql()`, never raises, returns partial results |
 
 Five new diagnostic events in the `parser` category: `TokenizedEvent`,
 `TokenEvent`, `AstNodeCreatedEvent`, `ParsedEvent`, `ParseErrorEvent`.
@@ -62,7 +62,7 @@ column_ref     := ident [ '.' ident ]
 Precedence is encoded in the *shape* of the rules, not a table: `or_expr` calls
 `and_expr` calls `not_expr`, so the operator parsed at the shallowest level
 binds loosest. `a OR b AND c` therefore parses as `a OR (b AND c)`
-automatically. Left associativity comes from the `while` loops — `1 - 2 - 3`
+automatically. Left associativity comes from the `while` loops, `1 - 2 - 3`
 becomes `(1 - 2) - 3`.
 
 ### API
@@ -75,7 +75,7 @@ Always returns 200. Invalid SQL is a *result*, not a failed request: the editor
 needs the tokens that did scan plus the error position, and an HTTP error would
 throw both away.
 
-### Visualizer — the SQL workspace
+### Visualizer: the SQL workspace
 
 Monaco editor with a ChenDB-specific SQL grammar, a token stream, an AST tree,
 and two-way highlighting. Error and warning markers appear at the exact
@@ -112,7 +112,7 @@ SelectStatement                     SELECT email, age * 2 AS doubled FROM …
 ```
 
 Click `BinaryOp AND` and the editor highlights
-`age >= 18 AND email IS NOT NULL` — not the `AND`, the whole subtree's source.
+`age >= 18 AND email IS NOT NULL`: not the `AND`, the whole subtree's source.
 Put the cursor inside `18` and the `Literal` node selects, because the tree is
 searched for the *innermost* node containing that offset.
 
@@ -133,7 +133,7 @@ for node in walk(parse(sql)[0]):
 **`IS NULL` is its own node.** Not `BinaryOp(EQ, x, Literal(None))`, because
 `x = NULL` is a genuinely different thing: in three-valued logic it is UNKNOWN
 for every input, including NULL. Keeping them distinct in the AST makes
-conflating them impossible downstream — one of the classic SQL bugs, designed
+conflating them impossible downstream, one of the classic SQL bugs, designed
 out rather than commented about.
 
 **Every keyword is reserved from the start**, including ones the parser
@@ -152,7 +152,7 @@ query being written; an editor that goes blank on every keystroke is useless. It
 returns whatever scanned, whatever parsed, and the error.
 
 **NULL has no type.** `Literal(value=None, data_type=None)`. Its type comes
-from the column it is compared against, which needs the catalog — Milestone 4.
+from the column it is compared against, which needs the catalog, Milestone 4.
 
 **Node ids are assigned bottom-up** as rules complete, so the
 `AstNodeCreatedEvent` order literally shows recursive descent assembling the
@@ -163,15 +163,15 @@ tree: leaves first, root last.
 ## A bug worth recording
 
 `InsertStatement.rows` was first written as `tuple[tuple[Expression, ...], ...]`.
-The generic `Node.children()` flattens one level of tuple, so the inner tuples —
-being tuples, not `Node`s — matched nothing, and **every inserted value was
+The generic `Node.children()` flattens one level of tuple, so the inner tuples (
+being tuples, not `Node`s) matched nothing, and **every inserted value was
 invisible to the tree walk**. The API returned an `INSERT` AST with no literals
 in it.
 
 The fix was a `ValuesRow` node wrapping each row, which is better design anyway:
 a `VALUES` group is a real syntactic construct with its own span, so the UI can
-highlight `(1, 'Ada')` as a unit. It also restores a clean invariant — *every
-node field is a scalar, a `Node`, or a flat tuple* — now enforced for every node
+highlight `(1, 'Ada')` as a unit. It also restores a clean invariant (*every
+node field is a scalar, a `Node`, or a flat tuple*) now enforced for every node
 type by `test_no_node_hides_children_inside_a_nested_tuple`.
 
 ---
@@ -183,7 +183,7 @@ type by `test_no_node_hides_children_inside_a_nested_tuple`.
 | Tokenize | O(n) characters, single pass, one char lookahead, no backtracking |
 | Parse | O(n) tokens, one token lookahead, no backtracking |
 | `walk(node)` | O(nodes) |
-| `innermostNodeAt(offset)` | O(nodes) — fine for a statement; an interval tree would be needed for a very large script |
+| `innermostNodeAt(offset)` | O(nodes), fine for a statement; an interval tree would be needed for a very large script |
 | Node span union | O(1) |
 
 Recursion depth is bounded by expression nesting. `MAX_EXPRESSION_DEPTH = 100`
@@ -200,7 +200,7 @@ well under a millisecond. Parsing is not the bottleneck in any query.
 **PostgreSQL** generates its lexer with `flex` (`scan.l`) and its parser with
 Bison (`gram.y`), an LALR grammar. That scales to a far larger dialect and
 resolves ambiguity mechanically, but a shift-reduce conflict cannot explain
-itself — "syntax error at or near" is the limit of what it can tell you.
+itself, "syntax error at or near" is the limit of what it can tell you.
 PostgreSQL then *transforms* the raw parse tree into a `Query` (name resolution,
 type coercion) before planning; that transform is what ChenDB's Milestone 4
 binder will be.
@@ -212,7 +212,7 @@ follows SQLite on the lexer and keeps a full AST, because the whole point here
 is to be able to *look* at the query before running it.
 
 **Why recursive descent at all**: it is what essentially every hand-written
-production parser uses — SQLite, Clang, TypeScript, Go — because the failure
+production parser uses (SQLite, Clang, TypeScript, Go) because the failure
 point is a specific method, so the error can name what it expected.
 
 ---
@@ -230,11 +230,11 @@ point is a specific method, so the error can name what it expected.
 
 Two worth calling out:
 
-**`test_every_token_span_slices_back_to_its_own_lexeme`** — for every token in a
+**`test_every_token_span_slices_back_to_its_own_lexeme`**: for every token in a
 multi-line input, `sql[token.start:token.end] == token.lexeme`. If that holds,
 the editor's highlighting cannot be off by one.
 
-**`test_a_parent_span_contains_every_child_span`** — an invariant of the whole
+**`test_a_parent_span_contains_every_child_span`**: an invariant of the whole
 span design. If a child ever escaped its parent's range, selecting the parent
 would highlight less than the subtree it owns.
 
@@ -265,7 +265,7 @@ would highlight less than the subtree it owns.
 | Limitation | Resolved by |
 |---|---|
 | Nothing executes; parsing only | M3 |
-| No name resolution — `SELECT nope FROM nope` parses fine | M4, the binder |
+| No name resolution, `SELECT nope FROM nope` parses fine | M4, the binder |
 | `NULL` has no type until bound | M4 |
 | No `ORDER BY`, `LIMIT`, `GROUP BY`, `DISTINCT` | unscheduled |
 | No `UPDATE`, `DELETE`, `DROP` | unscheduled |
@@ -280,9 +280,9 @@ these fail with a confusing message.
 
 ---
 
-## Next: Milestone 3 — execution engine and operator debugger
+## Next: Milestone 3, execution engine and operator debugger
 
-**Engine.** Volcano-model operators — sequential scan, filter, projection — plus
+**Engine.** Volcano-model operators (sequential scan, filter, projection) plus
 expression evaluation over real rows. `POST /query` finally appears, and
 `features.execution` flips to true.
 

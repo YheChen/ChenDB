@@ -1,4 +1,4 @@
-"""``Database`` — the public face of the engine.
+"""``Database``, the public face of the engine.
 
     from engine import Column, DataType, Database, Schema
 
@@ -48,7 +48,7 @@ Transactions, and which API gets them
 :func:`~engine.executor.engine.execute_script` wraps every statement in an
 implicit transaction, so ``INSERT INTO t VALUES (a), (b), (c)`` that fails on
 ``c`` leaves none of them. A bare :meth:`insert` from Python is a single write
-with nobody watching — atomic because it is one write, but not committed, and
+with nobody watching, atomic because it is one write, but not committed, and
 therefore **not durable until something commits or syncs**.
 
 That is deliberate rather than an oversight. Wrapping every embedded call would
@@ -57,7 +57,7 @@ insert into a 90 µs one, and the embedded API's whole reason to exist is to be
 the fast path. The SQL layer is where autocommit belongs, because that is where
 the statement boundary is.
 
-``CREATE TABLE`` — several rows across two system tables — became atomic for
+``CREATE TABLE`` (several rows across two system tables) became atomic for
 free in Milestone 8, because the undo log works in pages and does not care what
 the rows meant.
 
@@ -170,8 +170,8 @@ class Database:
         self._locks = LockManager(tracer=self._tracer)
         # The horizon: every id below it has finished, so every row still on
         # disk that carries one came from a transaction that committed. The
-        # meta page's copy can lag after a crash — it is only forced at a
-        # checkpoint — so the log's highest id closes the gap.
+        # meta page's copy can lag after a crash (it is only forced at a
+        # checkpoint) so the log's highest id closes the gap.
         horizon = max(pager.meta.next_xid, pager.recovery.highest_xid + 1, 1)
         self._transactions = TransactionManager(tracer=self._tracer, frozen_xid=horizon)
         pager.on_checkpoint = self._stamp_next_xid
@@ -241,7 +241,7 @@ class Database:
 
         One handle, one session at a time. The server gives each console its own
         *view* of the same handle by swapping this around
-        :meth:`in_session` — which works because statements are serialised, and
+        :meth:`in_session`, which works because statements are serialised, and
         would not if they were not.
         """
         return self._session
@@ -259,14 +259,14 @@ class Database:
     @property
     def locks(self) -> LockManager:
         """The lock table. Read it for the lock view; do not lock through it
-        directly — :meth:`insert` and :meth:`delete` already do."""
+        directly, :meth:`insert` and :meth:`delete` already do."""
         return self._locks
 
     def snapshot(self) -> Snapshot:
         """The view this session reads through.
 
         A session with no transaction open gets a fresh snapshot per call, which
-        is READ COMMITTED behaviour without the transaction — and is what a bare
+        is READ COMMITTED behaviour without the transaction, and is what a bare
         ``SELECT`` from the embedded API has always effectively had.
         """
         active = self._transactions.active_in(self._session)
@@ -282,13 +282,13 @@ class Database:
         """The transaction id to stamp on a row this session is writing.
 
         A write outside a transaction opens an implicit one, because a row has
-        to be attributed to *something* — ``xmin`` of zero means "nobody made
+        to be attributed to *something*, ``xmin`` of zero means "nobody made
         this", which no snapshot would ever see. That is a change from Milestone
         9, where a bare embedded write belonged to no transaction at all.
 
         Counting the row is the caller's job, not this method's. It used to
         happen here, which meant a delete reported one row created and one
-        deleted — harmless until Milestone 11, when an update became a delete
+        deleted, harmless until Milestone 11, when an update became a delete
         *and* an insert and the two counters stopped being interchangeable.
         """
         active = self._transactions.active_in(self._session)
@@ -340,7 +340,7 @@ class Database:
         """Reclaim versions no snapshot can want again. Returns how many.
 
         A version is dead when its ``xmax`` is a committed transaction that
-        every open snapshot can already see — meaning nobody left could still be
+        every open snapshot can already see, meaning nobody left could still be
         reading the row as it was before the delete.
         :meth:`TransactionManager.oldest_snapshot_xmin` is that horizon, and a
         single long-running transaction holds it down and stops this making
@@ -407,8 +407,8 @@ class Database:
         """Accept the work. Durability is still :meth:`sync`'s job.
 
         A ``COMMIT`` on a transaction that already had a statement fail rolls
-        back instead. That is what PostgreSQL does — ``COMMIT`` in an aborted
-        block prints ``ROLLBACK`` — and it is the safe direction: the caller
+        back instead. That is what PostgreSQL does (``COMMIT`` in an aborted
+        block prints ``ROLLBACK``) and it is the safe direction: the caller
         never gets half a transaction, and never gets stuck in one either. The
         returned transaction reports ``aborted``, so nothing has to guess.
         """
@@ -433,7 +433,7 @@ class Database:
         * the **meta page** is a decoded dataclass, so ``page_count`` and
           ``next_object_id`` have to be re-read from the restored bytes;
         * the **catalog cache** and the **statistics** are derived from pages
-          that just changed underneath them — a rolled-back ``CREATE TABLE``
+          that just changed underneath them. A rolled-back ``CREATE TABLE``
           would otherwise leave the engine happily serving a table with no rows
           on disk.
         """
@@ -470,7 +470,7 @@ class Database:
         """Flush every dirty page and discard the log. Returns pages written.
 
         Refuses while a transaction is open, because discarding the log would
-        discard that transaction's before-images — the ones a rollback past the
+        discard that transaction's before-images. The ones a rollback past the
         in-memory cap reads, and the ones recovery would need if the machine
         died before the commit. Real systems solve this by keeping the log back
         to the oldest active transaction's first record instead of truncating
@@ -495,7 +495,7 @@ class Database:
         """Bring the meta page's ``next_xid`` up to date, before a checkpoint.
 
         A checkpoint refuses to run while any transaction is open, so at this
-        moment every transaction so far has finished — and because a rollback
+        moment every transaction so far has finished, and because a rollback
         physically removes its work, every row still on disk belongs to one that
         committed. That is exactly the condition the horizon asserts, and this
         is the only instant it holds.
@@ -507,13 +507,13 @@ class Database:
         """Put back the pages the in-memory undo log could not hold.
 
         Only runs for a transaction that overflowed :data:`MAX_UNDO_BYTES`. The
-        WAL carries a before-image for every page a transaction first touched —
-        the same first-write-wins rule, on disk — so the log has exactly what
+        WAL carries a before-image for every page a transaction first touched (
+        the same first-write-wins rule, on disk) so the log has exactly what
         memory dropped.
 
         Runs *before* the in-memory rollback rather than instead of it, so the
-        cached images are applied last. They are the same bytes either way —
-        this is only ever filling the gaps memory could not hold — and ordering
+        cached images are applied last. They are the same bytes either way (
+        this is only ever filling the gaps memory could not hold) and ordering
         it this way keeps the memory path the one that decides.
 
         The scan runs **forwards** and keeps the first image per page, not the
@@ -563,13 +563,13 @@ class Database:
     def transaction(self) -> Iterator[Transaction]:
         """Run a block atomically: commit on success, roll back on anything else.
 
-            with db.transaction():
-                db.insert("users", (1, "ada"))
-                db.insert("users", (2, "alan"))
+                    with db.transaction():
+                        db.insert("users", (1, "ada"))
+                        db.insert("users", (2, "alan"))
 
-        Nests by adopting an outer transaction rather than opening a second one
-        — ChenDB has no savepoints, so an inner block cannot roll back
-        independently, and pretending otherwise would be worse than not nesting.
+                Nests by adopting an outer transaction rather than opening a second one
+        , ChenDB has no savepoints, so an inner block cannot roll back
+                independently, and pretending otherwise would be worse than not nesting.
         """
         outer = self.active_transaction
         transaction = self.begin(implicit=True) if outer is None else outer
@@ -587,7 +587,7 @@ class Database:
         """True when :meth:`transaction` should end ``transaction`` itself.
 
         Two ways it should not. The caller had one open already, so it decides;
-        or the block ended this one itself — ``db.rollback()`` inside a ``with``
+        or the block ended this one itself, ``db.rollback()`` inside a ``with``
         is a reasonable thing to write, and the context manager committing over
         the top of it would raise "COMMIT with no transaction open" and hide
         whatever the block was doing.
@@ -598,7 +598,7 @@ class Database:
     def statistics(self) -> StatisticsCatalog:
         """Table and column statistics, gathered on demand.
 
-        In memory only, so they vanish on close — see
+        In memory only, so they vanish on close, see
         :mod:`engine.planner.statistics` for why that is a choice rather than
         an omission.
         """
@@ -673,7 +673,7 @@ class Database:
         Two steps, and the second is the one that costs: the tree gives record
         ids, then each row is fetched from the heap by address. Those fetches are
         scattered across the file, so an index that matches many rows can be
-        *slower* than a sequential scan — the reason a real planner refuses an
+        *slower* than a sequential scan. The reason a real planner refuses an
         index once its estimated selectivity gets too high.
         """
         index = self._catalog.require_index(index_name)
@@ -700,15 +700,15 @@ class Database:
         Every index on the table is updated in the same call.  That is the cost
         indexes impose on writes and the reason they are not free: an insert into
         a table with three indexes is four B+ tree descents plus the heap write.
-        Not atomic — a unique violation on the second index leaves the first one
-        updated and the row in the heap — which is one more thing Milestone 9's
+        Not atomic. A unique violation on the second index leaves the first one
+        updated and the row in the heap, which is one more thing Milestone 9's
         write-ahead log is for.
         """
         info = self.require_table(table)
         heap = self._catalog.heap_for(info.name)
         indexes = self._catalog.list_indexes(info.name)
 
-        # One transaction for the whole call, committed on the way out — which
+        # One transaction for the whole call, committed on the way out: which
         # Milestone 10 made necessary rather than merely tidy. A row's ``xmin``
         # has to name a *committed* transaction before anyone else can see it,
         # so a bare embedded write that left its transaction open would write
@@ -772,7 +772,7 @@ class Database:
 
         Since Milestone 10 the heap holds *versions*, not rows, and this filters
         them against a snapshot. A version created by a transaction that has not
-        committed, or deleted by one that has, is walked past — which is what
+        committed, or deleted by one that has, is walked past, which is what
         lets a reader never wait for a writer, and what makes a scan's cost
         depend on how much dead weight nobody has vacuumed yet.
 
@@ -789,8 +789,8 @@ class Database:
             # eight bytes on every column definition to represent a history that
             # cannot be observed.
             #
-            # PostgreSQL does the opposite — pg_class rows are MVCC tuples like
-            # any other — because it has no undo and therefore no other way to
+            # PostgreSQL does the opposite (pg_class rows are MVCC tuples like
+            # any other) because it has no undo and therefore no other way to
             # take a failed DDL back.
             for record_id, payload in heap.scan():
                 yield record_id, decode_record(info.schema, payload)
@@ -833,7 +833,7 @@ class Database:
 
             1. is this version already superseded by a **finished**
                transaction?  → give up; the row is settled and not ours
-            2. otherwise take the exclusive lock — which **blocks** if a
+            2. otherwise take the exclusive lock, which **blocks** if a
                transaction that is still open holds it
             3. re-read, because waiting means the world moved on
 
@@ -842,7 +842,7 @@ class Database:
         settled at all: that transaction may yet roll back, which in ChenDB
         restores the page and takes the ``xmax`` with it. Treating it as dead
         would let two sessions each conclude the other had won and neither
-        change anything — and would make a rolled-back delete silently swallow
+        change anything, and would make a rolled-back delete silently swallow
         somebody else's update.
 
         A transaction is finished exactly when it is not in
@@ -888,7 +888,7 @@ class Database:
                 )
 
         # Eight bytes, not a tombstone. The version stays readable by any
-        # snapshot older than this transaction — which is the point — and the
+        # snapshot older than this transaction (which is the point) and the
         # slot is reclaimed later by vacuum(). PostgreSQL does exactly this and
         # ships a daemon to do the reclaiming.
         heap.replace(record_id, set_xmax(payload, xid))
@@ -931,8 +931,8 @@ class Database:
         Which is why the row's *address changes*, and why every index on the
         table has to be rewritten even when the update touched no indexed
         column: the entries all point at slot 3, and the live row is now slot 8.
-        That cost is real — an update to a table with four indexes is four B+
-        tree deletes and four inserts on top of two heap writes — and it is what
+        That cost is real. An update to a table with four indexes is four B+
+        tree deletes and four inserts on top of two heap writes, and it is what
         PostgreSQL's heap-only tuples avoid, by keeping the new version on the
         same page and chaining to it from the old one so the indexes can stay
         put. ChenDB has no HOT, so the bill is paid in full every time.
@@ -957,12 +957,12 @@ class Database:
         self, info, heap, indexes, record_id: RecordId, values: Sequence[Any]
     ) -> RecordId | None:
         # ``None`` here means another session *committed* a change to this row
-        # between this statement locating it and reaching it — see
+        # between this statement locating it and reaching it: see
         # :meth:`_claim_row`, which waits for one that has not committed yet.
         #
         # PostgreSQL does not give up at that point: under READ COMMITTED it
         # follows the ``t_ctid`` chain to the new version, re-evaluates the
-        # WHERE clause against it, and updates that one instead — the
+        # WHERE clause against it, and updates that one instead: the
         # EvalPlanQual machinery. It is the correct behaviour and it is a lot of
         # machinery, so ChenDB skips the row and *reports* the skip rather than
         # pretending the update applied.
@@ -991,7 +991,7 @@ class Database:
         return new_id
 
     def count(self, table: str) -> int:
-        """Rows visible to this reader. O(pages) — there is no cached count.
+        """Rows visible to this reader. O(pages), there is no cached count.
 
         Not the same as the number of *versions* on disk, and the gap between
         them is what vacuum reclaims. :meth:`version_count` reports the other
@@ -1096,7 +1096,7 @@ class Database:
         """Simulate a crash: drop everything unwritten and release the file.
 
         **This loses data on purpose.** An open transaction is *not* rolled
-        back, dirty pages are *not* flushed, and no checkpoint runs — so
+        back, dirty pages are *not* flushed, and no checkpoint runs, so
         reopening the file goes through recovery, which is the point. Committed
         work survives, because its commit record was ``fsync``ed when it
         committed; everything else is gone.

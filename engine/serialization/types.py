@@ -2,7 +2,7 @@
 
 Each SQL type owns a :class:`Codec` that converts between a Python value and
 its on-disk bytes.  Codecs are looked up by :class:`DataType`, so adding a type
-means adding one class and one registry entry — nothing in the page, heap or
+means adding one class and one registry entry. Nothing in the page, heap or
 record layer changes.
 
 Encoding
@@ -27,13 +27,13 @@ PostgreSQL takes the third road: distinct declared types (``smallint``,
 
 **Little-endian.** Matches every platform this will realistically run on, so
 encoding is a memory copy rather than a byte swap. Big-endian would let integer
-keys be compared with ``memcmp`` — genuinely useful for the B+ tree in
+keys be compared with ``memcmp``, genuinely useful for the B+ tree in
 Milestone 5, and the reason key encodings in RocksDB and FoundationDB are
 big-endian. ChenDB compares decoded values instead.
 
 **4-byte text length.** Simple and uniform, but three bytes of overhead on a
 short string. PostgreSQL uses a 1-byte header for values up to 126 bytes;
-SQLite encodes lengths as varints. Both matter at scale — a table of short
+SQLite encodes lengths as varints. Both matter at scale. A table of short
 strings pays roughly 3 bytes per row per column here.
 """
 
@@ -191,21 +191,21 @@ class FloatCodec(Codec):
     is that IEEE comparison is a *partial* order and every layer above here
     assumes a total one:
 
-    * ``ORDER BY f`` returned ``2.0, NaN, 1.0, inf`` — literally unsorted, because
+    * ``ORDER BY f`` returned ``2.0, NaN, 1.0, inf``, literally unsorted, because
       Python's sort compares with ``<`` and every comparison against NaN is
       false. A sort that silently does not sort is the worst thing in this list.
     * ``MIN``/``MAX`` seeded themselves with the first value and never displaced
       it, so the answer depended on insertion order.
     * :mod:`engine.index.key` orders NaN *above* ``+inf`` by its bit pattern,
       while the evaluator says ``NaN > 398.0`` is false. So an index scan and a
-      sequential scan returned different rows for the same query — adding an
+      sequential scan returned different rows for the same query, adding an
       index changed the answer.
 
     PostgreSQL keeps them and defines a total order instead, with NaN equal to
     itself and greater than everything. That is the more complete answer and it
     is four coordinated changes: comparison, sort, the aggregates, and the key
     encoding. Refusing costs one check and removes the whole class today, so it
-    is what ChenDB does — and it mirrors ``INTEGER`` being exactly int64 rather
+    is what ChenDB does, and it mirrors ``INTEGER`` being exactly int64 rather
     than Python's unbounded integer. SQLite converts a non-finite result to NULL
     on store, which is a third answer and the only one that loses data silently.
 

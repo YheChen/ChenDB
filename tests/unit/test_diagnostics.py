@@ -47,7 +47,7 @@ def test_a_level_records_itself_and_everything_below_it():
 
     tracer.emit(DatabaseOpenedEvent("db", 4096, 1, True))  # SUMMARY
     tracer.emit(make_page_read())  # STORAGE
-    tracer.emit(RecordReadEvent(1, 0, 20))  # VERBOSE — filtered out
+    tracer.emit(RecordReadEvent(1, 0, 20))  # VERBOSE, filtered out
 
     assert [item.event_type for item in sink.snapshot()] == [
         "DatabaseOpenedEvent",

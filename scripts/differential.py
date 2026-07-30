@@ -4,7 +4,7 @@
     scripts/differential.py --seeds 0:5000            # a campaign
     scripts/differential.py --seed 1731 --verbose     # one case, everything shown
 
-Exits non-zero if anything diverged. Prints the coverage table either way — the
+Exits non-zero if anything diverged. Prints the coverage table either way. The
 counters are how you notice the suite has quietly stopped testing anything, which
 is a failure mode that otherwise looks exactly like success.
 """

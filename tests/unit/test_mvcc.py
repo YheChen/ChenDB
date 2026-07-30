@@ -3,7 +3,7 @@
 Everything here is about the claim MVCC exists to make: **a reader never waits
 for a writer**. The tests are written as two named sessions on one handle,
 because that is how the explorer's two consoles work and how a reader is
-supposed to check the reasoning — ``alice`` and ``bob`` rather than ``t1`` and
+supposed to check the reasoning, ``alice`` and ``bob`` rather than ``t1`` and
 ``t2``, so a failure reads like a story.
 
 Statements do not run at the same *instant*; the engine still serialises one at
@@ -53,8 +53,8 @@ def rid_of(db: Database, key: int):
 def test_a_reader_does_not_wait_for_a_writer(db: Database):
     """The whole point, in one test.
 
-    Bob is holding an exclusive row lock. Alice reads the table anyway — no
-    block, no timeout, no lock request — because she reads an older *version*
+    Bob is holding an exclusive row lock. Alice reads the table anyway (no
+    block, no timeout, no lock request) because she reads an older *version*
     rather than waiting for the newer one.
     """
     with db.in_session("bob"):
@@ -98,7 +98,7 @@ def test_repeatable_read_keeps_one_snapshot(db: Database):
     """The same query twice returns the same rows, whatever else happened.
 
     One snapshot for the transaction's whole life. This is snapshot isolation,
-    and it is stronger than the SQL standard's REPEATABLE READ — the standard
+    and it is stronger than the SQL standard's REPEATABLE READ. The standard
     permits phantom rows and this does not.
     """
     with db.in_session("alice"):
@@ -179,7 +179,7 @@ def test_an_implicit_transaction_belongs_to_the_session_that_opened_it(db: Datab
     """A bare write from a named session must commit itself, like any other.
 
     It did not, for a whole milestone. ``Database.transaction`` asked
-    ``TransactionManager.active`` — the *default* session's transaction —
+    ``TransactionManager.active`` (the *default* session's transaction)
     decided it did not own the one it had just opened for ``carol``, and left it
     running. The write reported success and stayed invisible to everyone,
     holding a row lock and the vacuum horizon until the process ended.
@@ -230,7 +230,7 @@ def test_vacuum_reclaims_what_nobody_can_want(db: Database):
 def test_vacuum_will_not_reclaim_what_an_open_snapshot_still_needs(db: Database):
     """A long-running transaction holds the horizon down.
 
-    This is not a limitation of the implementation — it is the same mechanism
+    This is not a limitation of the implementation. It is the same mechanism
     behind PostgreSQL's most common "why is my disk full", and it is the price
     of letting that reader carry on without blocking.
     """
@@ -291,7 +291,7 @@ def test_an_update_that_lost_the_race_is_skipped_rather_than_applied(db: Databas
 
     Alice located a row, bob replaced it and **committed**, and the version
     alice meant to change is now dead. PostgreSQL would follow the ``t_ctid``
-    chain to the new version and re-check the predicate against it —
+    chain to the new version and re-check the predicate against it,
     EvalPlanQual. ChenDB reports the skip instead, which is a smaller answer but
     not a wrong one: what it must never do is silently overwrite bob.
     """
@@ -313,7 +313,7 @@ def test_a_writer_waits_for_an_open_writer_instead_of_skipping(db: Database):
     """An uncommitted xmax settles nothing, so the second writer must wait.
 
     The distinction this makes is not academic. Bob's transaction is still open,
-    so it may yet roll back — in which case the row was never changed and alice
+    so it may yet roll back, in which case the row was never changed and alice
     would have skipped it for nothing, silently. Treating "dead" and "dead by a
     transaction that finished" as the same thing is how a lost update becomes
     invisible.
@@ -339,7 +339,7 @@ def test_a_writer_waits_for_an_open_writer_instead_of_skipping(db: Database):
 
 def test_a_rolled_back_writer_leaves_the_row_to_the_next_one(db: Database):
     # The other half of the same rule. Bob's rollback restored the page, so the
-    # xmax is physically gone and alice's update goes through — which it would
+    # xmax is physically gone and alice's update goes through: which it would
     # not if she had given up the moment she saw a dead version.
     target = rid_of(db, 2)
 
@@ -371,7 +371,7 @@ def test_two_writers_on_one_row_conflict(db: Database):
 
     with db.in_session("alice"), pytest.raises(LockTimeout):
         db.begin()
-        # Alice can still *read* row 1 — she just cannot delete it.
+        # Alice can still *read* row 1: she just cannot delete it.
         assert 1 in ids(db)
         db.locks.acquire(
             db.transactions.active_in("alice").transaction_id,
@@ -405,7 +405,7 @@ def test_a_deadlock_names_a_victim_and_the_other_side_proceeds(db: Database):
     """Two transactions, each holding what the other wants.
 
     Detected by finding a cycle in the wait-for graph, not by waiting for a
-    timeout — the two are distinguishable, and conflating them means either
+    timeout. The two are distinguishable, and conflating them means either
     killing healthy work or letting real deadlocks sit.
     """
     locks = db.locks

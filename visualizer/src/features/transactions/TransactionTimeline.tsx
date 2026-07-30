@@ -12,7 +12,7 @@
  * surprising thing about how this engine behaves after Milestone 8, and the
  * timeline is where it becomes obvious.
  *
- * The list is capped by the engine, not here — the manager keeps a bounded
+ * The list is capped by the engine, not here, the manager keeps a bounded
  * history for the same reason the event ring buffer is bounded.
  */
 

@@ -1,4 +1,4 @@
-# Milestone 9 — the write-ahead log
+# Milestone 9: the write-ahead log
 
 Milestone 8 made writes atomic against **errors**. This makes them atomic
 against **power loss**, and the entire difference is one small durable write:
@@ -13,14 +13,14 @@ against **power loss**, and the entire difference is one small durable write:
                              They do not need to be anywhere else.
 ```
 
-Kill the process at that point and the pages are gone — every one of them was
+Kill the process at that point and the pages are gone. Every one of them was
 still in the buffer pool. Reopen the file and the rows are there, because
 recovery replays the log. That is the milestone in one paragraph, and
 `tests/recovery/test_a_committed_transaction_survives_without_a_sync` is it as
 an assertion.
 
-The test that used to say the opposite — `test_a_crash_mid_transaction_is_not_atomic`
-— predicted its own inversion in Milestone 8, and has now been inverted.
+The test that used to say the opposite (`test_a_crash_mid_transaction_is_not_atomic`
+) predicted its own inversion in Milestone 8, and has now been inverted.
 
 ---
 
@@ -35,7 +35,7 @@ engine/wal/
 
 Plus a hook on the buffer pool's eviction path, `checkpoint_lsn` in the meta
 page (format version 4), an LSN stamped into every page as it is written, and
-four endpoints — one of which deliberately breaks the database.
+four endpoints, one of which deliberately breaks the database.
 
 ---
 
@@ -54,7 +54,7 @@ def _write_to_disk_write_ahead(self, page_id, raw):
 ```
 
 Break it and a crash leaves a change on the pages that the log has no record of
-— which recovery cannot undo, because it cannot see it.
+, which recovery cannot undo, because it cannot see it.
 
 **2. A commit is not a commit until its record is durable.** One `fsync`, on the
 log, at commit time.
@@ -63,7 +63,7 @@ From rule 2 comes **no-force**: a commit does not have to flush the pages,
 because the log can reconstruct them. From rule 1 comes permission to keep
 **stealing**: the pool may evict a dirty uncommitted page, because recovery can
 put it back. Steal + no-force is the fastest pair and the pair that needs a log.
-ChenDB has had steal since Milestone 7 and gets no-force here — which is why the
+ChenDB has had steal since Milestone 7 and gets no-force here, which is why the
 buffer pool did not have to change to become crash-safe.
 
 ---
@@ -73,7 +73,7 @@ buffer pool did not have to change to become crash-safe.
 Not a counter. That is what PostgreSQL does, and it makes two otherwise-fiddly
 things disappear:
 
-- **"durable up to LSN *n*"** becomes "the first *n* bytes are on disk" — a
+- **"durable up to LSN *n*"** becomes "the first *n* bytes are on disk", a
   comparison, not a lookup;
 - **a record's LSN is knowable before it is written**, which turns out to be
   load-bearing.
@@ -99,7 +99,7 @@ of the *stream*. `checkpoint_lsn` in the meta page is the difference, and it is
 the only field format version 4 added.
 
 Without it, LSNs would restart at zero after every checkpoint, and a record
-written after one would compare *below* the LSN already stamped on a page —
+written after one would compare *below* the LSN already stamped on a page,
 so redo would look at it, decide the page was ahead, and skip work it had to do.
 `test_work_after_a_checkpoint_still_survives_a_crash` is the assertion.
 
@@ -112,7 +112,7 @@ so redo would look at it, decide the page was ahead, and skip work it had to do.
 
   analysis   t7 committed → winner
              t9 never did → loser
-  redo       replay u1 u2 u3 u4 — everything, losers included
+  redo       replay u1 u2 u3 u4, everything, losers included
   undo       walk t9's records back, restore before-images,
              logging each restore, then abort t9
 ```
@@ -120,7 +120,7 @@ so redo would look at it, decide the page was ahead, and skip work it had to do.
 **Redo replays the losers too.** ARIES calls this *repeating history*, and the
 reason is that recovery cannot know which of a loser's changes reached the disk.
 Rather than reason about it per page, it puts the database into exactly the
-state the crash left it in — every logged change applied — and then rolls the
+state the crash left it in (every logged change applied) and then rolls the
 losers back from there, using the same undo path a live rollback uses. One
 mechanism, exercised constantly, instead of a second one that only runs after a
 crash and is therefore never tested.
@@ -152,7 +152,7 @@ def _page_lsn_on_disk(self, page_id) -> int:
         return -1          # was 0
 ```
 
-**Zero is a real LSN** — it is the first record ever written, which for a
+**Zero is a real LSN**: it is the first record ever written, which for a
 brand-new database is the meta page. A crash before that page reaches the disk
 leaves nothing to read, and answering `0` had redo compare `0 >= 0`, decide the
 page was current, and skip restoring the only page that makes the file a
@@ -163,8 +163,8 @@ reproduces it as a real `SIGKILL`.
 
 No dirty-page table and no transaction table are reconstructed during analysis.
 Both exist in real ARIES so redo can start at the earliest change that might not
-be on disk rather than at the checkpoint. ChenDB's checkpoints are **sharp** —
-they stop the world and flush everything — so the earliest such change is always
+be on disk rather than at the checkpoint. ChenDB's checkpoints are **sharp** (
+they stop the world and flush everything) so the earliest such change is always
 the first record after the checkpoint. That simplification is why
 `recovery.py` is one page long instead of five, and it is also why it would not
 survive contact with a hundred-gigabyte buffer pool. Real systems use *fuzzy*
@@ -182,7 +182,7 @@ checkpoints for exactly that reason.
 ```
 
 Every page write now also encodes a record, checksums it, and stamps an LSN into
-the page — which means a second CRC32 pass over the page, because the LSN lives
+the page, which means a second CRC32 pass over the page, because the LSN lives
 inside the range the page checksum covers.
 
 ### The commit fsync
@@ -197,7 +197,7 @@ That ceiling has **nothing to do with how much work each transaction did**. It
 is the disk, once per commit, and it is why real systems invented **group
 commit**: several concurrent committers share one flush. ChenDB has one writer,
 so there is nobody to share with, and `set_sync_policy` exists only so the
-benchmark can price the fsync — not as a durability setting.
+benchmark can price the fsync, not as a durability setting.
 
 SQLite draws the same line at `synchronous=NORMAL` versus `FULL`: NORMAL skips
 the per-commit fsync and is durable against a process crash but not a machine
@@ -216,7 +216,7 @@ The first working version logged a whole page image per write. Measured:
 ```
 
 Whole-page logging is what makes the log ignorant of heap rows, B+ tree nodes and
-catalog tuples — the same trade Milestone 8's undo log made — but 197× is not a
+catalog tuples (the same trade Milestone 8's undo log made) but 197× is not a
 trade, it is a defect.
 
 The fix is small and rests on a fact about *staged* records: writing the same
@@ -230,20 +230,20 @@ transaction, the new one replaces it:
 
     log             2.10 MiB     ← 39x smaller
     amplification    5.1x
-    records            516        (22,000 coalesced away — 98%)
+    records            516        (22,000 coalesced away, 98%)
     insert cost      18.7 us      (was 25.8 us)
 ```
 
 It is safe only while the record is staged. Once it has been flushed, a page
 carrying its LSN may already be on the disk, and rewriting the record behind
-that page would leave the two disagreeing — and the write-ahead rule guarantees
+that page would leave the two disagreeing, and the write-ahead rule guarantees
 they cannot overlap, because a page reaching the disk forces a flush first,
 which empties the buffer.
 
 What this does **not** fix is amplification across flush boundaries. A
 transaction spread over many statements still writes one page image per
-statement. Fixing that properly means logging **deltas** — "insert this tuple
-into page 7", a few dozen bytes — which is what real systems do, at the price of
+statement. Fixing that properly means logging **deltas** ("insert this tuple
+into page 7", a few dozen bytes) which is what real systems do, at the price of
 a redo routine per operation that has to be exactly the inverse of the operation
 itself. PostgreSQL splits the difference: a full-page image the first time a page
 changes after a checkpoint, protecting against torn writes, and deltas after.
@@ -276,7 +276,7 @@ has decided where the log restarts.
 **A crash between 3 and 4** is the interesting case. The meta page says the log
 restarts at the new LSN, but the file still holds the old records at the old one.
 The next open reads them at the wrong position, each record's stored LSN fails to
-match where it was found, and the log correctly reads as empty — which it is, in
+match where it was found, and the log correctly reads as empty, which it is, in
 the sense that matters, because step 1 already put every page those records
 describe onto the disk. That position check in `decode_record` exists for exactly
 this, and `test_a_record_found_at_the_wrong_offset_is_rejected` is why it stays.
@@ -296,7 +296,7 @@ landed:
 - **The undo log became durable.** The same before-images, under the same
   first-write-wins rule, now go to the log as well as memory.
 - **`MAX_UNDO_BYTES` stopped being a correctness limit.** A transaction that
-  overflows the in-memory cache no longer fails — it stops caching, and
+  overflows the in-memory cache no longer fails. It stops caching, and
   `Database.rollback` reads what it needs from the WAL.
 - **Steal stopped being a liability**, without the pool changing at all.
 - **`_extend_file_to` became redundant.** Milestone 8 pre-extended the file with
@@ -305,7 +305,7 @@ landed:
   moved to *after* recovery and the syscall is gone.
 
 That last one needed one more fix than expected. `before_write` marks a page
-captured whether or not there is room to keep its bytes — because first-write-wins
+captured whether or not there is room to keep its bytes, because first-write-wins
 is a *decision*, and the WAL asks the same question through the same method. When
 the cap made the decision lapse, the log started recording a fresh "before" on
 every later write to the page: mid-transaction states, each claiming to be the
@@ -317,13 +317,13 @@ state to roll back to.
 
 **SQLite** in WAL mode is the closest relative and does the opposite thing. Its
 log holds *after-images only* and the database file is not written until a
-checkpoint, so readers consult a WAL index to find the newest version of a page —
-no undo pass at recovery, at the price of a lookup on every read. ChenDB writes
+checkpoint, so readers consult a WAL index to find the newest version of a page.
+No undo pass at recovery, at the price of a lookup on every read. ChenDB writes
 through to the file and logs both images, which keeps the read path untouched.
 Both files are named `-wal` for the same reason: adjacent in a listing, obviously
 derived.
 
-**PostgreSQL** logs physiologically — the operation, not the page — with a
+**PostgreSQL** logs physiologically (the operation, not the page) with a
 full-page image the first time each page changes after a checkpoint. That is
 strictly better than what is here and needs a redo routine per operation type.
 Its LSN is a byte position in the WAL stream, which is where that idea came from.
@@ -332,7 +332,7 @@ so there is no undo pass at all.
 
 **MySQL/InnoDB** keeps redo in a ring of log files and undo in rollback segments
 inside the tablespace, reused for MVCC read views. Both of the things ChenDB
-still lacks — physiological redo and multiversion reads — are the same structure
+still lacks (physiological redo and multiversion reads) are the same structure
 in InnoDB.
 
 ---
@@ -398,7 +398,7 @@ python -m pytest tests/recovery tests/unit/test_wal.py -v
   with one writer and is the obvious first optimisation with several.
 - **The log is where MVCC's old versions would live.** InnoDB reuses its undo
   records to serve read views; the before-images here are already the right data
-  in the wrong place — in memory, and discarded at commit.
+  in the wrong place, in memory, and discarded at commit.
 - **`prev_lsn` starts earning its keep.** With many interleaved transactions,
   walking one transaction's records by chain rather than rescanning the log stops
   being a nicety.

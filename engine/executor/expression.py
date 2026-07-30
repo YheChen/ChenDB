@@ -7,7 +7,7 @@ tree walk with no name lookups.
 Three-valued logic
 ------------------
 SQL is not boolean logic.  ``NULL`` means *unknown*, and comparing against an
-unknown gives an unknown — never true, never false:
+unknown gives an unknown, never true, never false:
 
     NULL = NULL   →  NULL        (not TRUE)
     NULL = 1      →  NULL        (not FALSE)
@@ -265,7 +265,7 @@ def _divide(left: Any, right: Any) -> Any:
     _require_number(right, "/")
     if right == 0:
         # SQL raises rather than returning NULL or infinity. PostgreSQL and
-        # SQLite differ here — SQLite returns NULL — and raising is the choice
+        # SQLite differ here (SQLite returns NULL) and raising is the choice
         # that never silently hides a bug in the query.
         raise EvaluationError("division by zero")
     if isinstance(left, int) and isinstance(right, int):
@@ -296,7 +296,7 @@ def _exact_remainder(left: Any, right: Any) -> Any:
 
     :class:`~fractions.Fraction` is exact over both, because every finite double
     *is* a rational. It is only reached when an integer is too large to be a
-    double exactly — outside 2⁵³ — so the ordinary path keeps doing one machine
+    double exactly (outside 2⁵³) so the ordinary path keeps doing one machine
     modulo, and the expensive one runs where the cheap one would be wrong.
     """
     mixed = isinstance(left, int) != isinstance(right, int)
@@ -312,8 +312,8 @@ def check_numeric_range(value: Any, what: str) -> Any:
     type would refuse. It could, in both directions, and both were found by
     asking SQLite the same questions:
 
-    ``INTEGER`` is 64 bits — :mod:`engine.serialization.types` says so and the
-    codec enforces it on the way to disk — but nothing enforced it in an
+    ``INTEGER`` is 64 bits (:mod:`engine.serialization.types` says so and the
+    codec enforces it on the way to disk) but nothing enforced it in an
     expression, so ``SELECT n + 1`` on the largest int64 returned
     9223372036854775808 under a column labelled INTEGER. Python's unbounded
     integers are both why it was possible and why the check is needed; in C it
@@ -401,14 +401,14 @@ def is_true(value: Any, *, clause: str = "a predicate") -> bool:
     """Whether a predicate result lets a row through a ``WHERE``.
 
     Only an exact ``True`` passes. ``None`` (unknown) and ``False`` both filter
-    the row out — the reason `WHERE age > 18` drops rows whose age is NULL.
+    the row out. The reason `WHERE age > 18` drops rows whose age is NULL.
 
     A value that is not a boolean at all is an **error**, not a rejection. That
     distinction was worth a bug: ``WHERE v`` over an INTEGER column used to
     return no rows and no complaint, because ``5 is True`` is ``False`` and a
     filter cannot tell "this row failed" from "this was never a condition". The
     same silence dropped every group from ``HAVING SUM(v)``. Differential
-    testing against SQLite is what found it, after thirteen milestones —
+    testing against SQLite is what found it, after thirteen milestones,
     precisely the shape of bug a hand-written test suite does not look for,
     because you have to think of the query first.
 

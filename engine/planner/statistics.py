@@ -36,7 +36,7 @@ and it is the first thing to add if the estimates start being wrong.
 
 Exact, not sampled
 ------------------
-``gather`` reads every row.  Real systems sample — PostgreSQL's
+``gather`` reads every row.  Real systems sample, PostgreSQL's
 ``default_statistics_target`` of 100 means it reads about 30,000 rows however
 large the table is, because a full scan of a terabyte to refresh an *estimate*
 is absurd.  ChenDB's tables are small enough that exactness is free, and being
@@ -48,8 +48,8 @@ Statistics are **not persisted**.  They are gathered per open database and lost
 on close.  That is a deliberate trade against a ``chendb_stats`` system table,
 which would have meant format version 4:
 
-* a statistic has no correctness consequence — a wrong one produces a slow
-  query, never a wrong answer — and the file format should change for things
+* a statistic has no correctness consequence (a wrong one produces a slow
+  query, never a wrong answer) and the file format should change for things
   that must survive, not for hints;
 * the interesting failure here is **staleness**, and making statistics vanish on
   close makes their age impossible to ignore;
@@ -59,7 +59,7 @@ which would have meant format version 4:
 
 The cost is real: a freshly opened database plans its first query with nothing.
 :meth:`StatisticsCatalog.for_table` therefore gathers lazily on first use, so a
-plan is never made blind — and records ``gathered_after_writes`` so the API can
+plan is never made blind, and records ``gathered_after_writes`` so the API can
 say how stale the numbers are.
 """
 
@@ -85,7 +85,7 @@ __all__ = [
 
 #: Assumed distinct count for a column that has never been analyzed. One means
 #: "every row shares a value", which makes an equality predicate look
-#: unselective and biases an unanalyzed table toward a sequential scan — the
+#: unselective and biases an unanalyzed table toward a sequential scan, the
 #: safe direction, because a scan is never catastrophically wrong.
 _UNKNOWN_DISTINCT = 1
 
@@ -132,7 +132,7 @@ class TableStatistics:
     """The database's cumulative page-write count when this was taken.
 
     Comparing it against the current count is how staleness is detected without
-    hooking every write path — which would couple the statistics module to the
+    hooking every write path, which would couple the statistics module to the
     heap, the index and the catalog all at once.
     """
 
@@ -194,7 +194,7 @@ class StatisticsCatalog:
         """Scan ``name`` and recompute everything. This is what ANALYZE runs.
 
         One pass, O(rows), building a set of seen values per column. That set is
-        the memory cost — O(distinct) per column, which for a high-cardinality
+        the memory cost, O(distinct) per column, which for a high-cardinality
         column is O(rows). A real system uses HyperLogLog or a sample precisely
         to bound that; the exact set is affordable here and removes any question
         of whether an estimate is wrong because of the sketch.
@@ -212,7 +212,7 @@ class StatisticsCatalog:
         for _, payload in heap.scan():
             row_count += 1
             # Every version, visible or not. Statistics describe what is on
-            # disk, and the planner is costing page reads — which a dead
+            # disk, and the planner is costing page reads: which a dead
             # version costs just as much as a live one.
             row = decode_record(info.schema, strip_tuple_header(payload))
             for position, value in enumerate(row):

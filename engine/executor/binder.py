@@ -1,6 +1,6 @@
 """Binding: resolving names in a parsed statement against a real schema.
 
-The parser is purely syntactic — ``SELECT nope FROM nope`` parses perfectly
+The parser is purely syntactic, ``SELECT nope FROM nope`` parses perfectly
 well.  Binding is the step that checks the statement against what actually
 exists and rewrites it into a form the executor can run without doing any name
 lookups:
@@ -20,9 +20,9 @@ Scope in Milestone 4
 Table names now resolve against the real :class:`~engine.catalog.catalog.Catalog`,
 so ``SELECT * FROM nope`` fails here with the name of the table that does not
 exist and a list of the ones that do.  Milestone 6 moves binding into a proper
-front-end pass that also produces a logical plan; the *interface* here —
+front-end pass that also produces a logical plan; the *interface* here (
 statement in, bound statement out, :class:`BindingError` on a name that does not
-exist — is what survives.
+exist) is what survives.
 
 Still missing: joins (one table per ``FROM``), so a qualified ``users.age`` is
 accepted only when the qualifier names the table being scanned.
@@ -101,14 +101,14 @@ __all__ = [
 class BoundColumnRef(Expression):
     """A column reference resolved to a positional index.
 
-    Produced only by the binder — the parser never emits one. It is an
+    Produced only by the binder, the parser never emits one. It is an
     ``Expression`` so it slots into an expression tree unchanged, and the generic
     ``children()``/``attributes()`` walk picks it up with no special casing.
     """
 
     name: str
     column_index: int
-    """Index into the row this expression will be evaluated against — the
+    """Index into the row this expression will be evaluated against. The
     *joined* row below an aggregate, the *grouped* row above one."""
     data_type: DataType
     table: str | None = None
@@ -118,7 +118,7 @@ class BoundColumnRef(Expression):
     """Which table in the ``FROM``, by position. The planner reads this to tell
     a single-table predicate from a join condition without a scope in hand."""
     table_name: str | None = None
-    """The real table, not the alias — what the statistics are keyed on."""
+    """The real table, not the alias, what the statistics are keyed on."""
     table_position: int | None = None
     """The column's index within its own table, for a statistics lookup."""
 
@@ -140,7 +140,7 @@ class ResultColumn:
 class BoundJoin:
     """One join in a ``FROM``, resolved.
 
-    Names the table by its *binding* — the alias if it has one — rather than
+    Names the table by its *binding* (the alias if it has one) rather than
     holding a subtree, because the planner is free to reorder and a tree here
     would imply an order the user does not control.
     """
@@ -185,7 +185,7 @@ class BoundAggregation:
 
     @property
     def is_scalar(self) -> bool:
-        """``SELECT COUNT(*) FROM t`` — one group, always, even over no rows."""
+        """``SELECT COUNT(*) FROM t``, one group, always, even over no rows."""
         return not self.group_keys
 
     @property
@@ -224,7 +224,7 @@ class BoundSelect:
     def is_identity_projection(self) -> bool:
         """Whether the projection is every column of the input, in order.
 
-        When it is, the projection operator can be skipped entirely — a real
+        When it is, the projection operator can be skipped entirely. A real
         optimisation :mod:`engine.optimizer.rules` applies. Never true above an
         aggregate, whose output row is a different shape from its input.
         """
@@ -295,7 +295,7 @@ def bind_expression(expression: Expression, scope: Scope | Schema) -> Expression
     """Resolve every column reference in ``expression`` against ``scope``.
 
     A bare :class:`Schema` is accepted and wrapped, so the single-table callers
-    written before joins existed — ``INSERT``, ``UPDATE``, ``DELETE`` — read the
+    written before joins existed (``INSERT``, ``UPDATE``, ``DELETE``) read the
     same as they did.
     """
     if isinstance(scope, Schema):
@@ -477,7 +477,7 @@ def _aggregate_type(
     """What an aggregate produces.
 
     ``COUNT`` is always an integer however you spell it. ``AVG`` is always a
-    float, including over integers — ``AVG(age)`` of 1 and 2 is 1.5, and
+    float, including over integers, ``AVG(age)`` of 1 and 2 is 1.5, and
     truncating it because the column was INTEGER is the kind of quiet
     wrongness this project exists to avoid. ``SUM``, ``MIN`` and ``MAX`` keep
     the input's type.
@@ -558,7 +558,7 @@ def _require_predicate(expression: Expression, clause: str, *, hint: str = "") -
     it silently matched nothing: the filter asked ``value is True``, ``5`` is not,
     and a rejected row looks exactly like a row that failed a test. The runtime
     now raises (:func:`~engine.executor.expression.is_true`), but the honest
-    place to say so is here, before a page is read — and a bind error carries the
+    place to say so is here, before a page is read, and a bind error carries the
     span, so the editor underlines the offending expression.
 
     Only refuses when :func:`_static_type` *knows* the type. It returns ``None``
@@ -602,17 +602,17 @@ def _require_aggregable(call: FunctionCall) -> None:
 
     * ``SUM(text)`` returned ``'abd'``. Python's ``+`` concatenates strings, the
       accumulator never asked what it was adding, and the result column was
-      labelled TEXT — so the engine reported a string as the sum of a column.
+      labelled TEXT, so the engine reported a string as the sum of a column.
     * ``AVG(text)`` raised a bare ``TypeError`` from ``str / int``. Not a
       :class:`~engine.errors.ChenDBError`, so it escaped the error envelope
       entirely and would have been a 500 rather than a 400.
     * ``SUM(boolean)`` returned ``True`` over one row and ``2`` over two, still
-      declaring the type BOOLEAN — a result whose Python type depended on how
+      declaring the type BOOLEAN. A result whose Python type depended on how
       many rows were in the group, and which ``SUM(b) > 0`` then refused to
       compare because the *declared* type disagreed with the value.
 
     ``MIN`` and ``MAX`` are deliberately left alone. They only ever compare and
-    return one of the inputs, so they are total on every type ChenDB has —
+    return one of the inputs, so they are total on every type ChenDB has,
     ``MAX(name)`` and ``MAX(active)`` both mean something. PostgreSQL has no
     ``min(boolean)``, but refusing it here would be strictness for its own sake.
 
@@ -648,7 +648,7 @@ def _plan_aggregation(
 
     The grouped row is ``[key₀ … keyₖ₋₁, agg₀ … aggₘ₋₁]``. Every projection is
     rewritten in place to index into *that* row, so nothing above the aggregate
-    knows an aggregate happened — a ``Project`` still reads values by position.
+    knows an aggregate happened, a ``Project`` still reads values by position.
 
     Returns ``None`` when there is nothing to aggregate, which keeps every
     query written before this milestone on exactly the path it was on.
@@ -709,7 +709,7 @@ def _rewrite_over_group(
     A grouping key becomes a reference to its slot; an aggregate becomes a
     reference to its slot; anything else recurses. A bare column that is
     neither is the classic error, and it is an error rather than a guess
-    because SQL cannot say *which* row's value you meant — MySQL famously
+    because SQL cannot say *which* row's value you meant, MySQL famously
     picked one and called it a feature.
     """
     signature = _signature(expression)
@@ -896,11 +896,11 @@ class RowLayout:
     :class:`Scope` says where a *name* resolves to; this says the same thing to
     the operator that has to build the row. It lives here rather than in the
     planner because the planner may depend on the binder and the executor may
-    not depend on the planner — a scan needs this and must not import a plan.
+    not depend on the planner, a scan needs this and must not import a plan.
 
     **A row's layout is the order the tables were written in, always.** The
     planner reorders joins freely and the layout never moves, which is what lets
-    a bound column index — computed once, against the written order — stay
+    a bound column index (computed once, against the written order) stay
     correct whichever order the tables end up joined in.
 
     The cost is that every row below the topmost join is the full width of the
@@ -948,7 +948,7 @@ class Scope:
     A join concatenates rows, so ``users`` at offset 0 with three columns and
     ``orders`` at offset 3 gives ``orders.total`` index 3 + 2 = 5. The binder
     resolves to that single flat index, and every operator above the join reads
-    one list — which is why a ``Filter`` above a join needs no idea that a join
+    one list, which is why a ``Filter`` above a join needs no idea that a join
     happened.
 
     Ambiguity is resolved here rather than at runtime. ``id`` in a two-table
@@ -1022,7 +1022,7 @@ def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect
     Four passes, in the order SQL evaluates them, which is not the order it is
     written in: ``FROM`` builds the scope, ``WHERE`` and the join conditions
     bind against it, ``GROUP BY`` fixes what a row means from there on, and only
-    then can the select list and ``HAVING`` be bound — because after grouping,
+    then can the select list and ``HAVING`` be bound, because after grouping,
     a bare column reference is an error unless it is a grouping key.
     """
     scope = build_scope(statement.tables, catalog, statement)
@@ -1247,7 +1247,7 @@ def _require_omitted_columns_are_nullable(
 ) -> None:
     """Catch a missing NOT NULL column here rather than at encode time.
 
-    The encoder would reject it too, but only with the column name — no source
+    The encoder would reject it too, but only with the column name. No source
     position, and only once the statement was already half-executed.
     """
     omitted = set(range(len(schema))) - set(target_indices)
@@ -1268,7 +1268,7 @@ def _require_omitted_columns_are_nullable(
 def identity_projection(
     schema: Schema, node: Statement
 ) -> tuple[tuple[Expression, ...], tuple[ResultColumn, ...]]:
-    """Every column of ``schema``, in order — what ``SELECT *`` expands to.
+    """Every column of ``schema``, in order, what ``SELECT *`` expands to.
 
     ``UPDATE`` and ``DELETE`` need the whole row even though they return none of
     it: the predicate can name any column, an index entry is keyed on the value
@@ -1295,7 +1295,7 @@ def _writable_scope(info: Any) -> Scope:
     ``UPDATE`` and ``DELETE`` used to bind against a bare :class:`Schema`, which
     :func:`bind_expression` wraps in a scope whose binding name is the empty
     string. So the table had no name to qualify with and
-    ``DELETE FROM child WHERE child.c_int = 2`` was refused — with
+    ``DELETE FROM child WHERE child.c_int = 2`` was refused, with
     ``no table named 'child' in FROM; this query has `` and nothing after the
     ``has``, because the one entry it could have listed was nameless.
 
@@ -1377,8 +1377,8 @@ def _check_assignable(assignment: Assignment, column: Column, value: Expression)
 
     The encoder catches the rest at write time, but it has no source position and
     fires half-way through a statement. Anything whose type is not known until a
-    row is in hand — ``SET a = b`` between two columns, arithmetic over mixed
-    types — is left to it rather than guessed at here.
+    row is in hand (``SET a = b`` between two columns, arithmetic over mixed
+    types) is left to it rather than guessed at here.
     """
     if isinstance(value, Literal) and value.value is None and not column.nullable:
         raise BindingError(
@@ -1409,7 +1409,7 @@ def _check_assignable(assignment: Assignment, column: Column, value: Expression)
 def bind_create_table(statement: CreateTableStatement) -> tuple[str, Schema]:
     """Turn a ``CREATE TABLE`` into a name and a :class:`Schema`.
 
-    Not really *binding* — there is nothing to resolve against — but it belongs
+    Not really *binding* (there is nothing to resolve against) but it belongs
     with the other AST-to-engine translations, and it is where a bad column
     definition gets a source position attached.
     """
@@ -1491,8 +1491,8 @@ def _resolve_writable_table(
 ) -> TableInfo:
     """:func:`_resolve_table`, refusing the catalog's own tables.
 
-    ``chendb_tables`` and ``chendb_columns`` are readable — that is how the UI
-    shows a schema — but writing to them through SQL would let a ``DELETE`` drop
+    ``chendb_tables`` and ``chendb_columns`` are readable (that is how the UI
+    shows a schema) but writing to them through SQL would let a ``DELETE`` drop
     a table's definition out from under the heap that still holds its rows. DDL
     is the only supported way to change them, and it goes through
     :class:`~engine.catalog.catalog.Catalog`, which keeps both sides in step.

@@ -25,7 +25,7 @@ store operation. There is no background timer to leak instead.
 
 **Cancellation never needs the lock.** :meth:`StepController.cancel` only sets a
 flag and notifies a condition, so cancelling a query that is *holding* the
-database lock works — which is the only way to get the lock back.
+database lock works, which is the only way to get the lock back.
 """
 
 from __future__ import annotations

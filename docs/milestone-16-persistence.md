@@ -1,11 +1,11 @@
-# Milestone 16 — deployment, and a database that survives a refresh
+# Milestone 16: deployment, and a database that survives a refresh
 
 The browser build shipped in Milestone 15 and forgot everything when the tab
 closed. That made it a toy: open the link, create a schema, insert some rows,
 refresh, and it is gone.
 
 Now `/workspace` is backed by IndexedDB. The same file, the same bytes, the
-same checksums — kept in the browser instead of in memory.
+same checksums, kept in the browser instead of in memory.
 
 ```
   Milestone 15                    Milestone 16
@@ -40,7 +40,7 @@ _app.state.workspace.close_all()
 
 Persisting stores the **filesystem**, and a page still sitting in the buffer
 pool is not on the filesystem yet. Syncing without closing first would store
-whatever happened to have been written through — which is precisely the state
+whatever happened to have been written through, which is precisely the state
 recovery exists to repair, and not what somebody who typed a statement and
 closed the tab is entitled to. A test asserts the ordering, because getting it
 backwards would produce a store that is *usually* fine.
@@ -58,7 +58,7 @@ immediate flush on `pagehide` and on the tab becoming hidden.
 
 `pagehide` is used rather than `beforeunload` because the latter does not fire
 reliably when a tab is closed on mobile or frozen by the browser. Neither can
-`await`, so **the debounce narrows the window rather than closing it** — a write
+`await`, so **the debounce narrows the window rather than closing it**. A write
 in the last 400 ms before a hard close can still be lost. That is a real limit,
 not a rounding error, and it is why the interval is short.
 
@@ -72,7 +72,7 @@ after an `INSERT` costs the visitor's work.
 
 A database that survives a refresh means **a broken one survives too.** Without
 a way out, a visitor whose store cannot be opened has a permanently broken page
-and no way to know it is fixable — strictly worse than a demo that forgets.
+and no way to know it is fixable, strictly worse than a demo that forgets.
 
 Two things address it.
 
@@ -89,7 +89,7 @@ under whatever went wrong, plus `chendb.clearStoredData()` from the console.
 
 `clearStoredData` has one rule, and it is in the docstring in bold: **reload
 immediately after.** It deletes the IndexedDB database that IDBFS is currently
-mounted over, which leaves the mount pointing at nothing — the in-memory files
+mounted over, which leaves the mount pointing at nothing. The in-memory files
 are still there so the session looks fine, and the next sync writes into a store
 that has been recreated underneath it. Every caller in the app reloads.
 
@@ -101,7 +101,7 @@ that has been recreated underneath it. Every caller in the app reloads.
 `.catch(() => {})`. The explicit sync worked and the debounced one did not, and
 because the failure was silent, "nothing persisted" and "persisting threw" were
 indistinguishable from outside. It cost three rounds of debugging to notice, and
-the fix — log it, count the failures — is now the thing that would have made it
+the fix (log it, count the failures) is now the thing that would have made it
 one. Losing a visitor's work quietly is the only outcome worse than losing it
 loudly.
 
@@ -132,8 +132,8 @@ after reload    id/city: 1 london, 2 ny, 3 london, 4 berlin
 
 The strongest evidence is `checksum_valid: true`. A CRC32 computed before the
 page went into IndexedDB still validates coming back out, which means the round
-trip is byte-exact rather than approximately right. And `berlin` — written
-*after* the first restore — survived the second reload, so the cycle works
+trip is byte-exact rather than approximately right. And `berlin` (written
+*after* the first restore) survived the second reload, so the cycle works
 repeatedly rather than only once.
 
 The crash button still recovers on a database restored from IndexedDB.

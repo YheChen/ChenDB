@@ -2,7 +2,7 @@
 
 Layering, bottom up::
 
-    constants.py   page size, page types, sentinels — the file format's vocabulary
+    constants.py   page size, page types, sentinels. The file format's vocabulary
     page.py        a slotted page: variable-length records in a fixed-size block
     meta.py        page 0: the root of every persistent structure
     pager.py       page ids -> file offsets; allocation, checksums, fsync

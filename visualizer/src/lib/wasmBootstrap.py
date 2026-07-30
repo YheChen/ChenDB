@@ -5,7 +5,7 @@ and hands JavaScript two functions: one that answers a request, one that
 subscribes to the event stream.
 
 Nothing here is a reimplementation. The same routers, the same mappers, the
-same Pydantic models and the same error envelope serve both builds — the ASGI
+same Pydantic models and the same error envelope serve both builds. The ASGI
 app is simply called in-process instead of over a socket. That is why
 ``api.ts`` can stay generated from one OpenAPI schema and why there is no
 second endpoint layer to drift.
@@ -50,8 +50,8 @@ async def _inline(func, *args, **kwargs):  # type: ignore[no-untyped-def]
     with ``RuntimeError: can't start new thread``.
 
     Safe *here*, and only here: one tab, one caller, nothing to be concurrent
-    with. The tempting alternative — making the twenty-five routers ``async
-    def`` — would push this constraint onto the real server, where it would
+    with. The tempting alternative (making the twenty-five routers ``async
+    def``) would push this constraint onto the real server, where it would
     serialise every database behind every other one. The browser's problem
     should stay the browser's.
     """
@@ -71,7 +71,7 @@ WORKSPACE = Path("/workspace")
 
 #: Step mode blocks a worker thread at each checkpoint and resumes it from
 #: another request. There is nowhere to block, so it is advertised as absent
-#: rather than left to fail when someone presses the button — the same rule
+#: rather than left to fail when someone presses the button, the same rule
 #: every unbuilt feature has followed since Milestone 1.
 app_module.FEATURES["execution_stepping"] = False
 
@@ -93,7 +93,7 @@ _lifespan: Any = None
 
 #: What the persisted workspace was written by. A database is a *binary* file
 #: with a version in its meta page, so a format bump makes yesterday's stored
-#: bytes unopenable — and an unopenable database in IndexedDB is a demo that is
+#: bytes unopenable, and an unopenable database in IndexedDB is a demo that is
 #: permanently broken for that visitor, with no way for them to know why.
 #: JavaScript reads this at boot and clears the store when it does not match.
 STAMP = Path("/workspace/.chendb-format")
@@ -135,7 +135,7 @@ def close() -> None:
 
     Persisting means copying the *filesystem* into IndexedDB, and a page still
     sitting in the buffer pool is not on the filesystem yet. Without this, the
-    thing that gets stored is whatever last happened to be written through —
+    thing that gets stored is whatever last happened to be written through,
     which is exactly the state recovery exists to repair, and not what a visitor
     who typed a statement and closed the tab is entitled to.
     """
@@ -147,7 +147,7 @@ async def handle(method: str, path: str, body: str | None) -> str:
 
     JSON in and JSON out because the boundary to JavaScript is a string either
     way, and going through the real ASGI stack means Pydantic validation and
-    the error envelope behave exactly as they do over HTTP — including the
+    the error envelope behave exactly as they do over HTTP, including the
     422s, which a hand-rolled dispatcher would have quietly skipped.
 
     ``isinstance(body, str)`` rather than ``body is not None``: JavaScript's
@@ -182,7 +182,7 @@ class _CallbackSink:
     The HTTP build reaches the same records through a WebSocket, a bounded
     queue and a batching writer, all of which exist to get bytes across a
     network without unbounded buffering. None of that applies to a function
-    call, so this is the whole of the event stream here — and it is why the
+    call, so this is the whole of the event stream here, and it is why the
     reconnection logic moved into the HTTP transport where it belongs.
     """
 
@@ -201,8 +201,8 @@ _sinks: dict[str, _CallbackSink] = {}
 def _managed(database_id: str) -> Any:
     """The open handle, or ``None`` if there is no such database.
 
-    ``Workspace.get`` raises for an unknown id, which is right for a request —
-    the client gets a 404 — and wrong here: subscribing to a database the user
+    ``Workspace.get`` raises for an unknown id, which is right for a request (
+    the client gets a 404) and wrong here: subscribing to a database the user
     has not created yet is an ordinary thing for the UI to try while it is
     still deciding which one to show.
     """

@@ -8,8 +8,8 @@
     transaction 7 reads again                     ← STILL sees A
 
 Transaction 7's snapshot was taken before 8 existed, so as far as 7 is
-concerned 8 has not happened. The row is physically still there — a delete
-writes eight bytes of header rather than removing anything — and that is the
+concerned 8 has not happened. The row is physically still there (a delete
+writes eight bytes of header rather than removing anything) and that is the
 entire trick: **a reader never waits for a writer, because it reads an older
 version instead of the newer one.**
 
@@ -32,7 +32,7 @@ just inserted would be surprising in a way no isolation level asks for.
 
 Why there is no commit log
 --------------------------
-PostgreSQL needs one — ``pg_xact``, formerly CLOG — because it does **not
+PostgreSQL needs one (``pg_xact``, formerly CLOG) because it does **not
 undo**. An aborted transaction's tuples stay in the heap with their ``xmin``
 set, and the only way to know they are dead is to look the transaction up. That
 lookup is also what makes transaction-id wraparound dangerous, and why
@@ -44,7 +44,7 @@ transaction that committed. So the entire commit log collapses into one number:
 
     xid < frozen_xid  →  committed, and its effects are final
 
-:attr:`Snapshot.frozen_xid` comes from the meta page, set at each checkpoint —
+:attr:`Snapshot.frozen_xid` comes from the meta page, set at each checkpoint,
 which cannot run while a transaction is open, so at that moment every
 transaction has finished. Only ids at or above it need looking up, and those
 are the ones this process is running right now, in memory.
@@ -78,19 +78,19 @@ class IsolationLevel(StrEnum):
     READ_COMMITTED = "read committed"
     """A fresh snapshot for **every statement**. Two identical ``SELECT``s in
     one transaction can return different rows, because a concurrent transaction
-    committed in between — a *non-repeatable read*. PostgreSQL's default, and
+    committed in between, a *non-repeatable read*. PostgreSQL's default, and
     the level most applications actually run at without knowing."""
 
     REPEATABLE_READ = "repeatable read"
     """One snapshot for the **whole transaction**, taken at its first read.
     Every statement sees the same database. This is snapshot isolation, and it
-    is what PostgreSQL gives you when you ask for ``REPEATABLE READ`` — stronger
+    is what PostgreSQL gives you when you ask for ``REPEATABLE READ``, stronger
     than the standard requires, because the standard permits phantom rows and
     snapshot isolation does not.
 
     It is *not* serializable. Two transactions can each read what the other is
     about to overwrite and both commit, producing a state no serial order could
-    — write skew. Ruling that out needs predicate locking or PostgreSQL's
+, write skew. Ruling that out needs predicate locking or PostgreSQL's
     serializable snapshot isolation, and ChenDB has neither."""
 
     @property
@@ -119,7 +119,7 @@ class Snapshot:
     this snapshot and is invisible by definition."""
     active: frozenset[int]
     """Ids between :attr:`xmin` and :attr:`xmax` that were still running. The
-    holes in the range — a transaction that started before this one and has not
+    holes in the range. A transaction that started before this one and has not
     committed yet."""
     frozen_xid: int = 0
     """Ids below this are committed and final. See the module docstring."""
@@ -138,8 +138,8 @@ class Snapshot:
     ) -> Snapshot:
         """Capture the running transactions right now.
 
-        Cheap by construction — a set copy of however many transactions are
-        open, which for one writer is at most one — and that matters because
+        Cheap by construction (a set copy of however many transactions are
+        open, which for one writer is at most one) and that matters because
         READ COMMITTED takes a new one per statement.
         """
         running = frozenset(active)
@@ -187,7 +187,7 @@ class VisibilityStats:
     """How much work the visibility check did, for the row inspector.
 
     ``skipped`` is the interesting one. It counts rows that are physically on
-    the page and were not returned — dead versions the reader paid to walk past.
+    the page and were not returned, dead versions the reader paid to walk past.
     A number that grows and never falls is what a missing vacuum looks like.
     """
 

@@ -3,7 +3,7 @@
  *
  * Loads CPython compiled to WebAssembly, unpacks the engine's own `.py` files
  * into an in-memory filesystem, and calls the same ASGI app the real server
- * runs — in the tab, with no network in the path.
+ * runs, in the tab, with no network in the path.
  *
  *     transport.request("/databases/demo/query")
  *         │
@@ -18,7 +18,7 @@
  * rebundled, and `api.ts` stays generated from one OpenAPI schema.
  *
  * See `docs/milestone-14-transport.md` for the spike that established this
- * works, including the one thing that did not — FastAPI wanting a worker
+ * works, including the one thing that did not, FastAPI wanting a worker
  * thread, which `wasmBootstrap.py` patches out.
  */
 
@@ -39,8 +39,8 @@ const PACKAGES = ["fastapi", "pydantic"];
  * Where the bundled sources and the Pyodide runtime are served from.
  *
  * Resolved against the *document*, not this module. The build uses a relative
- * base so it can be served from a subdirectory — a GitHub Pages project site
- * lives at `/<repo>/` — and a bare relative specifier in a dynamic import
+ * base so it can be served from a subdirectory, a GitHub Pages project site
+ * lives at `/<repo>/`, and a bare relative specifier in a dynamic import
  * resolves against the importing module instead, which lands in `/assets/`
  * and 404s. Absolute-from-the-document is right in both cases.
  */
@@ -143,7 +143,7 @@ export async function createWasmTransport(
 
   // Before the app opens anything, decide whether what is stored is even
   // readable by this build. A database is a binary file with a version in its
-  // meta page, so a format bump makes yesterday's bytes unopenable — and an
+  // meta page, so a format bump makes yesterday's bytes unopenable, and an
   // unopenable database in IndexedDB is a demo that is permanently broken for
   // that visitor, with nothing on screen to explain why.
   const stored = bootstrap.storedVersion();
@@ -172,7 +172,7 @@ export async function createWasmTransport(
  * Without this the filesystem lives and dies with the tab, which makes the
  * demo a toy: build a schema, refresh, and it is gone. IDBFS is the same
  * Emscripten filesystem the rest of the tree uses, so nothing in the engine
- * knows the difference — `open()` and `write()` are unchanged.
+ * knows the difference, `open()` and `write()` are unchanged.
  *
  * `syncfs(true)` populates memory *from* the store, and must happen before the
  * app opens anything.
@@ -196,7 +196,7 @@ async function mountPersistent(pyodide: PyodideInterface): Promise<void> {
  *
  * `close()` first, because persisting means storing the *filesystem* and a page
  * still in the buffer pool is not on it yet. Storing without that would save
- * whatever happened to be written through — the state recovery exists to
+ * whatever happened to be written through, the state recovery exists to
  * repair, and not what someone who typed a statement and closed the tab is
  * entitled to.
  */
@@ -305,7 +305,7 @@ function writeSources(pyodide: PyodideInterface, bundle: EngineBundle): void {
   }
 }
 
-/** The last line with anything on it — a Python traceback's actual exception. */
+/** The last line with anything on it, a Python traceback's actual exception. */
 function lastLine(text: string): string {
   const lines = text.split("\n").filter((line) => line.trim());
   return lines[lines.length - 1] ?? "the engine failed without saying why";
@@ -323,7 +323,7 @@ function makeTransport(
    * Store the filesystem soon, coalescing a burst of writes into one sync.
    *
    * Not after every request: a `syncfs` per `INSERT` would make a twenty-row
-   * demo twenty IndexedDB transactions. Not on a long timer either — the window
+   * demo twenty IndexedDB transactions. Not on a long timer either, the window
    * between the last write and the flush is data a visitor can lose by closing
    * the tab, so it is a few hundred milliseconds rather than a few seconds.
    */
@@ -331,7 +331,7 @@ function makeTransport(
    * Persist, and *say so* if it fails.
    *
    * The first version of this swallowed the error, and the debounced sync then
-   * failed silently while an explicit one worked — which cost three rounds of
+   * failed silently while an explicit one worked, which cost three rounds of
    * debugging to notice, because "nothing persisted" and "persisting threw"
    * look identical from the outside. Losing a visitor's work quietly is the
    * one outcome worse than losing it loudly.
@@ -371,7 +371,7 @@ function makeTransport(
 
   // `pagehide` fires when a tab is closed, navigated away from, or frozen on
   // mobile; `beforeunload` does not fire reliably on any of those. Neither can
-  // await, so the debounce above is deliberately short — this narrows the window
+  // await, so the debounce above is deliberately short. This narrows the window
   // rather than closing it, and that limit is real.
   window.addEventListener("pagehide", () => void flushNow());
   document.addEventListener("visibilitychange", () => {
@@ -392,7 +392,7 @@ function makeTransport(
         // A Python-level failure is a bug in the engine, not a bad request,
         // and it must not be dressed up as one. The last *non-empty* line of
         // the traceback is the exception itself, which is what a bug report
-        // needs — `.pop()` alone returns the trailing newline's empty string,
+        // needs, `.pop()` alone returns the trailing newline's empty string,
         // and an error message of "" is worse than no error handling at all.
         throw new ApiRequestError(500, "EngineError", lastLine(String(cause)));
       }
@@ -413,7 +413,7 @@ function makeTransport(
 
     subscribe(databaseId, handlers: StreamHandlers) {
       // No connecting, no reconnecting, no closed. The engine is in the same
-      // process, so the only honest state is "open" — and the reason the
+      // process, so the only honest state is "open", and the reason the
       // HTTP transport keeps its backoff and this one has none.
       handlers.onState("open");
       bootstrap.subscribe(databaseId, (record) => {

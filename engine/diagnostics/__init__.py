@@ -3,7 +3,7 @@
 Core components emit :class:`~engine.diagnostics.events.DiagnosticEvent`
 objects through a :class:`~engine.diagnostics.tracer.Tracer` without knowing
 who consumes them.  A CLI, a test, a log file and the visualizer's WebSocket
-all attach the same way — by installing a sink.
+all attach the same way, by installing a sink.
 
     from engine.diagnostics import RingBufferSink, Tracer, TraceLevel
 

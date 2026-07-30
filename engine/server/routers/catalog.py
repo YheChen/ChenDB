@@ -13,7 +13,7 @@ the resource is a collection:
 
 The storage figures are computed on request by walking the table's page chain.
 That is O(pages) reads, which is fine for a browser refresh and honest about the
-fact that nothing is cached — PostgreSQL's ``reltuples`` is an *estimate*
+fact that nothing is cached, PostgreSQL's ``reltuples`` is an *estimate*
 maintained by ``ANALYZE`` precisely because keeping it exact would cost a write
 on every insert.
 """

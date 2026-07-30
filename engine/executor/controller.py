@@ -23,13 +23,13 @@ Two design points worth naming.
 **Cancellation raises inside the engine thread**, at the next checkpoint, rather
 than killing the thread. Operators then unwind through their own ``close()``,
 releasing pages and file handles exactly as a successful query would. A thread
-killed from outside would leak whatever it was holding — and Python cannot kill a
+killed from outside would leak whatever it was holding, and Python cannot kill a
 thread anyway.
 
 **Stepping starts at execution, not at planning.** Binding, gathering statistics
 and costing a plan all read pages, and from Milestone 6 they do so *before* the
 first operator opens. Stepping through them would mean the first dozen steps of
-every query were the planner scanning a table to count its rows — accurate, but
+every query were the planner scanning a table to count its rows, accurate, but
 not what anyone pressing "step" is asking to see. :meth:`arm` is what opens the
 gate, and it is called immediately before the operator tree opens. ``EXPLAIN``
 is how you inspect the part that is skipped.
@@ -40,8 +40,8 @@ hook in the pager. The controller registers itself as a sink; when a
 nothing about stepping, and every future "run until X" mode comes free the
 moment X emits an event.
 
-A paused query holds its database lock. That is inherent — it is suspended
-mid-operation — so :meth:`cancel` deliberately does *not* need the lock: it sets
+A paused query holds its database lock. That is inherent (it is suspended
+mid-operation) so :meth:`cancel` deliberately does *not* need the lock: it sets
 a flag and notifies, which is safe to call from any thread at any time.
 """
 
@@ -139,7 +139,7 @@ _STOPS_AT: Final[dict[ResumeMode, frozenset[StepKind]]] = {
 }
 
 #: Diagnostic events that become an ``INDEX_OPERATION`` checkpoint.  Adding a
-#: "run until X" mode is this line plus one in ``_STOPS_AT`` — the payoff for
+#: "run until X" mode is this line plus one in ``_STOPS_AT``, the payoff for
 #: Milestone 1 building a general event bus rather than a logging call.
 _INDEX_EVENTS: Final = (IndexSearchEvent, NodeSplitEvent, RangeScanEvent)
 
@@ -231,7 +231,7 @@ class StepController:
     def arm(self) -> None:
         """Start honouring checkpoints. Called when the operator tree opens.
 
-        Until this runs, :meth:`checkpoint` is a no-op — so the page reads that
+        Until this runs, :meth:`checkpoint` is a no-op, so the page reads that
         planning performs (gathering statistics, most of all) do not become
         steps. Cancellation is *not* gated: a query cancelled while it is being
         planned still has to stop, and the next checkpoint after arming raises.
@@ -291,7 +291,7 @@ class StepController:
         Registered on the database's fanout sink, so this runs inside whichever
         component emitted the event. Keeping it here rather than hooking the
         pager and the B+ tree means neither of them has to know that stepping
-        exists — and a future "run until X" mode costs one line here.
+        exists, and a future "run until X" mode costs one line here.
         """
         if not self._stepping or not self._armed:
             return

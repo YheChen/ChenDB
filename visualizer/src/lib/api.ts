@@ -1,12 +1,12 @@
 /**
- * Typed client for the engine API — the vocabulary, not the plumbing.
+ * Typed client for the engine API, the vocabulary, not the plumbing.
  *
  * One method per endpoint, and types from `src/types/api.ts`, which is
  * generated from the server's OpenAPI schema: a renamed field on the Python
  * side breaks the TypeScript build rather than failing silently in a browser.
  *
  * *How* a request travels is deliberately not here. `request()` hands it to
- * whichever `Transport` is active — `fetch` against a running server, or the
+ * whichever `Transport` is active, `fetch` against a running server, or the
  * same ASGI app compiled to WebAssembly and running in the tab. See
  * `./transport.ts`; this file should read the same either way.
  */
@@ -90,7 +90,7 @@ const json = (body: unknown): RequestInit => ({
  * ``?session=alice``, or nothing at all.
  *
  * Omitted rather than sent as ``default``, so a request from a single-console
- * view looks in the log exactly as it did before Milestone 10 — the server's
+ * view looks in the log exactly as it did before Milestone 10, the server's
  * default and this one's absence have to mean the same thing, and the cheapest
  * way to guarantee that is to have only one of them.
  */

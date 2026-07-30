@@ -6,7 +6,7 @@
     parser.py   recursive descent, one method per grammar rule
 
 Milestone 2 parses ``CREATE TABLE``, ``INSERT`` and ``SELECT`` with a ``WHERE``
-clause.  It does not *execute* anything — that is Milestone 3 — and it does not
+clause.  It does not *execute* anything (that is Milestone 3) and it does not
 check that a table or column exists, which needs the catalog in Milestone 4.
 Parsing here is purely syntactic.
 

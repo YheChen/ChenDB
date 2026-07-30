@@ -58,7 +58,7 @@ class ServerConfig:
 
     max_executions: int = 32
     """Stepped executions retained at once. Each holds a thread and, while
-    running, its database's lock — so this is a real resource, not a cache."""
+    running, its database's lock, so this is a real resource, not a cache."""
 
     execution_step_timeout_seconds: float = 10.0
     """How long an HTTP request waits for a stepped query to reach its next

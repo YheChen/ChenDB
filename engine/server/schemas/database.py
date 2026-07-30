@@ -27,8 +27,8 @@ __all__ = [
 ]
 
 #: Mirrors engine.serialization.types.DataType. A Literal rather than an import
-#: of the IntEnum so the generated OpenAPI schema — and therefore the generated
-#: TypeScript — is a readable string union.
+#: of the IntEnum so the generated OpenAPI schema, and therefore the generated
+#: TypeScript, is a readable string union.
 SqlTypeName = Literal["INTEGER", "FLOAT", "BOOLEAN", "TEXT"]
 
 DatabaseId = Annotated[

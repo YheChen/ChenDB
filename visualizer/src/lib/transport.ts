@@ -1,5 +1,5 @@
 /**
- * How the app reaches the engine — over HTTP, or from inside the same process.
+ * How the app reaches the engine, over HTTP, or from inside the same process.
  *
  *     api.getCatalog(id)  ──▶  transport.request("/databases/…/catalog")
  *                                     │
@@ -11,7 +11,7 @@
  * Every one of the 37 call sites in the app already funnelled through a single
  * `request()`, so this splits that one function in two rather than touching
  * any of them. The point is a build of the visualizer that carries the engine
- * with it — CPython compiled to WebAssembly, the same routers, the same
+ * with it, CPython compiled to WebAssembly, the same routers, the same
  * Pydantic models, no server and no network. `docs/milestone-14-transport.md`
  * has the spike that established it works.
  *
@@ -220,7 +220,7 @@ let active: Transport = httpTransport;
 
 /**
  * Swap the transport. Called once, before React mounts, by whichever entry
- * point is running — so nothing in the app ever has to ask which build it is.
+ * point is running, so nothing in the app ever has to ask which build it is.
  */
 export function setTransport(transport: Transport): void {
   active = transport;

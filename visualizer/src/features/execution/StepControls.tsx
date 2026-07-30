@@ -2,7 +2,7 @@
  * Step-through controls and the current checkpoint.
  *
  * Every button maps to one API call on a real execution that is genuinely
- * blocked on a condition variable inside the engine — nothing here is simulated
+ * blocked on a condition variable inside the engine, nothing here is simulated
  * or replayed from a recording.
  *
  *   Step            pause at the very next checkpoint of any kind

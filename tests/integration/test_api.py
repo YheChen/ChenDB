@@ -468,7 +468,7 @@ def test_diagnostics_snapshots_are_internally_consistent(seeded: TestClient):
     """A page listing must describe one instant, not a smear of several.
 
     Every page id appears exactly once, and the reported page count matches the
-    number of entries — impossible if the response were assembled while the
+    number of entries, impossible if the response were assembled while the
     file grew underneath it.
     """
     for _ in range(5):

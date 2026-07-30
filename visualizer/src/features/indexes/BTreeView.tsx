@@ -14,7 +14,7 @@
  *
  * **A node holds many keys, not one.** A binary-tree renderer draws a circle per
  * node with one label. A B+ tree node is a *row of cells*, and its width depends
- * on how many keys it holds — which is the whole visual point, because a node
+ * on how many keys it holds, which is the whole visual point, because a node
  * filling up is what precedes a split.
  *
  * **Leaves are linked, and that link is not a tree edge.** It runs sideways
@@ -33,7 +33,7 @@
  * pixels. Two things keep it legible:
  *
  * * **the cell budget shrinks as a level gets wider**, eliding the middle of
- *   each node and keeping the first and last keys — the two that actually bound
+ *   each node and keeping the first and last keys, the two that actually bound
  *   the subtree;
  * * **the default is natural size and a horizontal scroll**, so keys stay
  *   readable, with a "Fit" zoom for when the shape matters more than the
@@ -180,7 +180,7 @@ export function BTreeView({
   // Centre the leaf a lookup reached, or the root when nothing is highlighted.
   // Both matter on a wide tree: without the first, searching highlights a node
   // off the right edge and looks like nothing happened; without the second, the
-  // view opens at scroll zero with the root — dead centre — out of sight.
+  // view opens at scroll zero with the root (dead centre) out of sight.
   const target = highlightedPath.at(-1) ?? tree.root_page_id;
   useEffect(() => {
     const container = scroller.current;

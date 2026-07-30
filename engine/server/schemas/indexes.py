@@ -12,7 +12,7 @@ Milestone 3:
 
 Keys arrive already rendered as strings.  Encoded keys are order-preserving byte
 strings that only :mod:`engine.index.key` can interpret, so sending them raw
-would force the browser to reimplement the codec — and the visualizer showing
+would force the browser to reimplement the codec, and the visualizer showing
 something different from the engine is precisely the failure mode this project
 is meant to avoid.
 """
@@ -112,7 +112,7 @@ class IndexSearchResponse(ApiModel):
 
     ``path`` is what the tree view highlights: the page ids from root to leaf.
     ``pages_visited`` can exceed its length when duplicates spill across leaves
-    and the search has to step right — which is exactly the case worth seeing.
+    and the search has to step right, which is exactly the case worth seeing.
     """
 
     index_name: str

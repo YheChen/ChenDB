@@ -8,8 +8,8 @@
  *   └──────────────────────────────────────────────┘
  *
  * Newest at the top, because that is the order a rollback replays them in. The
- * order does not actually matter here — first-write-wins means there is exactly
- * one image per page, so replaying them in any order lands in the same place —
+ * order does not actually matter here, first-write-wins means there is exactly
+ * one image per page, so replaying them in any order lands in the same place,
  * but a log that displayed oldest-first would teach the wrong intuition about
  * undo in general, where order is load-bearing.
  *

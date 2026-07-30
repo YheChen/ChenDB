@@ -51,18 +51,18 @@ FEATURES: dict[str, bool] = {
     "page_inspector": True,
     "diagnostics": True,
     "event_stream": True,
-    "sql": True,  # Milestone 2 — parsing only, no execution
-    "execution": True,  # Milestone 3 — volcano operators + step mode
-    "catalog": True,  # Milestone 4 — real system tables
-    "indexes": True,  # Milestone 5 — B+ trees, CREATE INDEX, tree view
-    "planner": True,  # Milestone 6 — cost model, EXPLAIN, alternatives
-    "buffer_pool": True,  # Milestone 7 — frames, write-back, LRU
-    "transactions": True,  # Milestone 8 — undo log, BEGIN/COMMIT/ROLLBACK
-    "wal": True,  # Milestone 9 — log, checkpoints, ARIES recovery
-    "mvcc": True,  # Milestone 10 — row versions, snapshots, locks
-    "dml": True,  # Milestone 11 — UPDATE ... SET, DELETE ... WHERE
-    "joins": True,  # Milestone 13 — joins, GROUP BY, ORDER BY, LIMIT
-    # Not milestones — build capabilities. Both are true here and false in the
+    "sql": True,  # Milestone 2, parsing only, no execution
+    "execution": True,  # Milestone 3, volcano operators + step mode
+    "catalog": True,  # Milestone 4, real system tables
+    "indexes": True,  # Milestone 5, B+ trees, CREATE INDEX, tree view
+    "planner": True,  # Milestone 6, cost model, EXPLAIN, alternatives
+    "buffer_pool": True,  # Milestone 7, frames, write-back, LRU
+    "transactions": True,  # Milestone 8, undo log, BEGIN/COMMIT/ROLLBACK
+    "wal": True,  # Milestone 9, log, checkpoints, ARIES recovery
+    "mvcc": True,  # Milestone 10, row versions, snapshots, locks
+    "dml": True,  # Milestone 11, UPDATE ... SET, DELETE ... WHERE
+    "joins": True,  # Milestone 13 (joins, GROUP BY, ORDER BY, LIMIT
+    # Not milestones) build capabilities. Both are true here and false in the
     # WASM build, which sets them in `visualizer/src/lib/wasmBootstrap.py`.
     # The UI hides what is absent rather than letting a button fail.
     "execution_stepping": True,  # needs a thread to pause an execution on

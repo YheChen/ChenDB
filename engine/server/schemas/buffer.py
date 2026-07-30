@@ -1,8 +1,8 @@
 """Buffer pool API models.
 
 The frame grid is the point. A cache is one of the few parts of a database whose
-behaviour is genuinely *visual* — you can watch a working set settle in, and
-watch a scan wipe it out — and that only works if the API reports every frame,
+behaviour is genuinely *visual* (you can watch a working set settle in, and
+watch a scan wipe it out) and that only works if the API reports every frame,
 including the empty ones.
 """
 
@@ -24,7 +24,7 @@ class FrameModel(ApiModel):
 
     There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
     lending it, so nothing can be holding one when it is reused and a pin count
-    would always read zero — a number that never prevents anything. See
+    would always read zero, a number that never prevents anything. See
     ``engine/storage/buffer.py`` for when that stops being true.
     """
 

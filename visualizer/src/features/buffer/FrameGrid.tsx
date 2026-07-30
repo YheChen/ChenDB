@@ -5,17 +5,17 @@
  *   │ p4 │ p5 │ p6*│ p7 │ p1 │ p2 │ p3 │    │   * = dirty
  *   └────┴────┴────┴────┴────┴────┴────┴────┘
  *     ▲                              ▲    ▲
- *   coldest — evicted next        hottest  free
+ *   coldest, evicted next        hottest  free
  *
  * A cache is one of the few parts of a database whose behaviour is genuinely
  * *visual*: you can watch a working set settle in, and watch a sequential scan
- * wipe it out. That only works if the grid keeps a fixed shape — so free frames
+ * wipe it out. That only works if the grid keeps a fixed shape, so free frames
  * are drawn too, and a page appearing reads as a change rather than as the whole
  * layout reflowing.
  *
  * Frames are shown in **frame order**, not recency order, for the same reason:
  * a frame is a physical slot, and watching one slot's contents get replaced is
- * the thing worth seeing. Recency is shown as colour instead — the coldest
+ * the thing worth seeing. Recency is shown as colour instead, the coldest
  * resident frame is the one eviction takes next, and it is highlighted, because
  * "which one goes next" is the question the policy exists to answer.
  */

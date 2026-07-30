@@ -16,15 +16,15 @@ isolation cannot make disappear.
 
 Granularity
 -----------
-Locks are on **record ids** — a page and a slot — not on pages and not on
+Locks are on **record ids** (a page and a slot) not on pages and not on
 tables. That matters because ChenDB's undo log works in *pages*, so page-level
 locking would have made two transactions inserting into the same heap page
 conflict, which is most inserts. Row-level locking is the whole reason a second
 writer is useful here.
 
 The consequence is that the lock table can get large: one entry per row a
-transaction touches. Real systems handle that with **lock escalation** — after
-enough row locks on one table, take a table lock instead — which trades
+transaction touches. Real systems handle that with **lock escalation** (after
+enough row locks on one table, take a table lock instead) which trades
 concurrency for memory. ChenDB does not escalate, and
 :data:`MAX_LOCKS_PER_TRANSACTION` is the honest failure instead.
 
@@ -32,10 +32,10 @@ Deadlock
 --------
 Detected, not prevented. The alternatives are worse for a teaching engine:
 
-* **Prevention by ordering** — always take locks in a fixed order — requires
+* **Prevention by ordering** (always take locks in a fixed order) requires
   knowing every lock you will need before you take the first, which a SQL
   statement does not.
-* **Prevention by timeout** — give up after a while — cannot tell a deadlock
+* **Prevention by timeout** (give up after a while) cannot tell a deadlock
   from a slow transaction, so it either kills healthy work or leaves deadlocks
   sitting for the length of the timeout.
 
@@ -46,14 +46,14 @@ themselves and a graph search is wasted work; ChenDB checks immediately,
 because a demonstration nobody waits a second for is a demonstration nobody
 watches.
 
-The victim is the **youngest** transaction in the cycle — the one that has done
+The victim is the **youngest** transaction in the cycle. The one that has done
 the least work and will lose the least by being rolled back. InnoDB picks by
 the number of rows changed, which is a better proxy and needs bookkeeping this
 does not have.
 
 **The victim is the transaction that fails, not the one that noticed.** Whoever
 adds the closing edge is the one that runs the search, and it would be simpler
-to have that transaction raise — but then the loser is decided by scheduling
+to have that transaction raise, but then the loser is decided by scheduling
 rather than by cost, and the "youngest" rule would be decoration. So the
 detector marks the victim, wakes everybody, and each waiter checks on the way
 out whether it has been chosen. If the detector *is* the victim it raises
@@ -89,7 +89,7 @@ __all__ = [
 ResourceId = str
 
 #: How long a waiter blocks before giving up. Only reached when a lock is held
-#: by a transaction that is neither committing nor deadlocked — an idle session
+#: by a transaction that is neither committing nor deadlocked, an idle session
 #: with an open transaction, which is a human problem rather than an engine one.
 DEFAULT_LOCK_TIMEOUT_S: Final = 5.0
 
@@ -107,7 +107,7 @@ class LockMode(StrEnum):
     """
 
     SHARED = "shared"
-    """``SELECT … FOR UPDATE`` would take this. Nothing does yet — it exists
+    """``SELECT … FOR UPDATE`` would take this. Nothing does yet. It exists
     because the compatibility matrix is not a matrix without it, and because
     leaving it out would make the lock table look like a mutex table."""
 
@@ -164,7 +164,7 @@ class LockManager:
     """The lock table, the wait-for graph, and the deadlock detector.
 
     Thread-safe: every public method takes ``_lock``, and waiters block on a
-    condition variable rather than spinning. That is not decoration — the whole
+    condition variable rather than spinning. That is not decoration. The whole
     point of this milestone is that two sessions run at once, and a lock manager
     that needed its own external serialisation would just move the bottleneck.
     """
@@ -258,7 +258,7 @@ class LockManager:
         """Look for a cycle through ``transaction_id`` and act on it.
 
         Raises here only if *this* transaction is the chosen victim. Otherwise
-        the victim is marked and woken, and this one keeps waiting — because
+        the victim is marked and woken, and this one keeps waiting, because
         once the victim rolls back, the lock it was holding is released and this
         wait resolves on its own.
         """
@@ -298,8 +298,8 @@ class LockManager:
     ) -> bool:
         """True when this transaction's existing lock already covers ``mode``.
 
-        Re-taking a lock you hold has to be free — a transaction updating the
-        same row twice must not wait for itself — and an exclusive lock covers
+        Re-taking a lock you hold has to be free (a transaction updating the
+        same row twice must not wait for itself) and an exclusive lock covers
         a later shared request.
         """
         held = self._held_by.get(transaction_id, {}).get(resource)
@@ -326,8 +326,8 @@ class LockManager:
     def release_all(self, transaction_id: int) -> int:
         """Drop every lock a transaction holds. Returns how many.
 
-        Locks are held until the transaction *ends*, never released early —
-        that is strict two-phase locking, and it is what stops a second
+        Locks are held until the transaction *ends*, never released early.
+        That is strict two-phase locking, and it is what stops a second
         transaction reading a write that is about to be rolled back. Releasing
         at statement boundaries would be cheaper and would permit cascading
         aborts.
@@ -362,7 +362,7 @@ class LockManager:
         """Who is waiting for whom, right now.
 
         An edge from A to B means A wants something B holds. A cycle in this
-        graph *is* a deadlock — that is the definition, not a heuristic.
+        graph *is* a deadlock, that is the definition, not a heuristic.
         """
         with self._lock:
             return self._build_graph()
@@ -408,7 +408,7 @@ class LockManager:
         """The youngest transaction in the cycle.
 
         Ids increase, so the highest is the newest, and the newest has done the
-        least work — the cheapest thing to throw away. InnoDB picks the one that
+        least work, the cheapest thing to throw away. InnoDB picks the one that
         changed the fewest rows, which is a better proxy for "cheapest" and
         needs per-transaction accounting this does not keep.
         """

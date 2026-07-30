@@ -6,8 +6,8 @@ measurement in Milestone 6, had never had to make a decision it could plausibly
 get wrong.
 
 Joins change that twice over: there is more than one algorithm, and there is
-more than one *order*. The tests are grouped accordingly — what the rows are,
-then what the planner did to produce them — because the two fail for completely
+more than one *order*. The tests are grouped accordingly (what the rows are,
+then what the planner did to produce them) because the two fail for completely
 different reasons and a mixed suite would not say which.
 """
 
@@ -201,7 +201,7 @@ def test_count_of_a_column_counts_non_null_values(db: Database):
 
 
 def test_an_aggregate_over_no_rows(db: Database):
-    # COUNT is 0; everything else is NULL. Not zero — SUM over nothing has no
+    # COUNT is 0; everything else is NULL. Not zero: SUM over nothing has no
     # value, and calling it zero would make an empty table and a table of zeros
     # indistinguishable.
     assert rows(
@@ -402,7 +402,7 @@ def test_a_pushed_predicate_can_still_use_an_index(tmp_path: Path):
     """Pushdown is what makes the index reachable at all.
 
     A predicate left above the join is applied to join output, where no index
-    exists. Pushed to the scan it becomes an access-path decision again — and
+    exists. Pushed to the scan it becomes an access-path decision again, and
     on a table this size the index wins it.
     """
     with Database.open(tmp_path / "idx.chendb", page_size=4096) as db:
@@ -457,7 +457,7 @@ def test_join_order_is_chosen_rather_than_taken_from_the_query(tmp_path: Path):
     """The point of the whole exercise: written order is not run order.
 
     ``big`` is scanned first because the query says so, and the planner joins
-    ``small`` first anyway — its estimate is a twentieth of the size, so it is
+    ``small`` first anyway. Its estimate is a twentieth of the size, so it is
     the cheaper thing to build a hash table on.
     """
     with Database.open(tmp_path / "order.chendb", page_size=4096) as db:
@@ -505,7 +505,7 @@ def test_a_pushed_predicate_is_costed_against_its_own_tables_statistics(db: Data
 # --------------------------------------------------------------------------
 
 # The fixture is built for this. `users` has grace, who has orders; `orders` has
-# an orphan (user 99) and a NULL key — so a LEFT join has something to preserve,
+# an orphan (user 99) and a NULL key: so a LEFT join has something to preserve,
 # a RIGHT join has something else, and neither is testing an empty set.
 
 
@@ -528,7 +528,7 @@ def test_a_left_join_null_extends_every_column_of_the_missing_side(db: Database)
         "SELECT u.name, o.id, o.user_id, o.total FROM users u "
         "LEFT JOIN orders o ON u.id = o.user_id WHERE u.id = 4;",
     )
-    assert row == ("edsger", None, None, None), "not just the key — the whole side"
+    assert row == ("edsger", None, None, None), "not just the key, the whole side"
 
 
 def test_a_right_join_keeps_the_orphan_and_the_null_key(db: Database):
@@ -581,7 +581,7 @@ def test_a_condition_in_the_on_restricts_matching_not_survival(db: Database):
     """The single most important property of an outer join.
 
     ``ON … AND o.total > 200`` decides which orders *count as a match*. Every user
-    survives regardless — the ones whose orders were all too small come back
+    survives regardless. The ones whose orders were all too small come back
     NULL-extended, exactly as if they had no orders at all.
     """
     result = rows(
@@ -599,7 +599,7 @@ def test_the_same_condition_in_the_where_removes_the_extended_rows(db: Database)
     """And the contrast that makes it a real distinction.
 
     The WHERE runs *after* NULL-extension, and ``NULL > 200`` is NULL rather than
-    TRUE — so it rejects every preserved row and the outer join collapses to an
+    TRUE, so it rejects every preserved row and the outer join collapses to an
     inner one. Both queries are correct and they are different queries.
     """
     result = rows(
@@ -624,7 +624,7 @@ def test_the_anti_join_idiom_finds_the_rows_with_no_partner(db: Database):
 
 
 def test_an_outer_join_with_no_equality_uses_a_nested_loop(db: Database):
-    # No key to hash, so the hash join is not a candidate at all — and the
+    # No key to hash, so the hash join is not a candidate at all: and the
     # NULL-extension has to work in the nested loop too.
     # 100 is above every user_id in `orders` (the largest is the orphan's 99), so
     # this row matches nothing and has to be preserved.
@@ -695,7 +695,7 @@ def test_a_predicate_on_the_null_supplied_side_is_not_pushed_down(db: Database):
 
 def test_explain_names_the_join_flavour(db: Database):
     # A plan display that showed an outer join as an inner one would be describing
-    # something that is not happening — and join order is exactly what an outer
+    # something that is not happening: and join order is exactly what an outer
     # join constrains.
     outer = explain(db, "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id;")
     assert "LEFT" in outer
@@ -710,7 +710,7 @@ def test_an_outer_join_is_estimated_above_its_preserved_input(db: Database):
     """An outer join has a floor an inner join does not.
 
     Every preserved row appears whether it matched or not, so an estimate below
-    the preserved side's row count is not merely imprecise — it is impossible, and
+    the preserved side's row count is not merely imprecise. It is impossible, and
     it would make every operator above the join look cheaper than it is.
     """
     planned = plan(
@@ -728,8 +728,8 @@ def test_an_outer_join_is_estimated_above_its_preserved_input(db: Database):
 def test_an_outer_join_is_not_costed_as_a_cross_product(db: Database):
     """The estimator reads the join's own conditions, wherever they came from.
 
-    It used to read positions into the shared conjunct pool — which an outer join
-    contributes nothing to — so an outer join's equality was invisible to it and
+    It used to read positions into the shared conjunct pool (which an outer join
+    contributes nothing to) so an outer join's equality was invisible to it and
     every one was costed as a full cross product.
     """
     outer = plan(db, "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id;")

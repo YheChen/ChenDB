@@ -1,7 +1,7 @@
 """The buffer pool: making a page read stop being a syscall.
 
 Milestones 1-6 gave the pager no memory at all.  Every ``read_page`` was a
-``pread`` plus a CRC32 over 4 KiB, and every ``write_page`` was a ``write`` — so
+``pread`` plus a CRC32 over 4 KiB, and every ``write_page`` was a ``write``, so
 an index build that touched one leaf two hundred times wrote it two hundred
 times.  This is the layer that fixes both.
 
@@ -41,14 +41,14 @@ one: if a page is evicted while a caller holds a copy, the caller's later
 and no caller in the engine had to change.
 
 That is affordable because a 4 KiB ``memcpy`` is roughly a tenth of the syscall
-it replaces — measured, see ``docs/performance.md``. It is not free, and it is
+it replaces (measured; see ``docs/performance.md``). It is not free, and it is
 not equivalent:
 
 * two callers mutating the same page still lose one of the updates, exactly as
   they did before the pool existed. The database-level write lock is what
   prevents that, not the pool.
 * a shared-frame pool would need pinning, and becomes the right design the
-  moment there are concurrent readers — which is Milestone 10.
+  moment there are concurrent readers, which is Milestone 10.
 
 Pin counts that are always zero would be *ceremony*: a number in the UI that
 never prevents anything. Saying why they are absent is more useful than
@@ -57,7 +57,7 @@ displaying a fake one.
 Eviction: real LRU, and why nobody ships it
 -------------------------------------------
 Residency is an ``OrderedDict``, so "least recently used" is
-``popitem(last=False)`` and touching a page is ``move_to_end`` — both O(1), with
+``popitem(last=False)`` and touching a page is ``move_to_end``, both O(1), with
 no scan.
 
 Real systems do not do this. True LRU performs a *write* to shared state on
@@ -98,7 +98,7 @@ __all__ = [
 #: Frames in a pool by default. 128 x 4 KiB = 512 KiB, which is enough to hold a
 #: small database entirely and small enough that a real workload evicts.
 #: PostgreSQL's ``shared_buffers`` defaults to 128 MB for the same kind of
-#: reason — big enough to matter, small enough not to assume the machine.
+#: reason, big enough to matter, small enough not to assume the machine.
 DEFAULT_POOL_FRAMES: Final = 128
 
 #: Below this, eviction happens so often the pool costs more than it saves. Two
@@ -149,7 +149,7 @@ class _Frame:
     """One slot of the pool. Holds bytes, not a decoded page.
 
     Bytes rather than a ``Page``, because the pool must also hold the meta page,
-    which has a different layout entirely — and because decoding is the caller's
+    which has a different layout entirely, and because decoding is the caller's
     job, so a frame stays valid whatever the page turns out to be.
     """
 
@@ -289,7 +289,7 @@ class BufferPool:
 
         The bytes reach the file on eviction or on :meth:`flush`. A page written
         repeatedly is therefore written to disk once, which is where most of the
-        pool's benefit comes from — an index build touches one leaf hundreds of
+        pool's benefit comes from. An index build touches one leaf hundreds of
         times.
         """
         if len(raw) != self._page_size:
@@ -319,7 +319,7 @@ class BufferPool:
     def invalidate(self, page_id: int) -> None:
         """Forget a page without writing it back.
 
-        For a page whose contents are about to be overwritten wholesale — a
+        For a page whose contents are about to be overwritten wholesale. A
         freshly allocated page, or one returned to the free list. Writing back
         bytes that are already superseded is pure waste.
         """
@@ -372,7 +372,7 @@ class BufferPool:
         Called by ``Pager.sync`` *before* the ``fsync``, which is what keeps the
         durability contract identical to the pre-pool engine: after ``sync()``
         returns, everything acknowledged is on disk. Between syncs, more data
-        now lives only in memory than before — the crash window is wider, and
+        now lives only in memory than before. The crash window is wider, and
         Milestone 9's WAL is what closes it.
         """
         written = 0
@@ -419,7 +419,7 @@ class BufferPool:
         """Freeze the pool for display.
 
         Returns plain dataclasses so the API can serialise it after releasing
-        the engine lock — the same rule every other diagnostics view follows.
+        the engine lock. The same rule every other diagnostics view follows.
         """
         recency = {
             page_id: position for position, page_id in enumerate(reversed(self._resident))
@@ -448,7 +448,7 @@ class BufferPool:
         )
 
     def _emit(self, action: str, frame: _Frame) -> None:
-        # Hits are the common case by design, so they are VERBOSE — one event
+        # Hits are the common case by design, so they are VERBOSE: one event
         # per page read at STORAGE would drown every other event in the stream.
         # A miss or an eviction is rare and interesting, so both are STORAGE.
         wanted = self._tracer.verbose if action == "hit" else self._tracer.storage

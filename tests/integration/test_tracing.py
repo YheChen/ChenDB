@@ -22,7 +22,7 @@ def build(path: Path, schema: Schema, level: TraceLevel) -> tuple[Database, Ring
 
 
 def workload(db: Database) -> list[tuple]:
-    """Insert, point-read, delete, scan — one of each traced operation."""
+    """Insert, point-read, delete, scan, one of each traced operation."""
     record_ids = db.insert_many(
         "users", [(i, f"user-{i}", i % 90, i % 2 == 0, i / 3) for i in range(ROW_COUNT)]
     )
@@ -112,7 +112,7 @@ def test_storage_level_emits_the_expected_event_families(
         # …and through the log from Milestone 9, before it reaches the pool.
         EventCategory.WAL,
         # Milestone 10: every write is inside a transaction, which takes a row
-        # lock. A *read* takes neither — which is the point, and is why there is
+        # lock. A *read* takes neither: which is the point, and is why there is
         # no MVCC category here at this level.
         EventCategory.TRANSACTION,
         EventCategory.LOCK,

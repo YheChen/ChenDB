@@ -1,7 +1,7 @@
 """HTTP and WebSocket access to the engine, for the Visual Database Explorer.
 
 This is the ONLY package under ``engine/`` allowed to import FastAPI, Pydantic
-or uvicorn — a rule enforced by ``tests/unit/test_architecture_boundaries.py``.
+or uvicorn. A rule enforced by ``tests/unit/test_architecture_boundaries.py``.
 The dependency points one way: the server imports the engine, never the
 reverse, so ``import engine`` works in an environment with nothing installed.
 

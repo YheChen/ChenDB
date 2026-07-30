@@ -2,7 +2,7 @@
 
 Everything returned here is read from the real file through
 :mod:`engine.storage.inspect`.  Nothing is reconstructed or approximated in the
-frontend — the inspector shows the bytes that are actually on disk.
+frontend. The inspector shows the bytes that are actually on disk.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/databases/{database_id}", tags=["pages"])
 def list_pages(managed: DatabaseDep) -> PageListResponse:
     """Summarize all pages in the file.
 
-    Reads every page, so it is O(pages) syscalls — fine for the sizes a
+    Reads every page, so it is O(pages) syscalls, fine for the sizes a
     visualizer works with, and it will get cheap once Milestone 7's buffer pool
     keeps hot pages in memory.
     """

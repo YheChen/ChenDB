@@ -480,8 +480,8 @@ class IndexCreatedEvent(DiagnosticEvent):
 # Index (Milestone 5)
 # --------------------------------------------------------------------------
 #
-# Keys arrive here already rendered as strings. The alternative — carrying the
-# raw encoded bytes and the column type so a consumer could decode them — would
+# Keys arrive here already rendered as strings. The alternative: carrying the
+# raw encoded bytes and the column type so a consumer could decode them: would
 # make every consumer of the event bus depend on engine.index.key, which is
 # exactly the coupling the "events are plain data" rule exists to prevent.
 
@@ -698,7 +698,7 @@ class BufferPoolEvent(DiagnosticEvent):
 
     There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
     lending it, so no caller can be holding one when it is reused and pin counts
-    would always read zero — a number in the UI that never prevents anything.
+    would always read zero. A number in the UI that never prevents anything.
     :mod:`engine.storage.buffer` explains when that stops being true.
     """
 
@@ -748,7 +748,7 @@ class TransactionEvent(DiagnosticEvent):
     action: TransactionAction
     implicit: bool
     pages_held: int
-    """Pages with a before-image saved — the undo log's size in pages."""
+    """Pages with a before-image saved. The undo log's size in pages."""
     undo_bytes: int
     pages_restored: int = 0
     """``rollback_done`` only: how many before-images were written back."""
@@ -759,7 +759,7 @@ class UndoRecordEvent(DiagnosticEvent):
     """One page's before-image was saved, or written back.
 
     ``capture`` is ``STORAGE``: it happens once per page a transaction touches,
-    which is few. ``restore`` is ``VERBOSE`` — a rollback emits one per captured
+    which is few. ``restore`` is ``VERBOSE``. A rollback emits one per captured
     page all at once, and the count is already on the ``rollback_done``
     :class:`TransactionEvent`.
     """
@@ -772,8 +772,8 @@ class UndoRecordEvent(DiagnosticEvent):
     kind: UndoAction
     before_image_size: int
     reason: str = ""
-    """What was about to change the page. Not used to undo — the bytes are the
-    whole mechanism — but a log of "page 4, page 4, page 1" reads as noise
+    """What was about to change the page. Not used to undo (the bytes are the
+    whole mechanism) but a log of "page 4, page 4, page 1" reads as noise
     without it."""
 
 
@@ -789,7 +789,7 @@ class WalAppendEvent(DiagnosticEvent):
     """A record was staged in the log.
 
     ``STORAGE`` rather than ``SUMMARY`` because there is one of these per page
-    write — the log is the busiest thing in the engine, and a summary-level
+    write. The log is the busiest thing in the engine, and a summary-level
     trace of a bulk insert should not be mostly WAL.
     """
 
@@ -821,7 +821,7 @@ class WalFlushEvent(DiagnosticEvent):
     bytes_written: int
     duration_ns: int
     synced: bool
-    """False for a flush that only reached the OS — enough to survive a process
+    """False for a flush that only reached the OS, enough to survive a process
     crash, not a machine one."""
 
 
@@ -887,7 +887,7 @@ class LockEvent(DiagnosticEvent):
     """A lock was asked for, granted, waited on, or let go.
 
     ``waiting`` is the one worth watching. Under MVCC a reader never appears
-    here at all, so every event is a writer — and a ``waiting`` is two writers
+    here at all, so every event is a writer, and a ``waiting`` is two writers
     that genuinely collide, which row-level locking is supposed to make rare.
     """
 
@@ -915,7 +915,7 @@ class DeadlockEvent(DiagnosticEvent):
     cycle: tuple[int, ...]
     """The transactions in the cycle, in the order the search walked them."""
     victim: int
-    """The one rolled back — the youngest, so the least work is lost."""
+    """The one rolled back. The youngest, so the least work is lost."""
     waiters: int
     """Transactions blocked at the moment the cycle was found, cycle or not."""
 
@@ -925,7 +925,7 @@ class SnapshotEvent(DiagnosticEvent):
     """A transaction took a view of the database.
 
     Once per transaction under REPEATABLE READ, once per *statement* under READ
-    COMMITTED — which is the entire difference between the two levels, and the
+    COMMITTED, which is the entire difference between the two levels, and the
     only place it is observable.
     """
 

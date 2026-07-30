@@ -1,7 +1,7 @@
 """Physical operators, in the volcano (iterator) model.
 
-Every operator answers the same three questions — ``open()``, ``next()``,
-``close()`` — and every operator's input is another operator.  A query is
+Every operator answers the same three questions (``open()``, ``next()``,
+``close()``) and every operator's input is another operator.  A query is
 therefore a tree, and running it means pulling one row at a time from the root:
 
     Project(email, age*2)          ← root; the caller pulls from here
@@ -28,7 +28,7 @@ A generator per operator would be shorter and is the idiomatic Python answer.
 Explicit ``open``/``next``/``close`` is used instead because:
 
 * it *is* the volcano interface, as described in Graefe's 1994 paper and as
-  implemented in PostgreSQL (``ExecProcNode``) — the point here is to show the
+  implemented in PostgreSQL (``ExecProcNode``), the point here is to show the
   real thing;
 * an operator can be asked for its statistics, its children and its state at any
   point, which a suspended generator frame cannot be;
@@ -52,8 +52,8 @@ Operator           Cost for *n* input rows
 ``Project``        O(n * projections) evaluations
 =================  ==================================================
 
-All four are streaming and use O(1) memory. A blocking operator — sort, hash
-aggregate, hash join — would need O(n), and none exist yet.
+All four are streaming and use O(1) memory. A blocking operator (sort, hash
+aggregate, hash join) would need O(n), and none exist yet.
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ class ExecutionContext:
     """The view this query reads through, from Milestone 10.
 
     ``None`` means "every version" and is what the vacuum and the page
-    inspector want — not a default anybody executing a query should get, which
+    inspector want, not a default anybody executing a query should get, which
     is why :func:`~engine.executor.engine.execute_statement` always supplies
     one.
 
@@ -305,7 +305,7 @@ class Operator(ABC):
 class ScanOperator(Operator):
     """A leaf that reads rows of one table from storage.
 
-    Two of them exist — :class:`SeqScan` and :class:`IndexScan` — and they are
+    Two of them exist (:class:`SeqScan` and :class:`IndexScan`) and they are
     interchangeable: same output columns, same row shape, same ``last_record_id``
     for the row inspector.  That interchangeability *is* the access path
     abstraction, and it is what lets the planner swap one for the other without
@@ -371,7 +371,7 @@ class ScanOperator(Operator):
 
         Below a join every row is the full width of the ``FROM``, with the
         tables not yet joined left empty. That is what lets a bound column
-        index — computed once, by the binder, against the *written* order —
+        index (computed once, by the binder, against the *written* order)
         stay correct however the planner decides to reorder the joins.
 
         With one table the layout is the identity and this is a no-op, which is
@@ -391,8 +391,8 @@ class ScanOperator(Operator):
 class SeqScan(ScanOperator):
     """Reads every live row of a heap, in physical order.
 
-    Physical order is not insertion order after a delete — a tombstoned slot can
-    be reused — which is exactly why ``SELECT`` without ``ORDER BY`` guarantees
+    Physical order is not insertion order after a delete (a tombstoned slot can
+    be reused) which is exactly why ``SELECT`` without ``ORDER BY`` guarantees
     nothing about ordering.
     """
 
@@ -442,7 +442,7 @@ class SeqScan(ScanOperator):
             if row is None:
                 # A version this snapshot cannot see. Counted as input and not
                 # as output, so the plan view shows the reader paying for dead
-                # weight — which is what an overdue vacuum looks like.
+                # weight: which is what an overdue vacuum looks like.
                 continue
             self._last_record_id = record_id
             return row
@@ -459,7 +459,7 @@ class IndexScan(ScanOperator):
     The descent is cheap.  The fetches are not: record ids come out in *key*
     order, which is unrelated to where the rows physically sit, so each one is a
     random page read.  A query matching most of a table therefore does more I/O
-    through the index than a sequential scan would — the crossover is somewhere
+    through the index than a sequential scan would. The crossover is somewhere
     around a few percent selectivity on real hardware, and it is exactly what a
     cost model exists to estimate.  Milestone 5 chooses by rule and can get this
     wrong; Milestone 6 is where it starts choosing by cost.
@@ -542,7 +542,7 @@ class IndexScan(ScanOperator):
 
     @property
     def rows_fetched(self) -> int:
-        """Heap fetches performed — one per matching index entry."""
+        """Heap fetches performed, one per matching index entry."""
         return self._rows_fetched
 
     def _on_open(self) -> None:
@@ -579,7 +579,7 @@ class IndexScan(ScanOperator):
             except RecordNotFoundError:
                 # The index points at a tombstoned row. Cannot happen while
                 # Database.delete maintains both, but an index rebuilt from a
-                # crashed write could disagree — skipping is the same recovery
+                # crashed write could disagree: skipping is the same recovery
                 # PostgreSQL performs when it finds a dead tuple through an index.
                 continue
             self._rows_fetched += 1
@@ -594,7 +594,7 @@ class Filter(Operator):
     """Passes through only rows whose predicate is exactly TRUE.
 
     NULL is not TRUE. A row whose predicate evaluates to unknown is dropped just
-    like one that evaluates to false — which is why ``WHERE age > 18`` silently
+    like one that evaluates to false, which is why ``WHERE age > 18`` silently
     excludes rows with a NULL age. See
     :mod:`engine.executor.expression` for the truth tables.
     """
@@ -632,7 +632,7 @@ class Filter(Operator):
 
     def _produce(self) -> Row | None:
         # Loops until a row passes or the input runs out. One next() on a filter
-        # can therefore cost many next() calls on its child — visible in the
+        # can therefore cost many next() calls on its child: visible in the
         # step debugger, and the reason a selective filter over a big table is
         # slow without an index.
         while (row := self._child.next()) is not None:
@@ -654,7 +654,7 @@ class Project(Operator):
 
     Narrowing to fewer columns, computing an expression, and renaming are all the
     same operation. A projection that is exactly "every column in order" is
-    dropped by the planner rather than executed — see
+    dropped by the planner rather than executed, see
     :attr:`~engine.executor.binder.BoundSelect.is_identity_projection`.
     """
 
@@ -706,7 +706,7 @@ class Project(Operator):
 
 
 class JoinOperator(Operator):
-    """Two inputs, one output row per matching pair — and the unmatched ones.
+    """Two inputs, one output row per matching pair, and the unmatched ones.
 
     Both algorithms below place the right side's columns into the left side's
     row by *slice*, at the offsets :class:`RowLayout` fixed. Merging by "take
@@ -717,8 +717,8 @@ class JoinOperator(Operator):
     **NULL extension is free here, and that is a consequence of the row layout
     rather than a coincidence.** Every row below the topmost join is already the
     full width of the ``FROM``, with the tables not yet joined left as ``None``.
-    So a left row that found no partner *is* its own NULL-extended form — the
-    right side's slots have never been written — and the same holds mirrored for
+    So a left row that found no partner *is* its own NULL-extended form (the
+    right side's slots have never been written) and the same holds mirrored for
     an unmatched right row, whose subplan never touched the left side's slots.
     Milestone 13 paid for that layout in row width; this is the refund.
 
@@ -830,7 +830,7 @@ class NestedLoopJoin(JoinOperator):
         self._draining = False
         self._right_matched: set[int] = set()
         """Indices into ``_buffered``. Indices, not rows: two identical right rows
-        are two rows, and a set of row *values* would treat them as one — so an
+        are two rows, and a set of row *values* would treat them as one, so an
         unmatched duplicate would go missing from a RIGHT join."""
 
     def _on_open(self) -> None:
@@ -856,8 +856,8 @@ class NestedLoopJoin(JoinOperator):
                 if self._left_row is None:
                     # The left input is done, which is the first moment
                     # "unmatched" is finally known for the right side. Rewind the
-                    # cursor — it is sitting at the end of the buffer from the last
-                    # left row — and hand out the leftovers one per call.
+                    # cursor (it is sitting at the end of the buffer from the last
+                    # left row) and hand out the leftovers one per call.
                     self._draining = True
                     self._position = 0
                     return self._unmatched_right()
@@ -904,13 +904,13 @@ class HashJoin(JoinOperator):
     not just for the result.
 
     Only one equality is hashed. ``a.x = b.y AND a.z < b.w`` hashes the first
-    and re-checks the second per matching pair, which is what ``residual`` is —
-    a composite hash key would need the same key encoding a composite index
+    and re-checks the second per matching pair, which is what ``residual`` is.
+    A composite hash key would need the same key encoding a composite index
     would, and :mod:`engine.index.key` explains why that is a whole layer.
 
     NULL never matches, including another NULL. That is what ``=`` means in
     three-valued logic and a hash table would happily match them, so a NULL-keyed
-    row is kept out of the table — but for an outer join it must still be
+    row is kept out of the table, but for an outer join it must still be
     **emitted**, because a row that cannot match is the definition of unmatched.
     Dropping it was correct only while every join was inner, and it is the one
     place where the outer version is not simply "the same, plus leftovers".
@@ -967,7 +967,7 @@ class HashJoin(JoinOperator):
         self._residual = residual
         self._build: list[Row] = []
         """Every build row in insertion order, so an unmatched one can be found
-        again — and so the buckets can hold indices rather than rows. The rows
+        again, and so the buckets can hold indices rather than rows. The rows
         themselves are shared, so this costs one integer per row over holding them
         in the buckets directly, which is what buys a preserved build side."""
         self._table: dict[Any, list[int]] = {}
@@ -983,8 +983,8 @@ class HashJoin(JoinOperator):
         """Whether the probe row in hand has matched *anything* yet.
 
         Not the same question as "is its bucket empty". A bucket can be full and
-        every candidate in it rejected by the residual — ``ON a.id = b.id AND
-        b.y > 0`` hashes the equality and re-checks the rest per pair — and such a
+        every candidate in it rejected by the residual (``ON a.id = b.id AND
+        b.y > 0`` hashes the equality and re-checks the rest per pair) and such a
         probe row is unmatched however promising its key looked."""
 
     @property
@@ -1021,7 +1021,7 @@ class HashJoin(JoinOperator):
             if key is None:
                 # Out of the table: NULL = NULL is UNKNOWN, not TRUE, and hashing
                 # it would match. It stays in `_build`, so a preserved build side
-                # still emits it as unmatched — which it certainly is.
+                # still emits it as unmatched: which it certainly is.
                 continue
             self._table.setdefault(key, []).append(index)
         self._bucket = ()
@@ -1097,7 +1097,7 @@ class HashAggregate(Operator):
     reason ``LIMIT 1`` over a ``GROUP BY`` saves nothing.
 
     Hashing rather than sorting: linear in rows, independent of the number of
-    groups, and it buys no ordering — which is exactly right, because nobody
+    groups, and it buys no ordering, which is exactly right, because nobody
     asked for one. PostgreSQL picks between ``HashAggregate`` and
     ``GroupAggregate`` on whether the input is already sorted; nothing here
     produces sorted input, so there is no choice to make.
@@ -1210,7 +1210,7 @@ class _Accumulator:
     """One aggregate's running state.
 
     ``COUNT`` counts; everything else ignores NULL, which is the rule that makes
-    ``AVG`` of ``[1, NULL, 3]`` equal 2 and not 1.33 — the NULL is not a zero,
+    ``AVG`` of ``[1, NULL, 3]`` equal 2 and not 1.33. The NULL is not a zero,
     it is a row that does not participate. ``SUM`` and ``AVG`` over no non-NULL
     values are NULL, and only ``COUNT`` is 0.
 
@@ -1218,7 +1218,7 @@ class _Accumulator:
     already refused ``SUM`` and ``AVG`` over anything but a number
     (:func:`~engine.executor.binder._require_aggregable`). It does still have to
     ask how *big* the total has grown, because Python's integers do not overflow
-    and ``INTEGER`` does — a sum of int64 values need not be one.
+    and ``INTEGER`` does, a sum of int64 values need not be one.
     """
 
     __slots__ = ("_count", "_function", "_max", "_min", "_sum")
@@ -1265,7 +1265,7 @@ class Sort(Operator):
 
     NULLs sort last ascending and first descending, which is PostgreSQL's rule
     (``NULLS LAST`` by default for ``ASC``) and the opposite of SQLite's. There
-    is no right answer — the standard leaves it implementation-defined — but
+    is no right answer (the standard leaves it implementation-defined) but
     there is a wrong one, which is comparing NULL to a number and crashing.
 
     In memory only. A sort that does not fit is a sort that fails; PostgreSQL
@@ -1307,7 +1307,7 @@ class Sort(Operator):
         self._rows = list(self._child)
         self.stats.input_rows = len(self._rows)
         # One pass per key, least significant first. Python's sort is stable,
-        # so the earlier keys survive — which is both correct and shorter than
+        # so the earlier keys survive: which is both correct and shorter than
         # a comparator that has to mix ascending and descending in one pass.
         for key in reversed(self._keys):
             self._rows.sort(
@@ -1332,7 +1332,7 @@ def _sort_key(value: Any) -> tuple[int, Any]:
 
     The leading integer is the whole trick: it partitions before the value is
     ever reached, so ``None < 5`` is never evaluated. ``reverse=True`` flips the
-    partition along with the values, which is why descending puts NULLs first —
+    partition along with the values, which is why descending puts NULLs first,
     PostgreSQL's rule, arrived at by not having a special case rather than by
     having one.
     """
@@ -1348,7 +1348,7 @@ class Limit(Operator):
 
     The one operator that makes the pipeline visible: over a scan it really does
     stop early, and ``pages read`` in the plan view falls. Over a sort it saves
-    nothing, because the sort already drained its child — and that non-saving is
+    nothing, because the sort already drained its child, and that non-saving is
     exactly as informative as the saving.
     """
 

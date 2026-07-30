@@ -2,7 +2,7 @@
 
 The reporting is not decoration. A generated failure is useless if a developer has
 to re-derive it, so the shrink happens *before* the failure is rendered and the
-minimal case goes straight into the CI log — schema, both dialects of the query,
+minimal case goes straight into the CI log, schema, both dialects of the query,
 the differing cell, and the two commands that reproduce it. Nothing has to be run
 again to see what went wrong.
 
@@ -10,7 +10,7 @@ The counters exist for the opposite reason: to notice the suite going quiet. A
 differential tester that has silently stopped comparing anything is green, fast,
 and worthless, and it looks exactly like one that works. So every run prints how
 many pairs it compared, how many returned rows, how often each registry entry
-fired, and how many comparisons needed the float tolerance — and
+fired, and how many comparisons needed the float tolerance, and
 ``test_harness.py`` asserts floors on all of it.
 """
 

@@ -238,7 +238,7 @@ def _is_null(raw: bytes, index: int) -> bool:
 #
 # Eight bytes per row saying which transaction created it and which one deleted
 # it. That is what makes a row a *version* rather than a value, and it is the
-# whole of MVCC's storage cost — 8 bytes against PostgreSQL's 23-byte
+# whole of MVCC's storage cost: 8 bytes against PostgreSQL's 23-byte
 # ``HeapTupleHeaderData``, which also carries a command id, a ctid forward
 # pointer to the next version, and two infomask words of cached flags.
 #
@@ -252,7 +252,7 @@ def _is_null(raw: bytes, index: int) -> bool:
 # billion transactions the counter wraps, and a row's ``xmin`` starts looking
 # like it is in the *future*. PostgreSQL handles that with a circular comparison
 # and an anti-wraparound VACUUM that must freeze old rows before the wrap
-# catches them — a maintenance job that has taken production systems down.
+# catches them: a maintenance job that has taken production systems down.
 # ChenDB cannot hit it for a reason worth understanding, spelled out in
 # ``engine/concurrency/snapshot.py``: rollback here physically removes a
 # transaction's work, so every row that survives is from a committed
@@ -263,7 +263,7 @@ TUPLE_HEADER_FORMAT: Final[str] = "<II"
 TUPLE_HEADER_SIZE: Final[int] = struct.calcsize(TUPLE_HEADER_FORMAT)  # 8
 
 #: ``xmax`` for a row nobody has deleted. Zero is safe as a sentinel because
-#: transaction ids start at 1 — the same reason ``INVALID_PAGE_ID`` is not 0.
+#: transaction ids start at 1, the same reason ``INVALID_PAGE_ID`` is not 0.
 NO_TRANSACTION_ID: Final = 0
 
 
@@ -290,7 +290,7 @@ def read_tuple_header(raw: bytes) -> TupleHeader:
     """Decode the header without touching the row.
 
     Called once per row per scan, before the visibility check decides whether
-    the row is worth decoding at all — which is the point of putting the header
+    the row is worth decoding at all, which is the point of putting the header
     first. A row that is invisible costs eight bytes of unpacking rather than a
     walk of every column.
     """
@@ -313,7 +313,7 @@ def set_xmax(raw: bytes, xmax: int) -> bytes:
 
     A delete rewrites eight bytes in place rather than removing the row, which
     is what lets a transaction that started earlier keep reading it. The slot is
-    reclaimed later — by :meth:`Database.vacuum`, which is the price of never
+    reclaimed later, by :meth:`Database.vacuum`, which is the price of never
     blocking a reader, and the reason PostgreSQL ships an autovacuum daemon.
     """
     buf = bytearray(raw)

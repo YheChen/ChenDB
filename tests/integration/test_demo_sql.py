@@ -7,7 +7,7 @@ This suite exists because two demo buttons shipped broken:
 
 The second sat in the UI for a whole milestone. Nobody noticed, because a demo
 button is precisely the code that no test touches and that nobody clicks in the
-workspace they happen to be working on — and when it did fail, it failed in a
+workspace they happen to be working on, and when it did fail, it failed in a
 way that looked like the *engine* misbehaving.
 
 The catalogue lives in ``visualizer/src/lib/demoSql.ts`` because that is where
@@ -21,7 +21,7 @@ The four claims checked, per statement:
 * it parses, or it is marked as deliberately not parsing;
 * it executes, if a button runs it;
 * it fails, if a button runs it *and failing is the demonstration*;
-* it is built from the open table's real schema — implicitly, because the
+* it is built from the open table's real schema, implicitly, because the
   fixture below deliberately has a shape no hardcoded SQL would match.
 """
 
@@ -57,7 +57,7 @@ def _emit() -> dict:
     """Ask Node to evaluate the catalogue module and hand back its statements.
 
     Node 22.6+ strips TypeScript types natively, so this needs no bundler, no
-    transpiler and no new dependency — which matters, because a guard that is
+    transpiler and no new dependency, which matters, because a guard that is
     expensive to run is a guard that gets turned off.
     """
     if shutil.which("node") is None:  # pragma: no cover - CI always has node
@@ -228,7 +228,7 @@ def test_every_button_does_what_the_catalogue_says(
     shared database would make the outcome depend on collection order.
 
     Parametrised over a fixed range rather than over the catalogue so that a
-    statement disappearing shows up as a *skip* in the report — the count is
+    statement disappearing shows up as a *skip* in the report, the count is
     pinned separately above.
     """
     runnable = _runnable(catalogue["statements"])
@@ -249,8 +249,8 @@ def test_every_button_does_what_the_catalogue_says(
         )
     else:
         assert response.status_code != 200, (
-            f"{statement['id']} ({statement['label']}) is supposed to fail — that "
-            f"is the demonstration — and it succeeded"
+            f"{statement['id']} ({statement['label']}) is supposed to fail (that "
+            f"is the demonstration) and it succeeded"
         )
 
 
@@ -283,7 +283,7 @@ def test_the_wasm_bootstrap_agrees_with_the_engine_on_the_format_version():
 
     Persisted databases are binary files with a version in their meta page, so
     a format bump makes a visitor's stored bytes unopenable. The browser build
-    stamps this number alongside them and clears the store when it moves —
+    stamps this number alongside them and clears the store when it moves,
     which only works if the number really is the engine's.
 
     Read out of the source rather than imported, because importing
@@ -295,7 +295,7 @@ def test_the_wasm_bootstrap_agrees_with_the_engine_on_the_format_version():
 
     assert "from engine.storage.constants import FORMAT_VERSION" in source, (
         "the browser build must take the format version from the engine, not "
-        "hardcode it — a copy would silently stop matching"
+        "hardcode it. A copy would silently stop matching"
     )
     assert 'return f"{FORMAT_VERSION}"' in source
     assert FORMAT_VERSION >= 5, "sanity: the version only ever goes up"
@@ -305,7 +305,7 @@ def test_the_wasm_bootstrap_closes_handles_before_it_is_persisted():
     """Persisting stores the *filesystem*, not the buffer pool.
 
     A page still in the pool is not on the filesystem, so syncing without
-    closing would store whatever happened to be written through — the state
+    closing would store whatever happened to be written through. The state
     recovery exists to repair, and not what someone who typed a statement and
     closed the tab is entitled to.
     """

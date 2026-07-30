@@ -5,7 +5,7 @@
  *     node scripts/emit_demo_sql.ts
  *
  * Run under plain Node, which strips TypeScript types but does not resolve
- * TypeScript's extensionless imports — hence the `.ts` below. Nothing is
+ * TypeScript's extensionless imports, hence the `.ts` below. Nothing is
  * generated to disk and nothing is committed: the test invokes this, so the
  * catalogue it checks is the one the app actually ships. A generated file would
  * be one more thing that can be stale, and the whole point of this guard is

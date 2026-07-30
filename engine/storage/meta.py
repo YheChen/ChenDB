@@ -1,7 +1,7 @@
 """The meta page: page 0, the root of the whole database file.
 
 Every persistent structure in the file is reachable from here.  The meta page
-does *not* use the generic slotted-page header — it has a fixed layout of its
+does *not* use the generic slotted-page header. It has a fixed layout of its
 own so that the magic string lands at file offset 0 and ``head -c 16 x.chendb``
 identifies the file.  SQLite does the same thing with its 100-byte header at
 the start of page 1; PostgreSQL instead keeps cluster metadata in a separate
@@ -29,8 +29,8 @@ Layout, format version 5 (88 bytes; the rest of the page is zero-filled)::
      80     4  flags                   reserved
      84     4  checksum                CRC32 over bytes [0, 84)
 
-Only these six pointers are needed to *start* reading; everything else — every
-table's heap, every index's root — is a row in a system table.  That is the
+Only these six pointers are needed to *start* reading; everything else (every
+table's heap, every index's root) is a row in a system table.  That is the
 whole point of the catalog: adding a table or an index is an insert, not a
 file-format change.  Milestone 5 still had to touch the format, but only because
 it added a new *system* table, which is exactly the kind of change that cannot
@@ -41,11 +41,11 @@ rather than in the log because it has to be readable *before* the log is opened:
 it says what LSN the log file's first byte corresponds to. A checkpoint truncates
 the log, so that is not zero after the first one, and without it LSNs would
 restart and page LSNs written earlier would compare greater than records written
-later — making redo skip work it had to do.
+later, making redo skip work it had to do.
 
 ``next_object_id`` replaces version 2's ``next_object_id``.  Tables and indexes
 draw ids from one sequence, so an id identifies a catalog object without also
-having to say what kind it is — which is what PostgreSQL's global OID counter
+having to say what kind it is, which is what PostgreSQL's global OID counter
 buys, and why ``pg_class`` and ``pg_index`` can refer to each other by bare id.
 """
 
@@ -81,7 +81,7 @@ _CHECKSUM: Final = struct.Struct("<I")
 
 #: What to tell someone holding a file this build cannot read.  There is no
 #: in-place upgrade path: every version so far moved where the catalog lives, so
-#: rewriting a file would mean carrying a reader for each old layout — worth it
+#: rewriting a file would mean carrying a reader for each old layout, worth it
 #: for a shipped database, not for a teaching one.
 _UPGRADE_HINTS: Final[dict[int, str]] = {
     1: (
@@ -136,7 +136,7 @@ class MetaPage:
     On open this becomes the *frozen* horizon: every id below it belonged to a
     transaction that has finished, and because a rollback here physically
     removes its work, every row still on disk came from one that **committed**.
-    That is ChenDB's entire commit log, in one number — see
+    That is ChenDB's entire commit log, in one number, see
     :mod:`engine.concurrency.snapshot` for why PostgreSQL needs `pg_xact` and a
     freeze job instead.
 
@@ -257,7 +257,7 @@ class MetaPage:
 # header: its LSN sits at offset 60 and its checksum at the end rather than the
 # start. Page 0 going through ``engine.storage.page.stamp_lsn`` by mistake
 # writes a u64 over ``format_version`` and ``page_size`` and a u32 over the
-# magic — which is caught immediately, but only because the magic is checked.
+# magic: which is caught immediately, but only because the magic is checked.
 
 _LSN_OFFSET: Final = 60
 _LSN: Final = struct.Struct("<Q")

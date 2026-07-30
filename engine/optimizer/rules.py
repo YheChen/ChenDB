@@ -11,7 +11,7 @@ because a rule that removes work removes it from every candidate at once.
                 └─ Scan(users)
 
 Each rule reports whether it fired, so ``EXPLAIN`` and the plan view can show
-which rewrites applied — a plan that is mysteriously fast is only useful if you
+which rewrites applied. A plan that is mysteriously fast is only useful if you
 can see why.
 
 Why so few
@@ -20,15 +20,15 @@ Four rules, because there is one table and no aggregation.  The two that matter
 most in a real optimiser are absent for structural reasons rather than
 oversight:
 
-* **Predicate pushdown** — moving a filter below a join so fewer rows are
+* **Predicate pushdown**: moving a filter below a join so fewer rows are
   joined. There are no joins, and a filter is already directly above the scan.
-* **Join reordering** — the single largest win in any real planner, and the
+* **Join reordering**: the single largest win in any real planner, and the
   reason cost models exist at all.
 
 What *is* here is chosen to be honestly useful: constant folding runs the
 arithmetic once instead of once per row, and the two eliminations remove whole
 operators from the pipeline. Milestone 3 already did the identity-projection
-one inline; moving it here is the point of having a rules module — it becomes
+one inline; moving it here is the point of having a rules module. It becomes
 inspectable and testable in isolation rather than being a conditional buried in
 plan construction.
 """
@@ -80,7 +80,7 @@ def apply_rules(plan: LogicalNode, rules: tuple[Rule, ...] | None = None) -> Rew
     """Run every rule once, in order, keeping only the ones that changed anything.
 
     One pass, not to a fixed point. A fixed-point loop is what a real optimiser
-    does — a rule can expose an opportunity for an earlier one — but it needs a
+    does (a rule can expose an opportunity for an earlier one) but it needs a
     termination argument, and with four rules that never re-enable each other
     the loop would be honesty theatre. Add it when a rule pair needs it.
     """
@@ -107,7 +107,7 @@ def fold_constants_in(expression: Expression) -> Expression:
     planner, which only recognises ``column <op> literal``.
 
     Folding is skipped when evaluation raises. ``1 / 0`` must fail when the
-    query *runs*, not when it is planned — a plan that cannot be produced is a
+    query *runs*, not when it is planned. A plan that cannot be produced is a
     worse error than a query that fails, and a folded division by zero in a
     branch that never executes would fail a query that should have succeeded.
     """
@@ -238,7 +238,7 @@ def _remove_trivial_filter(plan: LogicalNode) -> LogicalNode:
     """Drop ``WHERE TRUE``, which constant folding is what produces.
 
     ``WHERE FALSE`` is deliberately *not* turned into an empty scan. It could
-    be — that is a real rule real planners have — but it needs a physical
+    be (that is a real rule real planners have) but it needs a physical
     operator that produces nothing, and inventing one for a query nobody writes
     would be structure without a user.
     """
@@ -286,7 +286,7 @@ def _drop_identity_projection(plan: LogicalNode) -> LogicalNode:
 def _merge_adjacent_filters(plan: LogicalNode) -> LogicalNode:
     """Combine ``Filter(a)`` over ``Filter(b)`` into ``Filter(a AND b)``.
 
-    Nothing produces stacked filters today — the binder emits at most one — so
+    Nothing produces stacked filters today (the binder emits at most one) so
     this is the rule that fires least. It stays because it is the shape
     predicate pushdown produces the moment there is a join to push through, and
     because it is one place the "same rows out" contract is easy to see: AND is
@@ -343,7 +343,7 @@ def _descendants(plan: LogicalNode) -> list[LogicalNode]:
 
 
 #: In order. Constant folding runs first because it is what creates the
-#: ``WHERE TRUE`` the next rule removes — the one place order matters here.
+#: ``WHERE TRUE`` the next rule removes, the one place order matters here.
 RULES: tuple[Rule, ...] = (
     Rule(
         "fold_constants",

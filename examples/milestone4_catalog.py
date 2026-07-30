@@ -54,7 +54,7 @@ def main() -> int:
             print(f"   pages: {db.page_count}  (meta + one heap per system table)")
             print(f"   user tables: {db.table_names()}")
             print(f"   system: {[t.name for t in db.tables(include_system=True)]}")
-            print("\n   Their schemas are COMPILED IN, not stored — decoding a")
+            print("\n   Their schemas are COMPILED IN, not stored, decoding a")
             print("   chendb_tables row would otherwise need chendb_tables.")
             for name, schema in [
                 (TABLES_TABLE_NAME, TABLES_TABLE_SCHEMA),

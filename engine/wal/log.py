@@ -12,26 +12,26 @@ elsewhere and stated here because this module is where they are paid for:
    it has no record of, and cannot undo.
 2. **A commit is not a commit until its record is durable.** :meth:`commit`
    appends and ``fsync``s. That one write is what makes a finished transaction
-   distinguishable from an interrupted one after the power comes back — which
+   distinguishable from an interrupted one after the power comes back, which
    is precisely what Milestone 8 could not do.
 
 Everything else the WAL buys follows from rule 2. Because a commit is durable
 without the *pages* being durable, the pool no longer has to flush anything at
-commit time — the **no-force** policy, in ARIES vocabulary. And because rule 1
+commit time, the **no-force** policy, in ARIES vocabulary. And because rule 1
 makes an evicted uncommitted page recoverable, the pool may keep stealing. Steal
 and no-force together are the fastest pair, and they are the pair that needs a
 log; ChenDB has had steal since Milestone 7 and gets no-force here.
 
 Group commit
 ------------
-``fsync`` is the expensive call in a database — hundreds of microseconds on an
+``fsync`` is the expensive call in a database, hundreds of microseconds on an
 SSD. One per commit puts a hard ceiling on commit throughput that has nothing to
 do with how much work each transaction did. Real systems amortise it by letting
 concurrent committers share a flush. ChenDB has one writer, so there is nobody
 to share with and :attr:`syncs` counts one per commit; :meth:`set_sync_policy`
 exists so the benchmark can measure what the fsync actually costs by turning it
 off, and so the visualizer can show the difference. Turning it off is not a
-durability option — it is a measurement.
+durability option, it is a measurement.
 
 LSN and the base
 ----------------
@@ -131,7 +131,7 @@ class WriteAheadLog:
         self._buffer: list[bytes] = []
         #: Running total of :attr:`_buffer`, maintained rather than recomputed.
         #: ``next_lsn`` is read once per append and summing the buffer there
-        #: made a transaction of *n* records cost O(n squared) — 2,000 rows
+        #: made a transaction of *n* records cost O(n squared), 2,000 rows
         #: updated in one statement spent 8.5 of 9.8 seconds inside ``sum``.
         self._buffer_bytes = 0
         #: The last staged record, kept decoded so the next append can see
@@ -248,8 +248,8 @@ class WriteAheadLog:
     ) -> LogRecord:
         """Log a page change, coalescing with the record it supersedes.
 
-        Writing the same page twice in a row — which is what a bulk insert does,
-        row after row into the same heap page — produces two records of which
+        Writing the same page twice in a row (which is what a bulk insert does,
+        row after row into the same heap page) produces two records of which
         only the second matters: redo replays them in order and the first is
         immediately overwritten. So if the previous staged record is an update
         to this same page by this same transaction, this one **replaces** it
@@ -263,7 +263,7 @@ class WriteAheadLog:
         flushed is ever a coalescing candidate.
 
         ``after_image_for`` is a callback rather than bytes because the image
-        has to be stamped with the record's LSN — and which LSN that is depends
+        has to be stamped with the record's LSN, and which LSN that is depends
         on whether this call coalesces. The caller cannot know before asking.
 
         What this does **not** fix is the amplification across flushes. A
@@ -423,7 +423,7 @@ class WriteAheadLog:
         The order is the entire correctness argument, and it is the reverse of
         the write-ahead rule:
 
-        1. ``flush_pages()`` — every dirty page reaches the database file and is
+        1. ``flush_pages()``. Every dirty page reaches the database file and is
            ``fsync``ed. Provided by the pager, because the log has no idea what
            a page is.
         2. Append ``CHECKPOINT`` and ``fsync`` the log. Now the disk says the

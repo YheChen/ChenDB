@@ -97,7 +97,7 @@ class SlotDetail:
     decode_error: str | None = None
     xmin: int = 0
     """The transaction that created this version. Zero for a catalog row, which
-    is not versioned — a rolled-back ``CREATE TABLE`` is undone by restoring the
+    is not versioned. A rolled-back ``CREATE TABLE`` is undone by restoring the
     page, so the catalog never needs a version it could be rolled back to."""
     xmax: int = 0
     """The transaction that deleted it, or 0. A non-zero ``xmax`` on a slot that
@@ -336,7 +336,7 @@ def inspect_page(
 ) -> PageDetail:
     """Fully describe a page, decoding records when a ``schema`` is supplied.
 
-    Without a schema the slots still render as raw hex — which is precisely the
+    Without a schema the slots still render as raw hex, which is precisely the
     situation Milestone 4's catalog fixes, and worth being able to see.
     """
     raw = pager.read_raw(page_id)
@@ -365,7 +365,7 @@ def inspect_page(
         if info.is_live and schema is not None:
             try:
                 # The tuple header is stripped before the schema sees it, and
-                # reported separately — a row inspector that could not show
+                # reported separately: a row inspector that could not show
                 # xmin and xmax would be hiding the only thing that explains
                 # why a row is or is not in a result.
                 header = read_tuple_header(payload)

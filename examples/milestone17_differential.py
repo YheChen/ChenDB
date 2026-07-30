@@ -8,7 +8,7 @@ did not, why a test can agree with a bug, why a fuzzer for a database wants
 *narrow* value domains, the one question a generated query must be able to answer,
 and where the whole approach stops.
 
-Runs against the standard library only — `sqlite3` is in it, which is the quiet
+Runs against the standard library only, `sqlite3` is in it, which is the quiet
 reason this milestone was cheap. The generator itself lives under
 `tests/differential/` and is not imported here: this is the argument, not the
 harness.
@@ -100,7 +100,7 @@ nobody thought to write. Two were silent wrong answers.
     )
     print("""
     `Filter` asked `is_true(verdict)`, and `is_true` was `value is True`.
-    `10 is True` is False — so a value that was never a condition looked
+    `10 is True` is False, so a value that was never a condition looked
     exactly like a row that failed one. The same silence dropped every group
     from `HAVING SUM(v)`.
 """)
@@ -146,7 +146,7 @@ That comment is right. Python's truthiness must not leak into SQL, or
 one step short of the rule it wanted.
 
 Not passing and being *rejected* are the same thing to a filter. So the test
-asserted the bug — and it will have read as careful work to every reviewer,
+asserted the bug, and it will have read as careful work to every reviewer,
 because it is careful work. It just answered a slightly easier question than
 the one that mattered.
 
@@ -179,7 +179,7 @@ duplicate keys, multi-row groups, empty groups and unmatched rows the *common*
 case.
 
 The schema follows the same logic. The child's foreign key is drawn from three
-pools — keys the parent has, keys it does not, and NULL — so a single join has
+pools (keys the parent has, keys it does not, and NULL) so a single join has
 matched rows, orphans and unknown-keyed rows at once. That is the difference
 between exercising a join and merely calling one.
 """)
@@ -191,8 +191,8 @@ def the_hard_question(database: Database) -> None:
 Is its answer uniquely defined? If not, there is nothing to compare against.
 
 `ORDER BY` over a non-unique key leaves tied rows in an unspecified order, and
-both engines are entitled to their own. So the tester generates it anyway — it
-is where a NULL-ordering bug lives — and compares the three things that *are*
+both engines are entitled to their own. So the tester generates it anyway (it
+is where a NULL-ordering bug lives) and compares the three things that *are*
 defined: the sort-key sequence exactly, the rows as a multiset, and the rows
 within each run of equal keys.
 
@@ -205,22 +205,22 @@ carries a row across a tie boundary satisfies the other two and passes.
     print(f"      ChenDB   {ask_chendb(database, sql)}   <- NULLs last, like PostgreSQL")
     print(f"      SQLite   {ask_sqlite(sql)}   <- NULLs first")
     print("""
-The standard leaves it open. So SQLite is *asked* for ChenDB's order — every
-generated sort key carries NULLS LAST or NULLS FIRST on the SQLite side — rather
+The standard leaves it open. So SQLite is *asked* for ChenDB's order (every
+generated sort key carries NULLS LAST or NULLS FIRST on the SQLite side) rather
 than the generator giving up on nullable sort keys, which would have discarded
 the most interesting case in the suite.
 
 The rule that keeps this honest: a translation is allowed only when the
 difference is notation or representation, never when it is about what the query
 *means*. A compatibility layer that quietly repairs a disagreement is worse than
-no tester — it is a green tick over a bug.
+no tester, it is a green tick over a bug.
 """)
 
 
 def primary_keys(database: Database) -> None:
     rule("5. The gap that was already written down")
     print("""
-`PRIMARY KEY` was not enforced. Two rows with the same key, no complaint — and
+`PRIMARY KEY` was not enforced. Two rows with the same key, no complaint, and
 it is recorded as a known limitation in *two* milestone documents.
 
 What nobody had connected: unique indexes have existed and worked since
@@ -246,7 +246,7 @@ it. Creating a table now creates `<table>_pkey`.
 
 
 def main() -> int:
-    print("ChenDB — Milestone 17: differential testing against SQLite")
+    print("ChenDB, Milestone 17: differential testing against SQLite")
     print(f"sqlite3 {sqlite3.sqlite_version}, from the standard library")
 
     with tempfile.TemporaryDirectory() as workspace:
@@ -264,7 +264,7 @@ def main() -> int:
     rule("Where it stops")
     print("""
 - No outer joins in the generator. That is Milestone 18, and the schema was
-  built for it — the orphans and NULL keys are already there.
+  built for it, the orphans and NULL keys are already there.
 - No DISTINCT, subqueries, CASE, IN, LIKE or CAST: the generator can only emit
   what ChenDB parses, so the narrower grammar bounds what can be compared.
 - No concurrency and no crashes. The tester compares answers to one query at a

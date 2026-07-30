@@ -10,7 +10,7 @@ things:
 * there is exactly one place to look when a field renders wrong.
 
 Mappers take engine values and return API models.  They are pure functions with
-no I/O, so they can — and must — run *outside* any engine lock.
+no I/O, so they can (and must) run *outside* any engine lock.
 """
 
 from __future__ import annotations
@@ -671,7 +671,7 @@ def index_summary_to_api(
     """The counts are passed in because computing them costs page reads.
 
     Keeping the I/O in the router means every mapper stays a pure function that
-    can run outside the engine lock — the rule the whole module is built on.
+    can run outside the engine lock, the rule the whole module is built on.
     """
     return IndexSummary(
         index_id=info.index_id,
@@ -738,7 +738,7 @@ def buffer_pool_to_api(snapshot: PoolSnapshot, pager: PagerStats) -> BufferPoolR
     """The frame grid plus the counters, for the pool view.
 
     Takes a frozen snapshot rather than the live pool, so this runs after the
-    engine lock is released — the same rule every diagnostics mapper follows.
+    engine lock is released. The same rule every diagnostics mapper follows.
     """
     return BufferPoolResponse(
         capacity=snapshot.capacity,
@@ -782,7 +782,7 @@ def transaction_to_api(
     """One transaction.
 
     ``with_records`` is off by default because a finished transaction has no
-    records to give — the undo log is released the moment it commits or aborts —
+    records to give (the undo log is released the moment it commits or aborts)
     and because an active one can hold thousands of them. The list view asks for
     them on the active transaction only.
     """
@@ -853,7 +853,7 @@ def wal_record_to_api(record) -> WalRecordModel:
 def wal_to_api(log: WriteAheadLog | None, *, limit: int, size_bytes: int) -> WalResponse:
     """The log as a table, newest last.
 
-    Page images are dropped here and nowhere else — that is the point of having
+    Page images are dropped here and nowhere else, that is the point of having
     a mapper. A record can carry two whole pages, so a thousand of them is
     megabytes of base64 that no panel renders; the *sizes* go out instead,
     because the sizes are what the reader is looking at.
@@ -962,7 +962,7 @@ def locks_to_api(table) -> LockTableResponse:
 def sessions_to_api(manager, locks) -> SessionListResponse:
     """Every session, whether or not it currently has a transaction.
 
-    A session with nothing open still appears — a two-console view that made a
+    A session with nothing open still appears. A two-console view that made a
     console vanish between transactions would be unusable.
     """
     graph = locks.wait_for_graph()

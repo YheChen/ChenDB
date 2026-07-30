@@ -42,7 +42,7 @@ class TraceRecord:
     """Monotonic, gap-free within one tracer. Doubles as a pagination cursor."""
 
     timestamp_ns: int
-    """``time.time_ns()`` at emission — wall clock, comparable across processes."""
+    """``time.time_ns()`` at emission, wall clock, comparable across processes."""
 
     category: EventCategory
     level: TraceLevel

@@ -14,7 +14,7 @@
  * honest if the name changes when the bytes do. With a fixed name, a browser
  * that cached `pyodide.asm.wasm` would keep serving the old interpreter after
  * an upgrade, and a stale `chendb-engine.json` would run last release's engine
- * against this release's UI — a bug with no plausible symptom.
+ * against this release's UI, a bug with no plausible symptom.
  *
  * The manifest is the one thing fetched without caching, and it is a few dozen
  * bytes.
@@ -23,7 +23,7 @@
  * into *every* build and the HTTP build has no use for 15 MB of interpreter.
  * `vite.config.ts` swaps the two on `VITE_CHENDB_WASM`.
  *
- * **The engine is not vendored, copied or rewritten** — this reads the same
+ * **The engine is not vendored, copied or rewritten**: this reads the same
  * `engine/` the tests import, so the WASM build cannot drift from the real
  * one. If it is stale, it is stale by exactly one `npm run bundle:engine`.
  *
@@ -32,7 +32,7 @@
  * to fail in a way nobody can debug from a browser console.
  *
  * Pyodide is copied out of `node_modules` rather than loaded from a CDN, and so
- * are the wheels it needs — resolved as a dependency closure out of
+ * are the wheels it needs, resolved as a dependency closure out of
  * `pyodide-lock.json`, which is the same file Pyodide itself resolves against.
  * Anything not already cached in `node_modules` is fetched once, here, at build
  * time. The result is a demo that does not go down when somebody else's CDN
@@ -97,8 +97,8 @@ function version() {
  * Walked out of the lock file rather than listed by hand, because the list is
  * eighteen entries long, half of them are transitive, and a hand-written one
  * would be wrong the first time a dependency changed. Names in `depends` use
- * hyphens where the module uses underscores — `pydantic_core` is
- * `pydantic-core` here — so both spellings are tried.
+ * hyphens where the module uses underscores, `pydantic_core` is
+ * `pydantic-core` here, so both spellings are tried.
  */
 function resolveWheels(lock) {
   const wanted = new Set();
@@ -136,7 +136,7 @@ async function copyWheels(source, target, lock, pyodideVersion) {
   return { count: wheels.length, fetched, bytes };
 }
 
-/** `pyodide-314.0.3` — the runtime directory, named for what is in it. */
+/** `pyodide-314.0.3`. The runtime directory, named for what is in it. */
 function pyodideDirName() {
   return `pyodide-${pyodideVersion}`;
 }

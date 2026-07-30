@@ -5,7 +5,7 @@ to anyone's discipline. The one that matters most is
 :func:`test_the_registered_divergence_is_still_a_divergence`: it runs each entry's
 canonical example on both engines and asserts the recorded outcome pair *still*
 occurs. The day ChenDB stops raising on division by zero, that test goes red and
-the entry has to be deleted — which is exactly the mechanism the project's stale
+the entry has to be deleted, which is exactly the mechanism the project's stale
 CLI milestone string never had, and the reason it sat a release behind.
 """
 
@@ -68,7 +68,7 @@ def test_the_registered_divergence_is_still_a_divergence(entry: Entry, tmp_path:
     """The example still behaves the way the entry says it does.
 
     A ``RESTRICTION`` is excluded: it records something the generator refuses to
-    emit, so both engines succeed and there is no divergence to reproduce — the
+    emit, so both engines succeed and there is no divergence to reproduce. The
     entry's job is to document a coverage decision, not an outcome.
     """
     if entry.kind is Kind.RESTRICTION:
@@ -131,12 +131,12 @@ def test_every_entry_says_what_postgres_does(entry: Entry):
     """ChenDB follows PostgreSQL where it and SQLite differ.
 
     That is the project's stated tie-breaker, so an entry whose reason does not
-    mention PostgreSQL is one nobody has actually thought through — it has only
+    mention PostgreSQL is one nobody has actually thought through. It has only
     observed that the two disagree.
     """
     assert "PostgreSQL" in entry.reason, (
         f"{entry.rule}: say what PostgreSQL does, or why the comparison does not "
-        f"apply — otherwise the entry records an observation, not a decision"
+        f"apply, otherwise the entry records an observation, not a decision"
     )
 
 

@@ -1,4 +1,4 @@
-# Milestone 13 — Joins, aggregation, and a planner with a job
+# Milestone 13: Joins, aggregation, and a planner with a job
 
 Twelve milestones of `SELECT` meant *one table, filtered, projected*. Four
 operators, and a planner whose only decision was which of two ways to read a
@@ -6,7 +6,7 @@ single heap.
 
 That planner has been carrying a cost model calibrated by measurement since
 Milestone 6, an alternatives panel that shows what it rejected, and a
-`geqo_threshold` reference in a docstring — for a search space of size two.
+`geqo_threshold` reference in a docstring, for a search space of size two.
 This milestone gives it something to do:
 
 ```
@@ -56,7 +56,7 @@ unusual table.
 ## The decision that made the row layout easy
 
 An inner join is commutative, so the planner reorders freely (an outer one is not: Milestone 18). But a bound column
-index — `c.city` is index 2, `s.amount` is index 5 — was computed by the binder
+index (`c.city` is index 2, `s.amount` is index 5) was computed by the binder
 against the order the tables were *written* in. If the physical row's shape
 followed the *join* order, every index would have to be remapped at every level.
 
@@ -74,7 +74,7 @@ row is that full width, with the tables not yet joined left empty, and a scan
 places its own columns into its own slice. A join copies the right side's slices
 into the left side's row.
 
-By slice, and not by "take whichever side isn't `None`" — that shortcut is one
+By slice, and not by "take whichever side isn't `None`". That shortcut is one
 line shorter and wrong, because a genuine SQL NULL is indistinguishable from an
 empty slot and would be silently overwritten.
 
@@ -132,7 +132,7 @@ being told to. Rules that cannot be outvoted by evidence are how cost models rot
 ## Choosing an order
 
 System R's dynamic programme, over left-deep trees. Solve every one-table set,
-build every two-table set from those, and so on — the best plan for `{a,b,c}`
+build every two-table set from those, and so on. The best plan for `{a,b,c}`
 uses the best plan for one of its subsets, so each subset is solved once instead
 of re-derived down every branch that contains it.
 
@@ -157,11 +157,11 @@ that reason and most optimizers still do.
 
 > Milestone 18 note: this holds for an *inner* join only, which the section
 > below is careful to say. An outer join's `ON` is kept out of the pool
-> entirely — see `docs/milestone-18-outer-joins.md`.
+> entirely, see `docs/milestone-18-outer-joins.md`.
 
 For an inner join they mean the same thing: `a JOIN b ON p` and `a, b WHERE p`
 produce identical rows. So every conjunct from every `ON` and from the `WHERE`
-goes into one list, and each is placed wherever it belongs — which is how a
+goes into one list, and each is placed wherever it belongs, which is how a
 condition written as an `ON` can end up pushed down to a scan, and one written
 in the `WHERE` can become the join key.
 
@@ -178,7 +178,7 @@ PhysicalHashJoin  id = customer_id
 
 A conjunct naming one table is applied at that table's scan, where it shrinks
 the input to every join above it. Pushing it down can never be worse, which is
-exactly what makes it a **rewrite** and not a costed candidate — the textbook
+exactly what makes it a **rewrite** and not a costed candidate. The textbook
 distinction between the two, made concrete.
 
 It is also what makes an index reachable at all. A predicate left above a join
@@ -201,7 +201,7 @@ their entire input before producing a single row.
 
 That shows up as the point where *time to first row* stops being small, and it
 is the honest reason `LIMIT 3` over a `GROUP BY … ORDER BY` saves nothing at
-all — the plan shows the child's cost not falling.
+all, the plan shows the child's cost not falling.
 
 ### The grouped row
 
@@ -210,7 +210,7 @@ all — the plan shows the child's cost not falling.
 ```
 
 Every projection is rewritten by the binder to index into *that* row rather than
-the joined one — and rewritten to a plain `BoundColumnRef`, because that node
+the joined one, and rewritten to a plain `BoundColumnRef`, because that node
 already means "the value at index *i* of the row I was handed". The expression
 evaluator needed no change at all.
 
@@ -228,7 +228,7 @@ MySQL historically picked one of the values and called it a feature.
 
 | | |
 |---|---|
-| `COUNT(*)` vs `COUNT(x)` | rows against non-NULL values. Not the same question, and the AST keeps them apart — `argument` is `None` for the star form. |
+| `COUNT(*)` vs `COUNT(x)` | rows against non-NULL values. Not the same question, and the AST keeps them apart, `argument` is `None` for the star form. |
 | `SUM`/`AVG` ignore NULLs | `AVG([1, NULL, 3])` is 2, not 1.33. A NULL is a row that does not participate, not a zero. |
 | over no rows | `COUNT` is 0; everything else is NULL. Calling `SUM` zero would make an empty table and a table of zeros indistinguishable. |
 
@@ -239,7 +239,7 @@ at all, because there are as many groups as there are values and there are none.
 
 ### Sorting
 
-NULLs last ascending, first descending — PostgreSQL's default, the opposite of
+NULLs last ascending, first descending, PostgreSQL's default, the opposite of
 SQLite's. The standard leaves it implementation-defined, so there is no right
 answer; there is a wrong one, which is comparing NULL to a number and crashing.
 
@@ -254,7 +254,7 @@ def _sort_key(value):
 NULLs first by *not* having a special case rather than by having one.
 
 Several keys are applied least-significant-first in separate passes. Python's
-sort is stable, so the earlier keys survive — shorter and less error-prone than
+sort is stable, so the earlier keys survive, shorter and less error-prone than
 one comparator mixing ascending and descending.
 
 ---
@@ -263,7 +263,7 @@ one comparator mixing ascending and descending.
 
 With one table there was one decision, and a flat list of alternatives was
 right. With joins there are several independent ones, and a flat list reads as a
-contradiction — three entries all marked "chosen":
+contradiction, three entries all marked "chosen":
 
 ```
 Decided how to read customers: Sequential scan of customers
@@ -276,7 +276,7 @@ Considered what order to join in:
 
 So every `Alternative` now carries the *question* it answered, and both `EXPLAIN`
 and the visualizer's panel group by it. The two-table sub-plans are reported
-too, because that is where "join the small side first" is visible — labelled as
+too, because that is where "join the small side first" is visible, labelled as
 building blocks rather than rejected plans, which they are not.
 
 ---
@@ -284,7 +284,7 @@ building blocks rather than rejected plans, which they are not.
 ## The Milestone 12 guard caught something on its first outing
 
 `ORDER BY` became implemented, and the SQL editor's example labelled *"Not
-implemented yet"* — which was `SELECT * FROM users ORDER BY age` — started
+implemented yet"* (which was `SELECT * FROM users ORDER BY age`) started
 working:
 
 ```
@@ -300,7 +300,7 @@ is now `LEFT JOIN`, which is genuinely still refused.
 
 ## What it costs
 
-Measured on the data the example builds — 40 customers, 800 sales, 1,600 lines.
+Measured on the data the example builds, 40 customers, 800 sales, 1,600 lines.
 
 | | |
 |---|---|
@@ -321,8 +321,8 @@ miss = 1,822 ns):
 | tuple compare | 26 | 0.014 |
 | accumulate | 50 | 0.027 |
 
-A tuple comparison is a fifth of a predicate evaluation — it is a `memcmp` in C
-rather than a walk of an expression tree — which is why an `n log n` sort of
+A tuple comparison is a fifth of a predicate evaluation (it is a `memcmp` in C
+rather than a walk of an expression tree) which is why an `n log n` sort of
 5,000 rows costs less than the scan that produced them.
 
 ---
@@ -364,5 +364,5 @@ beside it.
 - **`DISTINCT`, subqueries, `UNION`, window functions, `COUNT(DISTINCT x)`.**
 - **`ORDER BY` over an expression not in the select list.** Sorting happens
   above the projection, so a sort key has to be something the projection
-  produced — by ordinal, by output name, or by repeating the expression.
+  produced, by ordinal, by output name, or by repeating the expression.
   PostgreSQL sorts below the projection with a wider intermediate row.

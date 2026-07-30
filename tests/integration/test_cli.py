@@ -1,7 +1,7 @@
 """The interactive shell, `python -m engine`.
 
 One of the three usage modes the project promises, and the only one with no
-tests until now — which is exactly why it broke silently in Milestone 4, when
+tests until now, which is exactly why it broke silently in Milestone 4, when
 every row-level method on ``Database`` gained a table parameter, and stayed
 broken through the whole of that milestone and into this one. The README
 documented output the code could not produce.
@@ -62,7 +62,7 @@ def test_sql_runs_and_prints_rows_and_a_plan(db_path: Path):
     assert "grace@example.com" in output
     assert "row(s)" in output
     # Which access path is chosen depends on the cost model, and on three rows a
-    # scan wins — that is the point of Milestone 6. What matters here is that a
+    # scan wins: that is the point of Milestone 6. What matters here is that a
     # plan is printed at all.
     assert "Project" in output
     assert "Scan" in output

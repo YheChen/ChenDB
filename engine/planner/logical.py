@@ -18,14 +18,14 @@ and what lets the cost model compare candidates that are, logically, the same
 query.
 
 PostgreSQL draws the same line between its ``Query`` (post-``transformStmt``)
-and its ``Plan``; SQLite is the interesting counter-example — it goes almost
+and its ``Plan``; SQLite is the interesting counter-example. It goes almost
 directly from parse tree to bytecode, and its query planner works by choosing
 loops and indexes rather than by rewriting a tree.
 
 Scope
 -----
 Three node types, because there are three operators.  No joins (one table per
-``FROM``), no aggregation, no sorting — so the tree is always a chain, and
+``FROM``), no aggregation, no sorting, so the tree is always a chain, and
 "plan enumeration" means choosing a leaf.  The moment a second table arrives,
 this is where join order lives, and join order is where the real combinatorics
 are: *n* tables have (2n-2)! / (n-1)! possible left-deep orders, which is why
@@ -64,7 +64,7 @@ class LogicalNode:
     """One node of a logical plan.
 
     Frozen, like the AST, so a rewrite rule returns a new tree rather than
-    mutating one someone else may be holding — which matters as soon as the
+    mutating one someone else may be holding, which matters as soon as the
     planner wants to show what a plan looked like *before* a rule fired.
     """
 
@@ -148,8 +148,8 @@ class LogicalJoin(LogicalNode):
     ``kind`` is the exception to "no order". An inner join is commutative, so
     ``a ⨝ b`` and ``b ⨝ a`` are the same logical plan and the enumerator is free
     to build both. An outer join is not: ``a ⟕ b`` and ``b ⟕ a`` are different
-    queries. So the kind is *logical* information — it changes which rows the node
-    denotes — and it is what tells the physical planner where it may not reorder.
+    queries. So the kind is *logical* information (it changes which rows the node
+    denotes) and it is what tells the physical planner where it may not reorder.
     """
 
     predicate: Expression

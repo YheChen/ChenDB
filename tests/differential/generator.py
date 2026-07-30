@@ -1,10 +1,10 @@
-"""Random schemas, rows and queries — inside the grammar both engines share.
+"""Random schemas, rows and queries, inside the grammar both engines share.
 
 A generator for a database is not a generator for a compiler. The instinct is to
 draw values from a wide domain, and it is exactly wrong: with integers from the
 whole 64-bit range no join ever matches, every ``GROUP BY`` makes one group per
 row, and a hundred thousand cases exercise one code path. The domains here are
-**deliberately tiny** — seven integers, five strings, and NULL — which makes
+**deliberately tiny** (seven integers, five strings, and NULL) which makes
 duplicate keys, multi-row groups, empty groups and unmatched rows the common case
 rather than something you wait for. Small domains also put int64 overflow out of
 reach by construction rather than by filtering it out afterwards.
@@ -13,19 +13,19 @@ The same reasoning shapes the schema. One table with random columns can never
 produce an interesting join, so :func:`schema` builds a parent and a child whose
 key column is drawn from *three* pools: keys the parent has, keys it has not, and
 NULL. That is what makes a single join have matched rows, unmatched rows and
-unknown-keyed rows at once — the difference between exercising an outer join and
+unknown-keyed rows at once. The difference between exercising an outer join and
 merely calling one.
 
 Two structural decisions do most of the work.
 
 **Every projection is aliased** ``c0``, ``c1``, … . One line, and it buys three
 things: the column *names* match between engines (unaliased they diverge
-systematically — ChenDB says ``avg(parent.p_int)``, SQLite says ``AVG(p_int)``),
+systematically, ChenDB says ``avg(parent.p_int)``, SQLite says ``AVG(p_int)``),
 ``ORDER BY c0`` is legal in both, and ChenDB's rule that a sort key must appear in
 the select list stops being a restriction to work around.
 
 **The expression builder is typed.** :func:`expression` is asked for a type and
-returns only that type. This is not tidiness — it is what keeps generated SQL
+returns only that type. This is not tidiness. It is what keeps generated SQL
 inside the *intersection* of the two dialects with no post-hoc filtering. ChenDB
 rejects ``s > 1``, ``s + 1`` and ``WHERE i`` where SQLite coerces all three, so an
 untyped builder would emit thousands of one-sided errors and drown the signal in
@@ -35,13 +35,13 @@ Determinism is the constraint everything bends around, because a query whose
 answer is not uniquely defined cannot be compared with anything:
 
 * ``ORDER BY`` over a non-unique key leaves tied rows in an unspecified order.
-  Generated freely anyway — that is where a NULL-ordering bug lives — because the
+  Generated freely anyway (that is where a NULL-ordering bug lives) because the
   oracle compares the *sort-key sequence* exactly and the rows as a multiset, both
   of which are defined. See :mod:`tests.differential.oracle`.
 * ``LIMIT`` without a total order picks an unspecified *subset*, which no
   comparison can rescue. So :attr:`Query.total_order` gates it, and that flag is
   computed from whether a provably unique non-null projection is among the sort
-  keys — not guessed.
+  keys, not guessed.
 * A bare column beside ``GROUP BY`` has no defined value. SQLite invents one;
   ChenDB refuses, correctly. Never generated.
 """
@@ -104,7 +104,7 @@ _FLOATS: Final = (-0.5, 0.0, 0.5, 1.5, 2.25)
 
 _BOOLEANS: Final = (True, False)
 
-#: How often a nullable column is NULL. A quarter — high, because NULL is where
+#: How often a nullable column is NULL. A quarter, high, because NULL is where
 #: three-valued logic lives and a realistic rate would make it rare.
 _NULL_RATE: Final = 0.25
 
@@ -232,7 +232,7 @@ def schema(source: random.Random) -> SchemaSpec:
 
     The primary key is *numbered*, not drawn. Two reasons: a drawn key from a
     seven-value domain would collide constantly, and a duplicate primary key is
-    an error in both engines — so uniqueness has to come from construction or
+    an error in both engines, so uniqueness has to come from construction or
     every case would diverge for the same uninteresting reason.
     """
     parent_columns = _columns(source, "p")
@@ -275,7 +275,7 @@ def schema(source: random.Random) -> SchemaSpec:
 def _indexed(source: random.Random, columns: tuple[ColumnSpec, ...]) -> tuple[str, ...]:
     """An index on one non-key column, a third of the time.
 
-    Not for speed — these tables have at most eight rows. It is so the *planner*
+    Not for speed, these tables have at most eight rows. It is so the *planner*
     has two access paths to choose between, which is the only way a generated
     query can catch an index scan and a sequential scan disagreeing. One did.
     """
@@ -305,7 +305,7 @@ class Expr:
     type: str
     nullable: bool = True
     unique: bool = False
-    """Provably distinct *within its own table* — a primary key."""
+    """Provably distinct *within its own table*, a primary key."""
     owner: str = ""
     """The alias it came from.
 
@@ -352,7 +352,7 @@ def expression(
 
     Typed all the way down, which is what keeps the output inside both dialects.
     An untyped builder emits ``'a' + 1`` and ``s > 1`` constantly; ChenDB refuses
-    both — correctly, and like PostgreSQL — so every one would be a one-sided
+    both (correctly, and like PostgreSQL) so every one would be a one-sided
     error rather than a comparison.
     """
     if want == BOOLEAN:
@@ -372,8 +372,8 @@ def expression(
     if operator == "%" and want == FLOAT:
         # SQLite's `%` casts both operands to integers first, so `7.5 % 2` is 1.0
         # there and 1.5 here (which is PostgreSQL's answer). A defensible
-        # difference in *meaning*, so it is fixed by not generating it — visible
-        # in the SQL — rather than by teaching the oracle to look away.
+        # difference in *meaning*, so it is fixed by not generating it (visible
+        # in the SQL) rather than by teaching the oracle to look away.
         operator = source.choice(("+", "-", "*"))
 
     if operator in ("/", "%"):
@@ -406,7 +406,7 @@ def _draw_pool(type_name: str) -> tuple[Any, ...]:
 
 
 def predicate(source: random.Random, sources: list[Source], depth: int = 0) -> Expr:
-    """A BOOLEAN expression — so ``WHERE`` is always a condition.
+    """A BOOLEAN expression, so ``WHERE`` is always a condition.
 
     ChenDB refuses a non-boolean ``WHERE`` since Milestone 17, which is what this
     guarantees by construction. It was a silent wrong answer before that: ``5 is
@@ -435,7 +435,7 @@ def predicate(source: random.Random, sources: list[Source], depth: int = 0) -> E
         inner = predicate(source, sources, depth + 1)
         return Expr(f"(NOT {inner.sql})", BOOLEAN)
 
-    # A comparison, both sides the same type — the only kind either engine will
+    # A comparison, both sides the same type: the only kind either engine will
     # take without a cast.
     kind = source.choice(_TYPES)
     typed = _columns_of(sources, kind)
@@ -458,7 +458,7 @@ def predicate(source: random.Random, sources: list[Source], depth: int = 0) -> E
 def aggregate(source: random.Random, sources: list[Source]) -> Expr:
     """``COUNT(*)``, or a function over a column of a type it accepts.
 
-    ``SUM`` and ``AVG`` take only numbers — ChenDB refuses the rest since
+    ``SUM`` and ``AVG`` take only numbers, ChenDB refuses the rest since
     Milestone 17, having previously returned ``'abd'`` for ``SUM`` over TEXT and
     leaked a raw Python ``TypeError`` out of ``AVG``.
     """
@@ -494,8 +494,8 @@ class Query:
 
     ``sort_key_indices`` and ``total_order`` are not decoration: they are the only
     reason a query whose ``ORDER BY`` has ties can be compared at all. The
-    generator *knows* what it built — the sort keys were chosen from the aliased
-    projections — where the oracle would have to guess.
+    generator *knows* what it built (the sort keys were chosen from the aliased
+    projections) where the oracle would have to guess.
     """
 
     sql: str
@@ -573,8 +573,8 @@ def _named(entry: Source) -> str:
 
 
 #: Query shapes and their weights. Weighting alone is a hope, so the corners
-#: inside each shape are drawn deliberately as well — a nullable GROUP BY key most
-#: of the time, a HALF of HAVINGs that reject every group — and a coverage floor
+#: inside each shape are drawn deliberately as well, a nullable GROUP BY key most
+#: of the time, a HALF of HAVINGs that reject every group, and a coverage floor
 #: in ``test_harness.py`` fails the build if any named corner stops appearing.
 _SHAPES: Final = (
     ("scan", 28),
@@ -638,7 +638,7 @@ def _sources_for(source: random.Random, spec: SchemaSpec, shape: str) -> list[So
 
 
 #: Join flavours and their weights. ``INNER`` stays the plurality because it is
-#: still the common case, but the three outer kinds together are the majority —
+#: still the common case, but the three outer kinds together are the majority,
 #: they are newer, they have four distinct code paths between them (preserve the
 #: build side, preserve the probe side, both, and a nested loop for each), and
 #: the schema was built to make them interesting.
@@ -649,7 +649,7 @@ def _join_clause(source: random.Random, builder: _Select) -> str:
     """``[LEFT|RIGHT|FULL] JOIN b ON …``, equijoin most of the time.
 
     An equality is what lets the planner pick a hash join, so it has to be the
-    common case or the hash-join path goes untested — and for an outer join the
+    common case or the hash-join path goes untested, and for an outer join the
     hash path is the one with real state in it, since preserving the build side
     means tracking which build rows were ever matched.
 
@@ -682,7 +682,7 @@ def _join_clause(source: random.Random, builder: _Select) -> str:
             # separates an outer join from an inner one with a WHERE: it must
             # restrict which rows match, never which rows survive. Putting it in
             # the ON was the whole shape of the planner bug this milestone had to
-            # avoid — ON conditions were pooled with the WHERE and pushed down.
+            # avoid: ON conditions were pooled with the WHERE and pushed down.
             numeric = [
                 column
                 for column in right.table.columns
@@ -771,8 +771,8 @@ def _ordering(builder: _Select) -> tuple[bool, tuple[int, ...]]:
 
     Getting this wrong is a false accusation, and it was one: the first version
     asked only whether *some* sort key was a unique column, so a self-join ordered
-    by ``b.pid`` counted as total. It is not — the join emits one row per matching
-    ``a``, so every ``b.pid`` repeats — and the tester duly reported the two
+    by ``b.pid`` counted as total. It is not (the join emits one row per matching
+    ``a``, so every ``b.pid`` repeats) and the tester duly reported the two
     engines' equally legal tie orders as a divergence. A total order over a join
     needs a unique non-null key **from every source in the FROM**.
 

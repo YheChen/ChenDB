@@ -1,7 +1,7 @@
 """The system catalog: what tables and indexes exist, and where they live.
 
     system.py    the system tables' own schemas, compiled in (the bootstrap)
-    catalog.py   Catalog — create, look up and list tables and indexes
+    catalog.py   Catalog, create, look up and list tables and indexes
 
 Milestone 4 replaced Milestone 1's single JSON schema page: a database can hold
 many tables, and adding one is an ``INSERT`` into ``chendb_tables`` rather than a

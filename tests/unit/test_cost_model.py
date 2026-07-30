@@ -2,7 +2,7 @@
 
 The point of the whole milestone is one behaviour: **the planner picks the
 cheaper access path**, where "cheaper" is measured, not assumed.  So the tests
-that matter most are the crossover tests at the bottom — they pin down where the
+that matter most are the crossover tests at the bottom. They pin down where the
 index stops paying, and they fail if a change to the constants moves it.
 
 Everything above them is the machinery that crossover depends on: statistics
@@ -64,7 +64,7 @@ def db(tmp_path):
 
 
 def selectivity_of(db: Database, where: str) -> float:
-    """Estimate as the planner would — *after* the rewrite rules have run.
+    """Estimate as the planner would, *after* the rewrite rules have run.
 
     Folding first is not incidental. ``-100`` parses as a unary negation of
     ``100``, not as a negative literal, so ``column < -100`` does not match the
@@ -134,7 +134,7 @@ def test_writing_marks_the_statistics_stale(db: Database):
 def test_stale_statistics_are_still_used(db: Database):
     # Deliberate: a slightly stale estimate is far more useful than none, and
     # recomputing on every insert would cost a full scan per row. The staleness
-    # is reported instead — see the EXPLAIN output and the API.
+    # is reported instead: see the EXPLAIN output and the API.
     db.statistics.gather("t")
     before = db.statistics.for_table("t").row_count
     db.insert_many("t", [(100_000 + n, 5, "x") for n in range(50)])
@@ -188,7 +188,7 @@ def test_a_bound_outside_the_observed_range_saturates(db: Database):
 def test_a_negative_literal_is_only_usable_after_folding(db: Database):
     # `-100` is UnaryOp(NEGATE, Literal(100)), which matches neither the
     # estimator's `column <op> literal` shape nor the index planner's. Constant
-    # folding is what makes it one — so the rule is load-bearing for estimates,
+    # folding is what makes it one: so the rule is load-bearing for estimates,
     # not just a micro-optimisation.
     statement = parse_statement("SELECT id FROM t WHERE bucket < -100")
     bound = bind_select(statement, db.catalog)
@@ -267,7 +267,7 @@ def test_a_sequential_scan_costs_its_pages_and_its_rows(db: Database):
 def test_an_index_scan_is_dominated_by_its_heap_fetches(db: Database):
     # One heap read per matching row. Since Milestone 7 most of those are pool
     # hits rather than misses, so the marginal cost of a match sits between the
-    # two — much closer to a hit once the scan is wide enough to have touched
+    # two: much closer to a hit once the scan is wide enough to have touched
     # every page already.
     stats = db.statistics.for_table("t")
     small = index_scan_cost(stats, matching_rows=10, height=3, entries_per_leaf=200)
@@ -290,7 +290,7 @@ def test_the_pool_is_visible_in_the_estimate(db: Database):
 
 def test_distinct_pages_saturates_at_the_page_count(db: Database):
     # Fetching far more rows than there are pages cannot touch more pages than
-    # exist — the estimate has to know that or a wide scan is nonsense.
+    # exist: the estimate has to know that or a wide scan is nonsense.
     stats = db.statistics.for_table("t")
     assert distinct_pages_touched(10 * stats.row_count, stats.page_count) == (
         pytest.approx(stats.page_count)
@@ -349,7 +349,7 @@ def test_a_predicate_on_an_unindexed_column_scans(db: Database):
 
 def test_not_equal_never_uses_an_index(db: Database):
     # An index cannot bound `<>`: it would read the whole tree and then do a
-    # random heap read per row — strictly worse than a scan, every time.
+    # random heap read per row: strictly worse than a scan, every time.
     assert chosen_path(db, "SELECT id FROM t WHERE bucket <> 5") == "PhysicalSeqScan"
 
 

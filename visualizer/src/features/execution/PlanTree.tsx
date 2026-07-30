@@ -5,7 +5,7 @@
  *     └─ Filter   (age >= 18)             in 4  out 2   rejected 2
  *        └─ SeqScan   table=users         out 4
  *
- * Drawn root-first, which is how the data *flows* — rows come out of the top —
+ * Drawn root-first, which is how the data *flows* (rows come out of the top)
  * even though execution *pulls* downward. That is the volcano model's one
  * genuinely confusing property, so the arrows are labelled explicitly.
  *
@@ -15,7 +15,7 @@
  * From Milestone 6 each row also carries what the planner *expected*. The gap
  * between estimated and actual rows is where a slow query's explanation almost
  * always is, so it is shown inline and flagged once it exceeds 2x in either
- * direction — the same reason PostgreSQL's `EXPLAIN ANALYZE` prints
+ * direction. The same reason PostgreSQL's `EXPLAIN ANALYZE` prints
  * `rows=100 ... actual rows=90000` on one line.
  */
 
@@ -196,7 +196,7 @@ function PlanRow({
  * The planner's estimate beside what happened.
  *
  * Silent when there is no estimate (a plan built before Milestone 6, or an
- * execution that never ran) and quiet when the estimate was close — a badge on
+ * execution that never ran) and quiet when the estimate was close, a badge on
  * every row would train you to ignore it.
  */
 function EstimateBadge({ node }: { node: OperatorNodeModel }) {
@@ -239,7 +239,7 @@ export function AlternativesPanel({ plan }: { plan: PlanModel | null | undefined
 
   // Grouped by which question each answered. A query over one table makes one
   // decision and the grouping is invisible; a join makes several, and a flat
-  // list of them reads as a contradiction — three entries marked "chosen".
+  // list of them reads as a contradiction, three entries marked "chosen".
   const groups = new Map<string, PlanAlternativeModel[]>();
   for (const alternative of plan.alternatives) {
     const key = alternative.decision || "access path";

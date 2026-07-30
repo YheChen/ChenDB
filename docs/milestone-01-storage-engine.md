@@ -1,11 +1,11 @@
-# Milestone 1 — Page-based storage and the storage inspector
+# Milestone 1: Page-based storage and the storage inspector
 
 **Status: complete.** Engine version 0.1.0.
 
 ## Goal
 
 Make a database file that is real: fixed-size pages, a slotted page layout,
-binary records, a heap, and a metadata page — then prove it by inserting rows,
+binary records, a heap, and a metadata page, then prove it by inserting rows,
 restarting the process, and inspecting the persisted bytes in the visualizer.
 
 ---
@@ -16,9 +16,9 @@ restarting the process, and inspecting the persisted bytes in the visualizer.
 
 | Module | Responsibility |
 |---|---|
-| `storage/constants.py` | page sizes, page types, sentinels — the format's vocabulary |
+| `storage/constants.py` | page sizes, page types, sentinels, the format's vocabulary |
 | `storage/page.py` | slotted page: insert, read, delete, compact, checksum, validate |
-| `storage/meta.py` | page 0 — magic, version, page count, free list, root pointers |
+| `storage/meta.py` | page 0, magic, version, page count, free list, root pointers |
 | `storage/pager.py` | page id → file offset; allocation; free list; `fsync`; I/O stats |
 | `storage/heap.py` | `RecordId`, a chain of pages holding one table |
 | `storage/inspect.py` | read-only views: page summaries, header fields, slots, hexdump |
@@ -27,7 +27,7 @@ restarting the process, and inspecting the persisted bytes in the visualizer.
 | `serialization/record.py` | row ⇄ bytes with a null bitmap; per-field layout |
 | `diagnostics/` | `TraceLevel`, 11 event types, four sinks, the tracer |
 | `database.py` | the `Database` facade |
-| `__main__.py` | `python -m engine` — an interactive storage explorer |
+| `__main__.py` | `python -m engine`, an interactive storage explorer |
 
 ### Server (`engine/server/`)
 
@@ -57,7 +57,7 @@ python -m engine demo.chendb \
   -c ".insert 1 | ada@example.com | 36" \
   -c ".insert 2 | alan@example.com | NULL"
 
-# 2. The process is gone. Start a new one — the rows are still there.
+# 2. The process is gone. Start a new one: the rows are still there.
 python -m engine demo.chendb -c ".scan" -c ".pages"
 ```
 
@@ -87,7 +87,7 @@ slot directory
         age              INTEGER  NULL         NULL
 ```
 
-`04` is the null bitmap — bit 2 set, so `age` is NULL and occupies no bytes.
+`04` is the null bitmap, bit 2 set, so `age` is NULL and occupies no bytes.
 `02 00 …` is the int64. `0b 00 00 00` is the text length, 11, followed by
 `Alan Turing`. Nothing is hidden.
 
@@ -115,7 +115,7 @@ compaction possible and what lets an index store physical addresses. This is
 PostgreSQL's `PageHeaderData` + `ItemIdData` almost exactly.
 
 **A null bitmap.** Storing "absent" in one bit rather than a sentinel value
-keeps NULL out of the value domain — `NULL` and `0` are genuinely different,
+keeps NULL out of the value domain, `NULL` and `0` are genuinely different,
 and three-valued logic depends on it. PostgreSQL and SQLite both do this;
 PostgreSQL additionally omits the bitmap when a tuple has no NULLs.
 
@@ -155,7 +155,7 @@ them syscalls today.
 
 ## Measured
 
-`python benchmarks/trace_overhead.py` — 2000 rows, two scans, 100 point reads,
+`python benchmarks/trace_overhead.py`: 2000 rows, two scans, 100 point reads,
 40 deletes. Python 3.14, Apple silicon, APFS on NVMe.
 
 | Trace level | Time | vs `OFF` | Events |
@@ -253,22 +253,22 @@ Each is deliberate and has a milestone attached.
 
 | Limitation | Resolved by |
 |---|---|
-| One table per database file | M4 — the catalog |
-| Tables defined structurally, not with `CREATE TABLE` | M2 — the parser |
-| Schema stored as JSON on a chain of pages | M4 — real system tables |
-| Insert only tries the tail page; earlier free space is stranded | M7 — a free space map |
+| One table per database file | M4 (the catalog |
+| Tables defined structurally, not with `CREATE TABLE` | M2) the parser |
+| Schema stored as JSON on a chain of pages | M4, real system tables |
+| Insert only tries the tail page; earlier free space is stranded | M7, a free space map |
 | Records larger than one page fail | overflow pages (unscheduled) |
-| Every page read is a syscall | M7 — the buffer pool |
+| Every page read is a syscall | M7, the buffer pool |
 | `count()` is a full scan | unscheduled; PostgreSQL has the same behaviour |
 | No transactions, no isolation, no rollback | M8 |
-| A crash between write and `fsync` loses recent rows | M9 — the WAL |
-| A torn page is detected but cannot be repaired | M9 — redo |
+| A crash between write and `fsync` loses recent rows | M9 (the WAL |
+| A torn page is detected but cannot be repaired | M9) redo |
 | One writer; no concurrency control | M10 |
 | O(k) to reach column *k* of a row | unscheduled; needs cached offsets |
 
 ---
 
-## Next: Milestone 2 — SQL parser and AST explorer
+## Next: Milestone 2, SQL parser and AST explorer
 
 **Engine.** Tokenizer, recursive-descent parser, AST, and `CREATE TABLE`,
 `INSERT`, `SELECT` with basic `WHERE`. Events: `TokenEvent`,

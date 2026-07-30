@@ -5,8 +5,8 @@ there is no executor: a query endpoint that returned an AST instead of rows
 would be worse than no query endpoint.  Execution arrives in Milestone 3.
 
 Why this is nested under a database when parsing needs no database: it is
-purely syntactic today, but Milestone 4 adds *binding* — resolving table and
-column names against the catalog — which does. Nesting now avoids moving the
+purely syntactic today, but Milestone 4 adds *binding* (resolving table and
+column names against the catalog) which does. Nesting now avoids moving the
 endpoint later and breaking every client.
 """
 

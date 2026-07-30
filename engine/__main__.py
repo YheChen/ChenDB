@@ -1,4 +1,4 @@
-"""``python -m engine`` — an interactive storage explorer.
+"""``python -m engine``, an interactive storage explorer.
 
 Milestone 1 has no SQL parser, so this shell speaks dot-commands instead.  It
 is a real client against a real file: everything it prints is read back from

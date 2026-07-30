@@ -6,7 +6,7 @@ these for, and a client that has the adjacency can find one; a client given
 pairs has to rebuild it first.
 
 Sessions exist because HTTP has none. Two browser consoles talking to one
-database need two transactions, and a transaction belongs to whoever opened it —
+database need two transactions, and a transaction belongs to whoever opened it,
 so the session id is in the path rather than in a cookie, which keeps it visible
 in the request log and in the explorer's own URL.
 """

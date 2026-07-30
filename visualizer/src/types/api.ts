@@ -246,7 +246,7 @@ export interface FieldLayoutModel {
  * 
  * There is no ``pin_count``. ChenDB's pool copies out of a frame rather than
  * lending it, so nothing can be holding one when it is reused and a pin count
- * would always read zero — a number that never prevents anything. See
+ * would always read zero, a number that never prevents anything. See
  * ``engine/storage/buffer.py`` for when that stops being true.
  */
 export interface FrameModel {
@@ -301,7 +301,7 @@ export interface IndexListResponse {
  * 
  * ``path`` is what the tree view highlights: the page ids from root to leaf.
  * ``pages_visited`` can exceed its length when duplicates spill across leaves
- * and the search has to step right — which is exactly the case worth seeing.
+ * and the search has to step right, which is exactly the case worth seeing.
  */
 export interface IndexSearchResponse {
   index_name: string;
@@ -391,7 +391,7 @@ export interface LockTableResponse {
  * Estimated and actual sit side by side because the gap between them is the
  * single most useful thing a plan view can show. A plan that is slow is almost
  * always a plan whose row estimate was wrong, and no amount of staring at the
- * chosen operators reveals that — only the comparison does.
+ * chosen operators reveals that, only the comparison does.
  */
 export interface OperatorNodeModel {
   operator_id: string;
@@ -496,7 +496,7 @@ export interface ParseRequest {
 }
 
 /**
- * Tokens, AST and error together — all three are partial-result friendly.
+ * Tokens, AST and error together, all three are partial-result friendly.
  * 
  * ``tokens`` can be non-empty while ``statements`` is empty and ``error`` is
  * set: that is a half-typed query, the normal state of one being written.

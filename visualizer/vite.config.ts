@@ -8,7 +8,7 @@ import tailwindcss from "@tailwindcss/vite";
  *
  * The default one is a pure client of the engine's HTTP + WebSocket API, and
  * in development it proxies /api to the Python server so the browser sees a
- * single origin — which keeps cookies, CORS and WebSocket upgrades simple.
+ * single origin, which keeps cookies, CORS and WebSocket upgrades simple.
  *
  * `VITE_CHENDB_WASM=1` builds the one that carries the engine with it. The
  * only difference here is where static assets come from: `wasm-public/` holds

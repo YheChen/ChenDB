@@ -24,7 +24,7 @@ Milestone 6.
 
 ``CREATE TABLE``, ``CREATE INDEX`` and ``INSERT`` are not planned at all. They
 have no operator tree; they are direct calls into the storage engine. Modelling a
-single-row insert as an operator pipeline would be structure for its own sake —
+single-row insert as an operator pipeline would be structure for its own sake,
 though the ``INSERT ... SELECT`` limitation is exactly what would justify it
 later.
 """
@@ -210,7 +210,7 @@ class QueryResult:
 def build_logical_plan(bound: BoundSelect) -> LogicalNode:
     """Turn a bound ``SELECT`` into a logical plan.
 
-    Straight structural translation with no decisions in it — every decision
+    Straight structural translation with no decisions in it. Every decision
     belongs to a rewrite rule or to the cost model, where it can be named and
     inspected. Milestone 3 dropped an identity projection here; that is now
     :mod:`engine.optimizer.rules`.
@@ -292,7 +292,7 @@ def build_row_source(
     """Scan, optionally filter, project. The shape every statement starts from.
 
     ``UPDATE`` and ``DELETE`` reach this too, because "which rows" is the same
-    question whatever you then do with them — and it is the only question in
+    question whatever you then do with them, and it is the only question in
     either statement that has more than one answer. ``DELETE FROM t WHERE id =
     5`` on an indexed ``id`` should descend the tree; without this the planner
     would never see it, and a single-row delete would read the whole table.
@@ -392,7 +392,7 @@ def materialise(
     """Turn a costed physical plan into a running operator tree.
 
     Kept separate from planning so a plan can be built, compared and printed
-    without opening an index or a heap — which is what lets ``EXPLAIN`` cost a
+    without opening an index or a heap, which is what lets ``EXPLAIN`` cost a
     query it never runs.
     """
     match node:
@@ -771,7 +771,7 @@ def _execute_analyze(statement: AnalyzeStatement, database: Database) -> QueryRe
 
 
 #: The columns EXPLAIN returns. Rows rather than a bespoke response shape, so
-#: every client that can already display a SELECT can display an EXPLAIN —
+#: every client that can already display a SELECT can display an EXPLAIN,
 #: which is exactly why PostgreSQL's EXPLAIN returns a one-column result set.
 _EXPLAIN_COLUMNS: tuple[ResultColumn, ...] = (ResultColumn("QUERY PLAN", None),)
 
@@ -785,7 +785,7 @@ def _execute_explain(
     """Plan the inner statement, optionally run it, and return the plan as rows.
 
     ``UPDATE`` and ``DELETE`` are explainable because the interesting half of
-    each — finding the rows — *is* a plan, and it is the half where a missing
+    each (finding the rows) *is* a plan, and it is the half where a missing
     index shows up. What comes after it is not planned and gets one honest line
     saying so, rather than a fabricated node with an invented cost.
     """
@@ -833,7 +833,7 @@ def _execute_explain(
     if statement.analyze:
         # EXPLAIN ANALYZE runs the query. The row counts it reports are the real
         # ones, which is the only way to see where an estimate went wrong. For a
-        # DELETE or UPDATE that means the rows really are changed — PostgreSQL
+        # DELETE or UPDATE that means the rows really are changed: PostgreSQL
         # behaves the same way, and the usual advice applies: wrap it in a
         # transaction you intend to roll back.
         match inner:
@@ -870,7 +870,7 @@ def _explain_lines(
     """The plan as text, in the order PostgreSQL prints it.
 
     ``prologue`` and ``epilogue`` bracket the tree for a statement whose plan is
-    only part of the work — the ``Delete on users`` header and the line saying
+    only part of the work. The ``Delete on users`` header and the line saying
     what happens to each row it finds.
     """
     lines = describe_physical(planned.root).split("\n")
@@ -900,7 +900,7 @@ def _explain_lines(
     if len(planned.alternatives) > 1:
         # Grouped by which question each was an answer to. A join has several
         # independent decisions, and a flat list of them reads as a
-        # contradiction — three entries marked "chosen" for what looks like one
+        # contradiction: three entries marked "chosen" for what looks like one
         # choice.
         for decision in dict.fromkeys(item.decision for item in planned.alternatives):
             considered = [
@@ -987,7 +987,7 @@ def _locate_rows(
 ) -> _Located:
     """Run the row-locating plan to completion, *before* changing anything.
 
-    Draining the scan first is not laziness deferred — it is required, and the
+    Draining the scan first is not laziness deferred, it is required, and the
     reason has a name. Halloween::
 
         UPDATE salaries SET pay = pay * 1.1 WHERE pay < 50000
@@ -1006,7 +1006,7 @@ def _locate_rows(
     ``Eager Spool`` into the plan, which is this function with an operator around
     it.
 
-    The cost is memory proportional to the rows matched — the ceiling on which
+    The cost is memory proportional to the rows matched. The ceiling on which
     is ``context.max_rows``, so a statement cannot buffer the whole table.
     """
     if planned is None:
@@ -1160,7 +1160,7 @@ def _execute_select(
     limit = context.max_rows if context.max_rows is not None else DEFAULT_MAX_ROWS
 
     try:
-        # Everything above this point — binding, statistics, costing — is not
+        # Everything above this point (binding, statistics, costing) is not
         # steppable. Arming here is what makes "step" mean "advance the query"
         # rather than "advance the planner's scan of chendb_tables".
         context.controller.arm()
@@ -1212,7 +1212,7 @@ def execute_script(
     planner_options: PlannerOptions = DEFAULT_PLANNER_OPTIONS,
     atomic: bool = True,
 ) -> list[QueryResult]:
-    """Parse and run every statement in ``sql``, in order — all or nothing.
+    """Parse and run every statement in ``sql``, in order, all or nothing.
 
     Since Milestone 8 a script that fails half-way leaves the database as it
     was. The whole script runs in one implicit transaction, committed when the
@@ -1227,7 +1227,7 @@ def execute_script(
 
     A script that manages transactions itself still works, and takes ownership
     when it does. ``BEGIN`` adopts the implicit transaction rather than nesting,
-    and from that point the script's own ``COMMIT`` ends it — a script of just
+    and from that point the script's own ``COMMIT`` ends it. A script of just
     ``BEGIN;`` leaves a transaction open, which is what PostgreSQL does with the
     same text in one simple-query message. A ``COMMIT`` part-way through ends
     the transaction, so the statements after it run in a fresh implicit one.
@@ -1251,7 +1251,7 @@ def execute_script(
             for statement in statements
         ]
 
-    # This *session's* transaction, not the default session's — the two
+    # This *session's* transaction, not the default session's: the two
     # differ the moment a client passes ``?session=``, and asking the wrong one
     # leaves an implicit transaction open that nothing ever commits.
     outer = database.active_transaction
@@ -1279,7 +1279,7 @@ def execute_script(
 
     # Auto-commit only what is still *ours*. A ``BEGIN`` in the script turned
     # the implicit transaction explicit, which means the client has taken
-    # ownership and is going to send its own COMMIT — possibly in a later
+    # ownership and is going to send its own COMMIT: possibly in a later
     # request. Committing it here would make a lone ``BEGIN;`` a no-op.
     active = database.active_transaction
     if outer is None and active is not None and active.implicit:

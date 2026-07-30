@@ -28,7 +28,7 @@ const DEBOUNCE_MS = 250;
  * The smallest node whose span contains `offset`.
  *
  * Ties are broken by span length, so a leaf wins over its ancestors. Nodes with
- * an empty span are skipped — they cannot meaningfully contain a cursor.
+ * an empty span are skipped, they cannot meaningfully contain a cursor.
  */
 function innermostNodeAt(
   nodes: AstNodeModel[],

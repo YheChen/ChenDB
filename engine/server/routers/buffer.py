@@ -7,7 +7,7 @@ that helped. The frame list includes free frames, so the grid has a fixed shape
 and a page appearing in a slot is visible as a change rather than as a reflow.
 
 The snapshot is taken under the engine lock and serialised outside it, like
-every other diagnostics view — a browser polling the pool must never be able to
+every other diagnostics view. A browser polling the pool must never be able to
 stall a query.
 """
 
