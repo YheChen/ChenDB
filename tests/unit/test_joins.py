@@ -498,3 +498,244 @@ def test_a_pushed_predicate_is_costed_against_its_own_tables_statistics(db: Data
     assert any(isinstance(node, PhysicalHashJoin) for node in nodes), (
         "and a collapsed estimate is what makes a nested loop look cheap"
     )
+
+
+# --------------------------------------------------------------------------
+# Outer joins (Milestone 18)
+# --------------------------------------------------------------------------
+
+# The fixture is built for this. `users` has grace, who has orders; `orders` has
+# an orphan (user 99) and a NULL key — so a LEFT join has something to preserve,
+# a RIGHT join has something else, and neither is testing an empty set.
+
+
+def test_a_left_join_keeps_a_user_with_no_orders(db: Database):
+    db.insert("users", (4, "edsger", "amsterdam"))
+    result = rows(
+        db,
+        "SELECT u.name, o.total FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "ORDER BY u.name, o.total;",
+    )
+    assert ("edsger", None) in result
+    assert sum(1 for row in result if row[0] == "edsger") == 1, "exactly one NULL row"
+    assert ("ada", 100) in result, "and the matched rows are unchanged"
+
+
+def test_a_left_join_null_extends_every_column_of_the_missing_side(db: Database):
+    db.insert("users", (4, "edsger", "amsterdam"))
+    (row,) = rows(
+        db,
+        "SELECT u.name, o.id, o.user_id, o.total FROM users u "
+        "LEFT JOIN orders o ON u.id = o.user_id WHERE u.id = 4;",
+    )
+    assert row == ("edsger", None, None, None), "not just the key — the whole side"
+
+
+def test_a_right_join_keeps_the_orphan_and_the_null_key(db: Database):
+    result = rows(
+        db,
+        "SELECT u.name, o.id FROM users u RIGHT JOIN orders o ON u.id = o.user_id "
+        "ORDER BY o.id;",
+    )
+    assert (None, 15) in result, "order 15 belongs to user 99, who does not exist"
+    assert (None, 16) in result, "order 16 has a NULL key, so it can never match"
+    assert len(result) == len(ORDER_ROWS)
+
+
+def test_a_full_join_keeps_both_sides(db: Database):
+    db.insert("users", (4, "edsger", "amsterdam"))
+    result = rows(
+        db,
+        "SELECT u.id, o.id FROM users u FULL JOIN orders o ON u.id = o.user_id;",
+    )
+    assert (4, None) in result, "the user with no orders"
+    assert (None, 15) in result, "the order with no user"
+    assert (None, 16) in result, "the order with a NULL key"
+    # Five matched pairs, one unmatched user, two unmatched orders.
+    assert len(result) == 8
+
+
+def test_an_inner_join_still_drops_both(db: Database):
+    db.insert("users", (4, "edsger", "amsterdam"))
+    result = rows(db, "SELECT u.id, o.id FROM users u JOIN orders o ON u.id = o.user_id;")
+    assert all(row[0] is not None and row[1] is not None for row in result)
+    assert len(result) == 5
+
+
+@pytest.mark.parametrize("spelling", ["LEFT OUTER", "RIGHT OUTER", "FULL OUTER"])
+def test_the_outer_keyword_is_noise(db: Database, spelling: str):
+    bare = spelling.removesuffix(" OUTER")
+    with_outer = rows(
+        db, f"SELECT u.id, o.id FROM users u {spelling} JOIN orders o ON u.id = o.user_id;"
+    )
+    without = rows(
+        db, f"SELECT u.id, o.id FROM users u {bare} JOIN orders o ON u.id = o.user_id;"
+    )
+    assert with_outer == without
+
+
+# -- the ON is not the WHERE, and this is the whole point --------------------
+
+
+def test_a_condition_in_the_on_restricts_matching_not_survival(db: Database):
+    """The single most important property of an outer join.
+
+    ``ON … AND o.total > 200`` decides which orders *count as a match*. Every user
+    survives regardless — the ones whose orders were all too small come back
+    NULL-extended, exactly as if they had no orders at all.
+    """
+    result = rows(
+        db,
+        "SELECT u.name, o.total FROM users u LEFT JOIN orders o "
+        "ON u.id = o.user_id AND o.total > 200 ORDER BY u.name, o.total;",
+    )
+    assert [row[0] for row in result] == ["ada", "alan", "grace"], "every user survives"
+    assert ("alan", None) in result, "alan's only order is 80, so he is NULL-extended"
+    assert ("ada", 250) in result
+    assert ("ada", None) not in result, "ada matched, so she is not extended"
+
+
+def test_the_same_condition_in_the_where_removes_the_extended_rows(db: Database):
+    """And the contrast that makes it a real distinction.
+
+    The WHERE runs *after* NULL-extension, and ``NULL > 200`` is NULL rather than
+    TRUE — so it rejects every preserved row and the outer join collapses to an
+    inner one. Both queries are correct and they are different queries.
+    """
+    result = rows(
+        db,
+        "SELECT u.name, o.total FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200 ORDER BY u.name, o.total;",
+    )
+    assert result == [("ada", 250), ("grace", 400)]
+
+
+def test_the_anti_join_idiom_finds_the_rows_with_no_partner(db: Database):
+    # `WHERE <null-supplied column> IS NULL` after a LEFT JOIN is *the* way to ask
+    # "which rows have no match", and it only works because the join preserved
+    # them for the filter to find.
+    db.insert("users", (4, "edsger", "amsterdam"))
+    result = rows(
+        db,
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.id IS NULL ORDER BY u.name;",
+    )
+    assert result == [("edsger",)]
+
+
+def test_an_outer_join_with_no_equality_uses_a_nested_loop(db: Database):
+    # No key to hash, so the hash join is not a candidate at all — and the
+    # NULL-extension has to work in the nested loop too.
+    # 100 is above every user_id in `orders` (the largest is the orphan's 99), so
+    # this row matches nothing and has to be preserved.
+    db.insert("users", (100, "edsger", "amsterdam"))
+    sql = (
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON u.id < o.user_id "
+        "ORDER BY u.id, o.id;"
+    )
+    assert any(
+        isinstance(node, PhysicalNestedLoopJoin)
+        for node in walk_physical(plan(db, sql).root)
+    )
+    result = rows(db, sql)
+    assert (100, None) in result
+
+
+# -- what the planner may and may not do -------------------------------------
+
+
+def test_an_outer_joins_on_condition_is_not_pushed_below_it(db: Database):
+    """The bug this milestone had to avoid, stated as a test.
+
+    ``plan_select`` pools the WHERE with every *inner* ``ON`` and pushes each
+    single-table conjunct down to its scan, which is sound and valuable. Doing it
+    to an outer join's ``ON`` would filter the rows the join exists to preserve.
+    """
+    inner = explain(
+        db, "SELECT * FROM users u JOIN orders o ON u.id = o.user_id AND o.total > 200;"
+    )
+    assert "Filter" in inner, "an inner join's condition is pushed below it"
+
+    outer = explain(
+        db,
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id AND o.total > 200;",
+    )
+    join_lines = [line for line in outer.splitlines() if "Join" in line]
+    assert join_lines and "total > 200" in join_lines[0], (
+        "an outer join's condition stays at the join:\n" + outer
+    )
+
+
+def test_a_predicate_on_the_preserved_side_is_still_pushed_down(db: Database):
+    # The other half: pushing into the side that cannot be NULL-extended is
+    # always legal, and giving it up would make every outer join slower than it
+    # needs to be.
+    outer = explain(
+        db,
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id WHERE u.city = 'london';",
+    )
+    lines = outer.splitlines()
+    filter_at = next(i for i, line in enumerate(lines) if "Filter" in line)
+    join_at = next(i for i, line in enumerate(lines) if "Join" in line)
+    assert filter_at > join_at, "the filter belongs below the join:\n" + outer
+
+
+def test_a_predicate_on_the_null_supplied_side_is_not_pushed_down(db: Database):
+    # And the reason for the asymmetry: pushed below and consumed, this would
+    # leave the NULL-extended rows in the result, which the WHERE must reject.
+    outer = explain(
+        db,
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id WHERE o.total > 200;",
+    )
+    lines = outer.splitlines()
+    filter_at = next(i for i, line in enumerate(lines) if "Filter" in line)
+    join_at = next(i for i, line in enumerate(lines) if "Join" in line)
+    assert filter_at < join_at, "the filter belongs above the join:\n" + outer
+
+
+def test_explain_names_the_join_flavour(db: Database):
+    # A plan display that showed an outer join as an inner one would be describing
+    # something that is not happening — and join order is exactly what an outer
+    # join constrains.
+    outer = explain(db, "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id;")
+    assert "LEFT" in outer
+    assert "may not reorder across it" in outer
+
+    inner = explain(db, "SELECT * FROM users u JOIN orders o ON u.id = o.user_id;")
+    assert "LEFT" not in inner
+    assert "may not reorder across it" not in inner
+
+
+def test_an_outer_join_is_estimated_above_its_preserved_input(db: Database):
+    """An outer join has a floor an inner join does not.
+
+    Every preserved row appears whether it matched or not, so an estimate below
+    the preserved side's row count is not merely imprecise — it is impossible, and
+    it would make every operator above the join look cheaper than it is.
+    """
+    planned = plan(
+        db,
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id AND o.total > 100000;",
+    )
+    join = next(
+        node
+        for node in walk_physical(planned.root)
+        if isinstance(node, PhysicalHashJoin | PhysicalNestedLoopJoin)
+    )
+    assert join.estimated.rows >= len(USER_ROWS)
+
+
+def test_an_outer_join_is_not_costed_as_a_cross_product(db: Database):
+    """The estimator reads the join's own conditions, wherever they came from.
+
+    It used to read positions into the shared conjunct pool — which an outer join
+    contributes nothing to — so an outer join's equality was invisible to it and
+    every one was costed as a full cross product.
+    """
+    outer = plan(db, "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id;")
+    join = next(
+        node
+        for node in walk_physical(outer.root)
+        if isinstance(node, PhysicalHashJoin | PhysicalNestedLoopJoin)
+    )
+    assert join.estimated.rows < len(USER_ROWS) * len(ORDER_ROWS)

@@ -55,7 +55,7 @@ unusual table.
 
 ## The decision that made the row layout easy
 
-An inner join is commutative, so the planner reorders freely. But a bound column
+An inner join is commutative, so the planner reorders freely (an outer one is not: Milestone 18). But a bound column
 index — `c.city` is index 2, `s.amount` is index 5 — was computed by the binder
 against the order the tables were *written* in. If the physical row's shape
 followed the *join* order, every index would have to be remapped at every level.
@@ -154,6 +154,10 @@ multiplies the search space again. System R excluded bushy plans in 1979 for
 that reason and most optimizers still do.
 
 ### `ON` and `WHERE` go into the same pool
+
+> Milestone 18 note: this holds for an *inner* join only, which the section
+> below is careful to say. An outer join's `ON` is kept out of the pool
+> entirely — see `docs/milestone-18-outer-joins.md`.
 
 For an inner join they mean the same thing: `a JOIN b ON p` and `a, b WHERE p`
 produce identical rows. So every conjunct from every `ON` and from the `WHERE`

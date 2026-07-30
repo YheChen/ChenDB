@@ -706,16 +706,35 @@ class Project(Operator):
 
 
 class JoinOperator(Operator):
-    """Two inputs, one output row per matching pair.
+    """Two inputs, one output row per matching pair — and the unmatched ones.
 
     Both algorithms below place the right side's columns into the left side's
     row by *slice*, at the offsets :class:`RowLayout` fixed. Merging by "take
     whichever side is not None" would be shorter and wrong: a genuine SQL NULL
     is indistinguishable from an empty slot, so a NULL on the left would be
     silently overwritten by whatever the right side happened to have there.
+
+    **NULL extension is free here, and that is a consequence of the row layout
+    rather than a coincidence.** Every row below the topmost join is already the
+    full width of the ``FROM``, with the tables not yet joined left as ``None``.
+    So a left row that found no partner *is* its own NULL-extended form — the
+    right side's slots have never been written — and the same holds mirrored for
+    an unmatched right row, whose subplan never touched the left side's slots.
+    Milestone 13 paid for that layout in row width; this is the refund.
+
+    ``preserve_left`` and ``preserve_right`` describe the *physical* inputs, not
+    the ``LEFT`` or ``RIGHT`` in the query. See
+    :class:`~engine.planner.physical.PhysicalJoin`.
     """
 
-    __slots__ = ("_left", "_predicate", "_right", "_right_slices")
+    __slots__ = (
+        "_left",
+        "_predicate",
+        "_preserve_left",
+        "_preserve_right",
+        "_right",
+        "_right_slices",
+    )
 
     def __init__(
         self,
@@ -726,12 +745,30 @@ class JoinOperator(Operator):
         right: Operator,
         predicate: Expression,
         right_slices: tuple[tuple[int, int], ...],
+        preserve_left: bool = False,
+        preserve_right: bool = False,
     ) -> None:
         super().__init__(operator_id, context)
         self._left = left
         self._right = right
         self._predicate = predicate
         self._right_slices = right_slices
+        self._preserve_left = preserve_left
+        self._preserve_right = preserve_right
+
+    @property
+    def detail(self) -> str:
+        label = (
+            "FULL"
+            if self._preserve_left and self._preserve_right
+            else "LEFT"
+            if self._preserve_left
+            else "RIGHT"
+            if self._preserve_right
+            else ""
+        )
+        rendered = describe_expression(self._predicate)
+        return f"{label} {rendered}" if label else rendered
 
     @property
     def children(self) -> tuple[Operator, ...]:
@@ -775,42 +812,86 @@ class NestedLoopJoin(JoinOperator):
 
     __slots__ = ("_buffered", "_left_row", "_position")
 
+    __slots__ = (
+        "_buffered",
+        "_draining",
+        "_left_matched",
+        "_left_row",
+        "_position",
+        "_right_matched",
+    )
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._buffered: list[Row] = []
         self._left_row: Row | None = None
         self._position = 0
-
-    @property
-    def detail(self) -> str:
-        return describe_expression(self._predicate)
+        self._left_matched = False
+        self._draining = False
+        self._right_matched: set[int] = set()
+        """Indices into ``_buffered``. Indices, not rows: two identical right rows
+        are two rows, and a set of row *values* would treat them as one — so an
+        unmatched duplicate would go missing from a RIGHT join."""
 
     def _on_open(self) -> None:
         self._buffered = list(iter(self._right))
         self._left_row = None
         self._position = 0
+        self._left_matched = False
+        self._draining = False
+        self._right_matched = set()
 
     def _on_close(self) -> None:
         self._buffered = []
         self._left_row = None
+        self._right_matched = set()
 
     def _produce(self) -> Row | None:
+        if self._draining:
+            return self._unmatched_right()
+
         while True:
             if self._left_row is None:
                 self._left_row = self._left.next()
                 if self._left_row is None:
-                    return None
+                    # The left input is done, which is the first moment
+                    # "unmatched" is finally known for the right side. Rewind the
+                    # cursor — it is sitting at the end of the buffer from the last
+                    # left row — and hand out the leftovers one per call.
+                    self._draining = True
+                    self._position = 0
+                    return self._unmatched_right()
                 self.stats.input_rows += 1
                 self._position = 0
+                self._left_matched = False
 
             while self._position < len(self._buffered):
-                right = self._buffered[self._position]
+                index = self._position
+                right = self._buffered[index]
                 self._position += 1
                 merged = self._merge(self._left_row, right)
                 if self._matches(merged):
+                    self._left_matched = True
+                    self._right_matched.add(index)
                     return merged
 
+            unmatched = self._left_row
             self._left_row = None
+            if self._preserve_left and not self._left_matched:
+                # Emitted unchanged: the right side's slots in this row have never
+                # been written, so it is already NULL-extended.
+                return unmatched
+
+    def _unmatched_right(self) -> Row | None:
+        """Right rows that never matched, one per call, then ``None`` forever."""
+        if not self._preserve_right:
+            return None
+        while self._position < len(self._buffered):
+            index = self._position
+            self._position += 1
+            if index not in self._right_matched:
+                return self._buffered[index]
+        return None
 
 
 class HashJoin(JoinOperator):
@@ -827,16 +908,30 @@ class HashJoin(JoinOperator):
     a composite hash key would need the same key encoding a composite index
     would, and :mod:`engine.index.key` explains why that is a whole layer.
 
-    NULL never matches, including another NULL, so a row whose key is NULL is
-    dropped from both sides. That is not an optimisation; it is what ``=``
-    means in three-valued logic, and a hash table would happily match them.
+    NULL never matches, including another NULL. That is what ``=`` means in
+    three-valued logic and a hash table would happily match them, so a NULL-keyed
+    row is kept out of the table — but for an outer join it must still be
+    **emitted**, because a row that cannot match is the definition of unmatched.
+    Dropping it was correct only while every join was inner, and it is the one
+    place where the outer version is not simply "the same, plus leftovers".
+
+    Preserving the two sides costs different things. The *probe* side is nearly
+    free: a probe row that finds no bucket is emitted on the spot. The *build*
+    side needs the rows kept in insertion order as well as in buckets, a set of
+    which ones were ever matched, and a pass over the leftovers once the probe
+    input runs dry.
     """
 
     __slots__ = (
         "_bucket",
+        "_build",
         "_build_key",
+        "_build_matched",
+        "_drain",
+        "_draining",
         "_position",
         "_probe_key",
+        "_probe_matched",
         "_probe_row",
         "_residual",
         "_table",
@@ -854,6 +949,8 @@ class HashJoin(JoinOperator):
         probe_key: Expression,
         residual: Expression | None,
         right_slices: tuple[tuple[int, int], ...],
+        preserve_left: bool = False,
+        preserve_right: bool = False,
     ) -> None:
         super().__init__(
             operator_id,
@@ -862,24 +959,51 @@ class HashJoin(JoinOperator):
             right=right,
             predicate=predicate,
             right_slices=right_slices,
+            preserve_left=preserve_left,
+            preserve_right=preserve_right,
         )
         self._build_key = build_key
         self._probe_key = probe_key
         self._residual = residual
-        self._table: dict[Any, list[Row]] = {}
-        self._bucket: Sequence[Row] = ()
+        self._build: list[Row] = []
+        """Every build row in insertion order, so an unmatched one can be found
+        again — and so the buckets can hold indices rather than rows. The rows
+        themselves are shared, so this costs one integer per row over holding them
+        in the buckets directly, which is what buys a preserved build side."""
+        self._table: dict[Any, list[int]] = {}
+        """Key to *indices* into ``_build``, not to rows. Two identical build rows
+        are two rows; a set of row values would lose one of them."""
+        self._build_matched: set[int] = set()
+        self._bucket: Sequence[int] = ()
         self._probe_row: Row = ()
         self._position = 0
+        self._drain = 0
+        self._draining = False
+        self._probe_matched = False
+        """Whether the probe row in hand has matched *anything* yet.
+
+        Not the same question as "is its bucket empty". A bucket can be full and
+        every candidate in it rejected by the residual — ``ON a.id = b.id AND
+        b.y > 0`` hashes the equality and re-checks the rest per pair — and such a
+        probe row is unmatched however promising its key looked."""
 
     @property
     def detail(self) -> str:
+        label = (
+            "FULL"
+            if self._preserve_left and self._preserve_right
+            else "LEFT"
+            if self._preserve_left
+            else "RIGHT"
+            if self._preserve_right
+            else ""
+        )
         core = (
             f"{describe_expression(self._build_key)} = "
             f"{describe_expression(self._probe_key)}"
         )
-        return core + (
-            f" AND {describe_expression(self._residual)}" if self._residual else ""
-        )
+        rest = f" AND {describe_expression(self._residual)}" if self._residual else ""
+        return (f"{label} " if label else "") + core + rest
 
     def _key(self, row: Row, expression: Expression) -> Any:
         return evaluate(
@@ -888,38 +1012,80 @@ class HashJoin(JoinOperator):
 
     def _on_open(self) -> None:
         self._table = {}
+        self._build = []
+        self._build_matched = set()
         for row in self._left:
+            index = len(self._build)
+            self._build.append(row)
             key = self._key(row, self._build_key)
             if key is None:
+                # Out of the table: NULL = NULL is UNKNOWN, not TRUE, and hashing
+                # it would match. It stays in `_build`, so a preserved build side
+                # still emits it as unmatched — which it certainly is.
                 continue
-            self._table.setdefault(key, []).append(row)
+            self._table.setdefault(key, []).append(index)
         self._bucket = ()
         self._position = 0
+        self._drain = 0
+        self._draining = False
+        self._probe_matched = False
 
     def _on_close(self) -> None:
         self._table = {}
+        self._build = []
+        self._build_matched = set()
         self._bucket = ()
 
     def _produce(self) -> Row | None:
         while True:
             while self._position < len(self._bucket):
-                left = self._bucket[self._position]
+                index = self._bucket[self._position]
                 self._position += 1
-                merged = self._merge(left, self._probe_row)
+                merged = self._merge(self._build[index], self._probe_row)
                 if self._residual is None or self._matches(merged):
+                    self._probe_matched = True
+                    if self._preserve_left:
+                        self._build_matched.add(index)
                     return merged
+
+            # The bucket is exhausted. If nothing in it survived the residual then
+            # this probe row never matched, whatever its key hashed to.
+            if self._preserve_right and self._bucket and not self._probe_matched:
+                self._bucket = ()
+                return self._probe_row
+
+            if self._draining:
+                return self._unmatched_build()
 
             probe = self._right.next()
             if probe is None:
-                return None
+                self._draining = True
+                continue
             self.stats.input_rows += 1
             key = self._key(probe, self._probe_key)
-            if key is None:
-                # NULL = NULL is UNKNOWN, not TRUE. Hashing it would match.
+            bucket = () if key is None else self._table.get(key, ())
+            if not bucket:
+                # No partner, and a NULL key cannot acquire one. Either way this
+                # probe row is unmatched: emitted as-is if the probe side is
+                # preserved, dropped if not.
+                if self._preserve_right:
+                    return probe
                 continue
             self._probe_row = probe
-            self._bucket = self._table.get(key, ())
+            self._bucket = bucket
             self._position = 0
+            self._probe_matched = False
+
+    def _unmatched_build(self) -> Row | None:
+        """Build rows that never matched, one per call, then ``None`` forever."""
+        if not self._preserve_left:
+            return None
+        while self._drain < len(self._build):
+            index = self._drain
+            self._drain += 1
+            if index not in self._build_matched:
+                return self._build[index]
+        return None
 
 
 class HashAggregate(Operator):

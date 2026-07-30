@@ -72,7 +72,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.7.0 — Milestone 17 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys)
+ChenDB 1.8.0 — Milestone 18 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 chendb> .create users id:INTEGER* email:TEXT! age:INTEGER
@@ -149,7 +149,7 @@ a handful of rows will fill a page and you can watch the heap chain grow.
 | **Diagnostics** | 5 trace levels · 37 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
-| **Queries** | inner joins with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
+| **Queries** | inner and outer joins (`LEFT`/`RIGHT`/`FULL`) with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
 | **Execution** | volcano operators (scan / filter / project / join / aggregate / sort / limit) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk · a `PRIMARY KEY` builds a real unique index |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
@@ -174,11 +174,14 @@ runs a `SELECT` and gets its answer immediately, without the uncommitted row and
 without taking a lock of its own. `tests/unit/test_mvcc.py` asserts it and the
 MVCC workspace shows it.
 
-**The planner does not join in the order you wrote.** Give it two tables and it
-re-derives the order from statistics, builds the hash table on the smaller side
-because a build costs more than a probe, and pushes your `WHERE` below the join.
-`EXPLAIN` names each decision separately and shows what it turned down.
-`tests/unit/test_joins.py` asserts it.
+**The planner does not join in the order you wrote — unless it may not.** Give
+it two tables and it re-derives the order from statistics, builds the hash table
+on the smaller side because a build costs more than a probe, and pushes your
+`WHERE` below the join. An outer join takes all three away: it is neither
+commutative nor associative, so it runs where it was written, its `ON` stays at
+the join, and a predicate on the side that can be NULL-extended stays above it.
+`EXPLAIN` names each decision separately, including that one. `tests/unit/test_joins.py`
+asserts it.
 
 **An update does not overwrite anything.** It writes eight bytes to the old
 version and appends a new one, so a transaction that took its snapshot first
@@ -193,10 +196,10 @@ two of which returned a wrong answer without any sign of trouble.
 all seven.
 
 Deliberately not built — and each has a paragraph in the milestone docs saying
-why: serializable isolation, `RETURNING`, heap-only tuples, outer joins, bushy
-plans, index nested-loop joins, subqueries, `DISTINCT`, parallel statement
-execution, lock escalation, autovacuum, and overflow pages for rows larger than
-a page.
+why: serializable isolation, `RETURNING`, heap-only tuples, bushy plans, index
+nested-loop joins, reordering across an outer join, outer-join simplification,
+`USING` and `NATURAL JOIN`, subqueries, `DISTINCT`, parallel statement execution,
+lock escalation, autovacuum, and overflow pages for rows larger than a page.
 
 ---
 
@@ -332,6 +335,7 @@ change the system observed.
 | `python examples/milestone11_dml.py` | narrated walkthrough of `UPDATE`, `DELETE` and the Halloween problem |
 | `python examples/milestone13_joins.py` | narrated walkthrough of joins, join order and aggregation |
 | `python examples/milestone17_differential.py` | the seven bugs SQLite found, and why a test can agree with one |
+| `python examples/milestone18_outer_joins.py` | outer joins, and the licence the planner had to give up |
 | `python scripts/differential.py --seeds 0:5000` | a real differential campaign, ~80,000 query pairs |
 | `make ci` | lint, typecheck, both test suites and every example — CI's order |
 | `make demo-sql` | every SQL statement the explorer's buttons will produce |
@@ -361,6 +365,7 @@ change the system observed.
 | [Milestone 10](docs/milestone-10-mvcc.md) | row versions, snapshot isolation, deadlocks, and why there is no commit log |
 | [Milestone 11](docs/milestone-11-dml.md) | `UPDATE` and `DELETE`, the Halloween problem, and why an update rewrites every index |
 | [Milestone 12](docs/milestone-12-ci.md) | CI, and running every demo button against the real engine |
+| [Milestone 18](docs/milestone-18-outer-joins.md) | outer joins, why NULL-extension was free, and why the join search needed a barrier |
 | [Milestone 17](docs/milestone-17-differential.md) | seven bugs a second engine found, and the line between a rule and an excuse |
 | [Milestone 16](docs/milestone-16-persistence.md) | keeping a database in IndexedDB, and the escape hatch persistence needs |
 | [Milestone 15](docs/milestone-15-wasm.md) | shipping a database engine as a static file, and the three things that broke |

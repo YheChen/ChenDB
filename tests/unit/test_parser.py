@@ -15,6 +15,7 @@ from engine.parser.ast import (
     DeleteStatement,
     InsertStatement,
     IsNullTest,
+    JoinKind,
     Literal,
     SelectStatement,
     Star,
@@ -518,7 +519,8 @@ def test_star_inside_an_expression_is_explained():
     ("sql", "match"),
     [
         ("SELECT DISTINCT a FROM t", "DISTINCT"),
-        ("SELECT * FROM a LEFT JOIN b ON a.x = b.x", "LEFT JOIN"),
+        # `LEFT JOIN` lived here until Milestone 18. Its replacement in the
+        # visualizer's "not implemented yet" demo is `DISTINCT`, above.
         ("SELECT * FROM a CROSS JOIN b", "CROSS JOIN"),
         ("SELECT * FROM t OFFSET 3", "OFFSET without LIMIT"),
         ("SELECT COUNT(COUNT(x)) FROM t", "aggregate of an aggregate"),
@@ -538,6 +540,38 @@ def test_valid_sql_that_is_not_implemented_says_so(sql: str, match: str):
     # messages, and only the second should point at a milestone.
     with pytest.raises(UnsupportedSqlError, match=match):
         parse_statement(sql)
+
+
+@pytest.mark.parametrize(
+    ("sql", "kind"),
+    [
+        ("SELECT * FROM a LEFT JOIN b ON a.x = b.x", JoinKind.LEFT),
+        ("SELECT * FROM a LEFT OUTER JOIN b ON a.x = b.x", JoinKind.LEFT),
+        ("SELECT * FROM a RIGHT JOIN b ON a.x = b.x", JoinKind.RIGHT),
+        ("SELECT * FROM a RIGHT OUTER JOIN b ON a.x = b.x", JoinKind.RIGHT),
+        ("SELECT * FROM a FULL JOIN b ON a.x = b.x", JoinKind.FULL),
+        ("SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x", JoinKind.FULL),
+        ("SELECT * FROM a INNER JOIN b ON a.x = b.x", JoinKind.INNER),
+        ("SELECT * FROM a JOIN b ON a.x = b.x", JoinKind.INNER),
+    ],
+)
+def test_every_join_flavour_parses_and_keeps_its_kind(sql: str, kind: JoinKind):
+    """``OUTER`` is noise; the side is not.
+
+    ``LEFT JOIN`` and ``LEFT OUTER JOIN`` are the same thing in the standard, so
+    the keyword is accepted and discarded. Which *side* the keyword names is the
+    entire difference between an inner join and an outer one, and it has to
+    survive from here to the executor.
+    """
+    statement = parse_statement(sql)
+    assert isinstance(statement, SelectStatement)
+    assert [join.kind for join in statement.joins] == [kind]
+
+
+def test_a_comma_from_is_still_an_inner_join():
+    statement = parse_statement("SELECT * FROM a, b")
+    assert isinstance(statement, SelectStatement)
+    assert [join.kind for join in statement.joins] == [JoinKind.INNER]
 
 
 def test_unsupported_is_a_kind_of_parse_error():

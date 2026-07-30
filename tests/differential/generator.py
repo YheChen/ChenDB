@@ -637,15 +637,33 @@ def _sources_for(source: random.Random, spec: SchemaSpec, shape: str) -> list[So
     return [Source(table, table.name)]
 
 
+#: Join flavours and their weights. ``INNER`` stays the plurality because it is
+#: still the common case, but the three outer kinds together are the majority —
+#: they are newer, they have four distinct code paths between them (preserve the
+#: build side, preserve the probe side, both, and a nested loop for each), and
+#: the schema was built to make them interesting.
+_JOIN_KINDS: Final = (("INNER", 40), ("LEFT", 25), ("RIGHT", 20), ("FULL", 15))
+
+
 def _join_clause(source: random.Random, builder: _Select) -> str:
-    """``JOIN b ON …``, equijoin most of the time.
+    """``[LEFT|RIGHT|FULL] JOIN b ON …``, equijoin most of the time.
 
     An equality is what lets the planner pick a hash join, so it has to be the
-    common case or the hash-join path goes untested. The rest are comparisons,
-    which only a nested loop can evaluate.
+    common case or the hash-join path goes untested — and for an outer join the
+    hash path is the one with real state in it, since preserving the build side
+    means tracking which build rows were ever matched.
+
+    An outer join is only worth generating over data that has something to
+    preserve. It does: ``child.parent_id`` is drawn from keys the parent has, keys
+    it has not, and NULL, so a single ``LEFT JOIN`` sees a matched row, an orphan
+    and an unknown key at once.
     """
     right = builder.sources[1]
     left = builder.sources[0]
+    kind = source.choices(
+        [name for name, _ in _JOIN_KINDS], weights=[weight for _, weight in _JOIN_KINDS]
+    )[0]
+
     if builder.shape == "self_join":
         condition = f"a.{left.table.key.name} <> b.{right.table.key.name}"
         builder.features.add("self_join")
@@ -655,7 +673,28 @@ def _join_clause(source: random.Random, builder: _Select) -> str:
         builder.features.add("unmatched_join_row")
     else:
         condition = f"parent.{left.table.key.name} < child.parent_id"
-    return f"JOIN {_named(right)} ON {condition}"
+
+    if kind != "INNER":
+        builder.features.add(f"{kind.lower()}_join")
+        builder.features.add("outer_join")
+        if source.random() < 0.35:
+            # An extra ON term on the *null-supplied* side. This is the case that
+            # separates an outer join from an inner one with a WHERE: it must
+            # restrict which rows match, never which rows survive. Putting it in
+            # the ON was the whole shape of the planner bug this milestone had to
+            # avoid — ON conditions were pooled with the WHERE and pushed down.
+            numeric = [
+                column
+                for column in right.table.columns
+                if column.type in (INTEGER, FLOAT) and not column.primary_key
+            ]
+            if numeric:
+                column = source.choice(numeric)
+                condition += f" AND {right.alias}.{column.name} > 0"
+                builder.features.add("outer_join_extra_on")
+
+    prefix = "" if kind == "INNER" else f"{kind} "
+    return f"{prefix}JOIN {_named(right)} ON {condition}"
 
 
 def _plain(source: random.Random, builder: _Select) -> None:

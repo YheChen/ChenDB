@@ -258,6 +258,7 @@ def build_logical_plan(bound: BoundSelect) -> LogicalNode:
                 offset=entry.offset,
                 total_width=total,
             ),
+            kind=join.kind,
         )
 
     if bound.where is not None:
@@ -428,6 +429,8 @@ def materialise(
                 right=materialise(node.right, database, context),
                 predicate=node.predicate,
                 right_slices=node.right_slices,
+                preserve_left=node.preserve_left,
+                preserve_right=node.preserve_right,
             )
 
         case PhysicalHashJoin():
@@ -441,6 +444,8 @@ def materialise(
                 probe_key=node.probe_key,
                 residual=node.residual,
                 right_slices=node.right_slices,
+                preserve_left=node.preserve_left,
+                preserve_right=node.preserve_right,
             )
 
         case PhysicalAggregate():

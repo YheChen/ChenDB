@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from engine.executor.expression import describe_expression
-from engine.parser.ast import Expression
+from engine.parser.ast import Expression, JoinKind
 from engine.serialization.schema import Schema
 
 if TYPE_CHECKING:
@@ -144,14 +144,18 @@ class LogicalJoin(LogicalNode):
 
     No algorithm: a hash join and a nested-loop join produce the same rows, and
     which is cheaper depends on statistics this node has no business knowing.
-    No *order* either, in the sense that matters — an inner join is commutative,
-    so ``a ⨝ b`` and ``b ⨝ a`` are the same logical plan and the enumerator is
-    free to build both.
+
+    ``kind`` is the exception to "no order". An inner join is commutative, so
+    ``a ⨝ b`` and ``b ⨝ a`` are the same logical plan and the enumerator is free
+    to build both. An outer join is not: ``a ⟕ b`` and ``b ⟕ a`` are different
+    queries. So the kind is *logical* information — it changes which rows the node
+    denotes — and it is what tells the physical planner where it may not reorder.
     """
 
     predicate: Expression
     left: LogicalNode
     right: LogicalNode
+    kind: JoinKind = JoinKind.INNER
 
     @property
     def children(self) -> tuple[LogicalNode, ...]:
@@ -159,7 +163,8 @@ class LogicalJoin(LogicalNode):
 
     @property
     def detail(self) -> str:
-        return describe_expression(self.predicate)
+        rendered = describe_expression(self.predicate)
+        return rendered if self.kind is JoinKind.INNER else f"{self.kind.value} {rendered}"
 
 
 @dataclass(frozen=True, slots=True)

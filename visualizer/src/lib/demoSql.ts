@@ -263,6 +263,37 @@ HAVING SUM(s.amount) > 100
 ORDER BY revenue DESC
 LIMIT 5;`;
 
+export const OUTER_JOIN_DEMO_SQL = `-- An outer join keeps what an inner one throws away.
+-- Run it and compare the two results: the LEFT JOIN keeps 'edsger', who has no
+-- sales at all, with NULLs where the sale would have been.
+--
+-- Then read the plans. The ON condition stays AT the join for the outer one —
+-- for an inner join the planner would push it below, and for an outer join that
+-- would be wrong: it would filter the rows the join exists to preserve.
+
+CREATE TABLE IF NOT EXISTS staff (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS shifts (id INTEGER PRIMARY KEY, staff_id INTEGER, hours INTEGER);
+
+INSERT INTO staff VALUES (1, 'ada'), (2, 'alan'), (3, 'grace'), (4, 'edsger');
+INSERT INTO shifts VALUES (10, 1, 8), (11, 1, 4), (12, 2, 9), (13, 99, 6);
+
+-- Every member of staff, with their shifts if they have any.
+SELECT s.name, sh.hours
+FROM staff s LEFT JOIN shifts sh ON s.id = sh.staff_id
+ORDER BY s.name, sh.hours;
+
+-- The anti-join idiom: who has no shifts at all. Only an outer join can ask
+-- this, because the row you are looking for is the one that did not match.
+SELECT s.name
+FROM staff s LEFT JOIN shifts sh ON s.id = sh.staff_id
+WHERE sh.id IS NULL
+ORDER BY s.name;
+
+-- And a FULL join, which also keeps shift 13 — whose staff_id matches nobody.
+SELECT s.name, sh.id
+FROM staff s FULL JOIN shifts sh ON s.id = sh.staff_id
+ORDER BY s.name, sh.id;`;
+
 export const EXAMPLES: Example[] = [
   {
     label: "CREATE TABLE",
@@ -319,11 +350,13 @@ SELECT "select" FROM "order";`,
   {
     label: "Not implemented yet",
     parses: false,
-    // Was `ORDER BY`, until Milestone 13 implemented it and the guard in
-    // tests/integration/test_demo_sql.py failed with "was accepted". That is
-    // the failure mode this catalogue exists for, caught one milestone after
-    // it was built.
-    sql: `SELECT * FROM users LEFT JOIN orders ON users.id = orders.user_id;`,
+    // Third occupant of this slot. It was `ORDER BY` until Milestone 13, then
+    // `LEFT JOIN` until Milestone 18 — and both times the guard in
+    // tests/integration/test_demo_sql.py failed with "was accepted" on the very
+    // next run. That is the failure mode this catalogue exists for, and it has
+    // now fired twice for the same reason: an example of what the engine cannot
+    // do is a claim with a shelf life.
+    sql: `SELECT DISTINCT city FROM users;`,
   },
 ];
 
@@ -458,6 +491,12 @@ export function demoStatements(table: TableDetail): DemoStatement[] {
     id: "execution/joins",
     label: "Joins and aggregation",
     sql: JOIN_DEMO_SQL,
+    on: "empty",
+  });
+  add({
+    id: "execution/outer-joins",
+    label: "Outer joins",
+    sql: OUTER_JOIN_DEMO_SQL,
     on: "empty",
   });
   return out;

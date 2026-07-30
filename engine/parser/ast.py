@@ -480,12 +480,16 @@ class SelectItem(Node):
 
 
 class JoinKind(StrEnum):
-    """How unmatched rows are treated.
+    """How unmatched rows are treated. The one thing a join's *name* decides.
 
-    Only ``INNER`` is implemented. The others are named so the parser can say
-    which one it is refusing, and because an outer join is not merely an inner
-    join with extra rows: it constrains the order the planner may join in, which
-    is the reason it is a milestone of its own rather than a flag.
+    ``INNER`` drops a row with no partner. The other three keep it and fill the
+    missing side with NULLs — ``LEFT`` preserves the rows written to the left of
+    the keyword, ``RIGHT`` those to its right, ``FULL`` both.
+
+    This is not a flag on a common case. An inner join is commutative and
+    associative, which is the entire licence the planner has to reorder; an outer
+    join is neither, so :func:`~engine.planner.physical._plan_joins` has to treat
+    one as a barrier rather than as another relation in the search.
     """
 
     INNER = "INNER"
@@ -493,16 +497,35 @@ class JoinKind(StrEnum):
     RIGHT = "RIGHT"
     FULL = "FULL"
 
+    @property
+    def is_outer(self) -> bool:
+        return self is not JoinKind.INNER
+
+    @property
+    def preserves_left(self) -> bool:
+        """Whether a row written *before* the keyword survives with no partner."""
+        return self in (JoinKind.LEFT, JoinKind.FULL)
+
+    @property
+    def preserves_right(self) -> bool:
+        """Whether a row written *after* the keyword survives with no partner."""
+        return self in (JoinKind.RIGHT, JoinKind.FULL)
+
 
 @dataclass(frozen=True, slots=True)
 class JoinClause(Node):
     """One ``JOIN b ON …`` appended to a ``FROM``.
 
-    A flat list of these rather than a nested tree, because the *written* order
-    of a join is not the order it runs in — the planner reorders freely, and a
-    tree here would suggest a nesting the user does not control. That is exactly
+    A flat list of these rather than a nested tree, because for an *inner* join
+    the written order is not the order it runs in — the planner reorders freely,
+    and a tree here would suggest a nesting the user does not control. That is
     what the SQL standard means by joins being commutative and associative, and
     the whole reason join ordering is a search problem.
+
+    An outer join is neither commutative nor associative, so for one the written
+    order *is* meaningful. The list stays flat anyway: ``kind`` records the
+    constraint and the planner honours it, which keeps one representation for both
+    rather than a tree for outer joins and a list for inner ones.
     """
 
     table: TableRef
