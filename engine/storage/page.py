@@ -595,7 +595,7 @@ class Page:
         if len(payload) != length:
             raise ValueError(
                 f"slot {slot_id} holds {length} bytes; refusing to overwrite it "
-                f"with {len(payload)}. A record cannot change size in place — "
+                f"with {len(payload)}. A record cannot change size in place: "
                 f"its record id is what indexes point at."
             )
         self._buf[offset : offset + length] = payload

@@ -37,12 +37,12 @@ _DEFAULT_SCAN_LIMIT = 50
 _DEFAULT_EVENT_LIMIT = 20
 _DEFAULT_HEX_BYTES = 256
 
-_BANNER = f"""ChenDB {__version__} — Milestone {MILESTONE} \
+_BANNER = f"""ChenDB {__version__} - Milestone {MILESTONE} \
 ({" + ".join(MILESTONE_FEATURES)})
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL."""
 
 _HELP = """\
-  <sql>;                         run SQL — SELECT (with JOIN, GROUP BY,
+  <sql>;                         run SQL: SELECT (with JOIN, GROUP BY,
                                  ORDER BY, LIMIT), INSERT, UPDATE, DELETE,
                                  CREATE TABLE/INDEX, EXPLAIN [ANALYZE], ANALYZE
   .help                          show this message
@@ -298,7 +298,7 @@ class Shell:
         """What the planner reasons about, and how old it is."""
         name = rest.strip() or self.table
         stats = self.db.statistics.for_table(name)
-        stale = " (STALE — run .analyze)" if self.db.statistics.is_stale(name) else ""
+        stale = " (STALE: run .analyze)" if self.db.statistics.is_stale(name) else ""
         print(
             f"{stats.table_name}: {stats.row_count} rows, {stats.page_count} pages{stale}"
         )

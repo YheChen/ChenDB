@@ -71,7 +71,7 @@ export function FrameGrid({
 
       <div className="text-muted flex flex-wrap gap-3 text-[10px]">
         <Swatch className="bg-emerald-500/30" label="resident" />
-        <Swatch className="bg-amber-500/40" label="dirty — the disk copy is stale" />
+        <Swatch className="bg-amber-500/40" label="dirty: the disk copy is stale" />
         <Swatch
           className="border border-[var(--accent)] bg-transparent"
           label="coldest: evicted next"
@@ -249,7 +249,7 @@ function Saved({
       <p className="text-muted mt-1 text-[10px]">
         {saved > 0 ? (
           <>
-            <Badge tone="accent">{(fraction * 100).toFixed(0)}%</Badge> avoided —{" "}
+            <Badge tone="accent">{(fraction * 100).toFixed(0)}%</Badge> avoided:{" "}
             {formatCount(saved)} {label} never reached the disk
           </>
         ) : (

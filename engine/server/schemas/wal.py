@@ -50,7 +50,7 @@ class WalRecordModel(ApiModel):
     page_id: int
     size: int = Field(description="Bytes on disk, header and images together")
     before_image_size: int = Field(
-        description="Non-zero only on a transaction's first write to a page — "
+        description="Non-zero only on a transaction's first write to a page; "
         "first-write-wins, the same rule the in-memory undo log follows"
     )
     after_image_size: int
@@ -76,7 +76,7 @@ class WalStatsModel(ApiModel):
 
 class WalResponse(ApiModel):
     enabled: bool = Field(description="False for a handle opened without a log")
-    path: str = Field(description="Filename only — never a path from the host")
+    path: str = Field(description="Filename only, never a path from the host")
     base_lsn: int = Field(
         description="The LSN of the log file's first byte. Non-zero after a "
         "checkpoint has truncated it, which is why the meta page has to carry it."
@@ -88,7 +88,7 @@ class WalResponse(ApiModel):
     records: list[WalRecordModel]
     truncated_tail: bool = Field(
         description="The last record in the file is incomplete. Normal after a "
-        "crash — the process died part-way through a write."
+        "crash. The process died part-way through a write."
     )
     total_records: int = Field(description="Before the response limit was applied")
     stats: WalStatsModel
@@ -128,7 +128,7 @@ class CheckpointResponse(ApiModel):
     pages_flushed: int
     bytes_reclaimed: int
     log_size_before: int
-    log_size_after: int = Field(description="Zero — a checkpoint discards the log")
+    log_size_after: int = Field(description="Zero: a checkpoint discards the log")
     base_lsn: int
     message: str
 

@@ -28,9 +28,16 @@
  *
  * ## What it does and does not catch
  *
- * The **milestone rule is general**: user-facing text may reference a milestone
- * in the past, never as pending. That is mechanical and will catch phrasings
- * nobody has thought of yet.
+ * The **milestone rule is general**: user-facing text may not name a numbered
+ * milestone at all. It was once looser — a reference in the *past* tense was
+ * allowed, and `demoSql.ts` had one on purpose — but a milestone number means
+ * nothing to somebody using the explorer, and the loose version left the door
+ * open to the exact phrasings that went stale. The version badge in `TopBar`
+ * says "milestone" without a number and is deliberately still allowed.
+ *
+ * The **em dash rule is also general**: an em dash may not sit against a word.
+ * Standalone `—` is a placeholder for an absent value and stays, which is the
+ * whole reason the rule tests adjacency rather than the character.
  *
  * The **absence rule is a deny-list**, and deliberately not general. "No
  * transactions yet", "No events yet" and "No tables yet" are all legitimate
@@ -121,7 +128,12 @@ function scan(patterns: { pattern: RegExp; why: string }[]): Hit[] {
     lines.forEach((line, index) => {
       for (const { pattern, why } of patterns) {
         if (pattern.test(line)) {
-          hits.push({ file, line: index + 1, text: line.trim().slice(0, 120), why });
+          hits.push({
+            file,
+            line: index + 1,
+            text: line.trim().slice(0, 120),
+            why,
+          });
         }
       }
     });
@@ -130,47 +142,78 @@ function scan(patterns: { pattern: RegExp; why: string }[]): Hit[] {
 }
 
 const report = (hits: Hit[]) =>
-  hits.map((h) => `\n  ${h.file}:${h.line}\n    ${h.text}\n    → ${h.why}`).join("");
+  hits
+    .map((h) => `\n  ${h.file}:${h.line}\n    ${h.text}\n    → ${h.why}`)
+    .join("");
 
 describe("user-facing text", () => {
-  it("never defers to a milestone", () => {
-    // The shape all six shared: naming a milestone as somewhere the feature
-    // still lives. A *past* reference is fine and one exists on purpose —
-    // "Before Milestone 8 they would have stayed" is the point of that demo.
+  it("never names a numbered milestone", () => {
+    // Stricter than it was. The old rule allowed a past-tense reference, which
+    // is defensible history in a comment and meaningless to a user reading a
+    // tooltip: a milestone number tells them nothing about the database in
+    // front of them. Forbidding the number outright is also the only version
+    // that cannot be worded around.
     const hits = scan([
       {
-        pattern: /\b(until|that is|arrives? in|comes? in|coming in|lands? in|added in)\s+Milestone\s*\d+/i,
-        why: "reads as pending. If it has shipped, describe what it does; if not, hide the control.",
-      },
-      {
-        pattern: /\bMilestone\s*\d+\s+(will|adds|brings|is where|introduces)\b/i,
-        why: "reads as pending, same as above.",
+        pattern: /\bMilestone\s*\d+/i,
+        why: "a milestone number means nothing to a user. Say what it does, or hide the control.",
       },
     ]);
-    expect(hits, `text that defers to a milestone:${report(hits)}`).toEqual([]);
+    expect(hits, `text naming a milestone:${report(hits)}`).toEqual([]);
+  });
+
+  it("never uses an em dash as punctuation", () => {
+    // A standalone `—` is a placeholder for a value that is absent, and there
+    // are a dozen of them in table cells and formatters. Those stay. What is
+    // forbidden is the dash used *between words*, which is why the pattern
+    // tests for a word next to the dash rather than for the character.
+    const hits = scan([
+      {
+        pattern: /\w\s*—|—\s*\w/,
+        why: "use a comma, colon, semicolon, full stop or parentheses. A bare `—` as a placeholder is fine.",
+      },
+    ]);
+    expect(hits, `em dashes used as punctuation:${report(hits)}`).toEqual([]);
   });
 
   it("never claims a shipped subsystem is missing", () => {
     // Not a general rule — see the header. Each of these was true once.
     const hits = scan([
-      { pattern: /\bno buffer pool\b/i, why: "the buffer pool shipped in Milestone 7." },
-      { pattern: /\bno index exists\b/i, why: "indexes shipped in Milestone 5." },
-      { pattern: /\bnothing executes\b/i, why: "the executor shipped in Milestone 3." },
-      { pattern: /\bno (write-ahead log|wal)\b/i, why: "the WAL shipped in Milestone 9." },
+      {
+        pattern: /\bno buffer pool\b/i,
+        why: "the buffer pool shipped in Milestone 7.",
+      },
+      {
+        pattern: /\bno index exists\b/i,
+        why: "indexes shipped in Milestone 5.",
+      },
+      {
+        pattern: /\bnothing executes\b/i,
+        why: "the executor shipped in Milestone 3.",
+      },
+      {
+        pattern: /\bno (write-ahead log|wal)\b/i,
+        why: "the WAL shipped in Milestone 9.",
+      },
       {
         pattern: /\bno (planner|cost model)\b/i,
         why: "the planner shipped in Milestone 6.",
       },
       {
-        pattern: /\b(cannot|can't|does not|doesn't) (execute|run) (sql|queries|statements)\b/i,
+        pattern:
+          /\b(cannot|can't|does not|doesn't) (execute|run) (sql|queries|statements)\b/i,
         why: "it can, since Milestone 3.",
       },
       {
-        pattern: /\b(update|delete|join|group by) is not (implemented|supported)\b/i,
+        pattern:
+          /\b(update|delete|join|group by) is not (implemented|supported)\b/i,
         why: "UPDATE and DELETE shipped in Milestone 11, joins and GROUP BY in Milestone 13.",
       },
     ]);
-    expect(hits, `text claiming a shipped feature is absent:${report(hits)}`).toEqual([]);
+    expect(
+      hits,
+      `text claiming a shipped feature is absent:${report(hits)}`,
+    ).toEqual([]);
   });
 
   it("is being read at all", () => {
@@ -200,7 +243,9 @@ describe("the comment stripper", () => {
   });
 
   it("keeps a // that is inside a string", () => {
-    expect(stripComments('const u = "http://x.com";')).toContain("http://x.com");
+    expect(stripComments('const u = "http://x.com";')).toContain(
+      "http://x.com",
+    );
     expect(stripComments("const u = 'a // b';")).toContain("a // b");
   });
 
@@ -217,12 +262,14 @@ describe("the comment stripper", () => {
   });
 
   it("would have caught the bug this file exists for", () => {
-    const source = 'title="Always 0 until the write-ahead log arrives in Milestone 9."';
+    const source =
+      'title="Always 0 until the write-ahead log arrives in Milestone 9."';
     expect(
       /\b(until|arrives? in)\s+Milestone\s*\d+/i.test(stripComments(source)),
     ).toBe(true);
     // …and not the comment that legitimately explains the same history.
-    const comment = "// the write-ahead log arrives in Milestone 9, and until then";
+    const comment =
+      "// the write-ahead log arrives in Milestone 9, and until then";
     expect(
       /\b(until|arrives? in)\s+Milestone\s*\d+/i.test(stripComments(comment)),
     ).toBe(false);

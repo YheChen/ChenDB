@@ -106,7 +106,7 @@ class PlanAlternativeModel(ApiModel):
     decision: str = Field(
         default="access path",
         description=(
-            "Which question this answered — 'how to read users', 'what order to "
+            "Which question this answered: 'how to read users', 'what order to "
             "join in'. A query over several tables makes several independent "
             "decisions, and a flat list of winners reads as a contradiction."
         ),

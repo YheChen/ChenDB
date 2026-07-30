@@ -73,13 +73,13 @@ export const WORKLOADS: Workload[] = [
   {
     id: "scan",
     label: "Scan once",
-    hint: "Reads every page. If the table is bigger than the pool, this evicts everything as it goes — and gains nothing from having done so.",
+    hint: "Reads every page. If the table is bigger than the pool, this evicts everything as it goes, and gains nothing from having done so.",
     sql: (table) => `SELECT * FROM ${table};`,
   },
   {
     id: "scan-twice",
     label: "Scan twice",
-    hint: "The second pass hits every page — if the table fits. If it does not, the hit rate barely moves: that is sequential flooding.",
+    hint: "The second pass hits every page, if the table fits. If it does not, the hit rate barely moves: that is sequential flooding.",
     sql: (table) => `SELECT * FROM ${table};\nSELECT * FROM ${table};`,
   },
   {
@@ -108,7 +108,7 @@ export const TRANSACTION_DEMOS: TransactionDemo[] = [
   {
     id: "half-way",
     label: "Break it half-way",
-    hint: "Two good rows, then one with NULL in a NOT NULL column. The first two really are written — watch the undo log grow — and then taken back. Before Milestone 8 they would have stayed.",
+    hint: "Two good rows, then one with NULL in a NOT NULL column. The first two really are written (watch the undo log grow) and then taken back.",
     failsOnPurpose: true,
     blockedBy: (table) =>
       notNullColumn(table)
@@ -148,14 +148,14 @@ export const WAL_DEMOS: WalDemo[] = [
     id: "commit-twenty",
     label: "Commit twenty rows",
     hint: "Each statement commits, so each one fsyncs the log. Watch the record count and the log size climb.",
-    note: "Twenty committed rows. Each statement got an implicit transaction, so each one appended a commit record and fsynced — that is why the sync count went up by twenty.",
+    note: "Twenty committed rows. Each statement got an implicit transaction, so each one appended a commit record and fsynced, which is why the sync count went up by twenty.",
     sql: (table) => insertRows(table, { from: 800_000, count: 20 }),
   },
   {
     id: "uncommitted-fifty",
     label: "Write fifty uncommitted rows",
-    hint: "Open a transaction and write into it without committing. Then crash — and watch these rows not come back.",
-    note: "Fifty rows inside an open transaction, with no commit. They are in the table now and in the log — but with no commit record. Crash the database and recovery will take them back.",
+    hint: "Open a transaction and write into it without committing. Then crash, and watch these rows not come back.",
+    note: "Fifty rows inside an open transaction, with no commit. They are in the table now and in the log, but with no commit record. Crash the database and recovery will take them back.",
     requiresNoTransaction: true,
     sql: (table) => `BEGIN;\n${insertRows(table, { from: 900_000, count: 50 })}`,
   },
@@ -184,7 +184,7 @@ export function walkthroughs(table: TableDetail): Walkthrough[] {
     {
       id: "invisible",
       label: "A reader does not wait",
-      hint: "Run bob's BEGIN and INSERT, then alice's SELECT. Alice returns immediately and does not see the row — she read an older version rather than waiting for the newer one. Then commit bob and run alice again.",
+      hint: "Run bob's BEGIN and INSERT, then alice's SELECT. Alice returns immediately and does not see the row: she read an older version rather than waiting for the newer one. Then commit bob and run alice again.",
       bob: insertRow(table, 9001),
       alice: `SELECT * FROM ${name};`,
     },
@@ -213,14 +213,14 @@ export function walkthroughs(table: TableDetail): Walkthrough[] {
       {
         id: "locks",
         label: "A writer locks, a reader does not",
-        hint: "BEGIN bob and run his UPDATE without committing. The lock table below fills with one exclusive lock per version he touched — two per row, the old one and the new. Now run alice's SELECT: it returns instantly, holds 0 locks, and “readers blocked” stays 0. That is the whole claim of MVCC, in one panel.",
+        hint: "BEGIN bob and run his UPDATE without committing. The lock table below fills with one exclusive lock per version he touched, two per row: the old one and the new. Now run alice's SELECT: it returns instantly, holds 0 locks, and “readers blocked” stays 0. That is the whole claim of MVCC, in one panel.",
         alice: `SELECT * FROM ${name};`,
         bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 200)};`,
       },
       {
         id: "rollback",
         label: "A rollback leaves nothing behind",
-        hint: "BEGIN bob, run his UPDATE, and check rows vs versions on the Storage tab: rows unchanged, versions up by one per row. Now ROLLBACK and look again — the new versions are gone, not merely dead, and Vacuum has nothing to do. ChenDB undoes by restoring pages, which is why it needs no commit log; PostgreSQL, which does not undo, needs both CLOG and a vacuum pass for the rows an aborted transaction left.",
+        hint: "BEGIN bob, run his UPDATE, and check rows vs versions on the Storage tab: rows unchanged, versions up by one per row. Now ROLLBACK and look again: the new versions are gone, not merely dead, and Vacuum has nothing to do. ChenDB undoes by restoring pages, which is why it needs no commit log; PostgreSQL, which does not undo, needs both CLOG and a vacuum pass for the rows an aborted transaction left.",
         alice: `SELECT * FROM ${name};`,
         bob: `UPDATE ${name} SET ${target.name} = ${literalFor(target, 300)};`,
       },
@@ -267,7 +267,7 @@ export const OUTER_JOIN_DEMO_SQL = `-- An outer join keeps what an inner one thr
 -- Run it and compare the two results: the LEFT JOIN keeps 'edsger', who has no
 -- sales at all, with NULLs where the sale would have been.
 --
--- Then read the plans. The ON condition stays AT the join for the outer one —
+-- Then read the plans. The ON condition stays AT the join for the outer one,
 -- for an inner join the planner would push it below, and for an outer join that
 -- would be wrong: it would filter the rows the join exists to preserve.
 
@@ -289,7 +289,7 @@ FROM staff s LEFT JOIN shifts sh ON s.id = sh.staff_id
 WHERE sh.id IS NULL
 ORDER BY s.name;
 
--- And a FULL join, which also keeps shift 13 — whose staff_id matches nobody.
+-- And a FULL join, which also keeps shift 13, whose staff_id matches nobody.
 SELECT s.name, sh.id
 FROM staff s FULL JOIN shifts sh ON s.id = sh.staff_id
 ORDER BY s.name, sh.id;`;

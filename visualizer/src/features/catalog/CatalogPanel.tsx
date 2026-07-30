@@ -204,7 +204,7 @@ function TableBody({
             <tr key={column.name} className="border-t border-[var(--border-subtle)]">
               <td
                 className="text-muted px-2 py-1 font-mono text-[10px]"
-                title="Position in the record layout — the link between the catalog and the on-disk row"
+                title="Position in the record layout: the link between the catalog and the on-disk row"
               >
                 {index}
               </td>
@@ -230,7 +230,7 @@ function TableBody({
           <Field
             label="rows"
             value={formatCount(storage.row_count)}
-            title="What a SELECT would return. O(pages) to compute — nothing is cached, the same reason PostgreSQL's reltuples is only an estimate."
+            title="What a SELECT would return. O(pages) to compute; nothing is cached, the same reason PostgreSQL's reltuples is only an estimate."
           />
           <Field
             label="versions"

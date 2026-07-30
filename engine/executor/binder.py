@@ -426,7 +426,7 @@ def _no_such_column(reference: ColumnRef, scope: Scope) -> str:
         known = ", ".join(entry.binding_name for entry in scope.entries)
         aliased = any(entry.binding_name != entry.table_name for entry in scope.entries)
         return f"no table named {reference.table!r} in FROM; this query has {known}" + (
-            " — note that an alias replaces the table name" if aliased else ""
+            "; note that an alias replaces the table name" if aliased else ""
         )
     available = ", ".join(
         column.name if scope.is_single_table else f"{entry.binding_name}.{column.name}"
@@ -571,7 +571,7 @@ def _require_predicate(expression: Expression, clause: str, *, hint: str = "") -
         return
     raise BindingError(
         f"{clause} must be a boolean, not {static.sql_name}; "
-        f"a bare value is not a condition" + (f" — {hint}" if hint else ""),
+        f"a bare value is not a condition" + (f"; {hint}" if hint else ""),
         start=expression.span.start,
         end=expression.span.end,
         line=expression.span.line,

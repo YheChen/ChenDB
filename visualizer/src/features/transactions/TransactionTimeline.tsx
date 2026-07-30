@@ -38,7 +38,7 @@ export function TransactionTimeline({
     return (
       <EmptyState
         title="No transactions yet"
-        hint="Run any statement — even without BEGIN, the engine opens one and commits it."
+        hint="Run any statement. Even without BEGIN, the engine opens one and commits it."
       />
     );
   }

@@ -278,7 +278,7 @@ function SlotRow({
                   key={field.index}
                   title={
                     field.is_null
-                      ? `${field.name}: NULL — flagged in the bitmap, occupies no bytes`
+                      ? `${field.name}: NULL, flagged in the bitmap, occupies no bytes`
                       : `${field.name}: bytes ${field.offset}–${field.offset + field.length}`
                   }
                   className={cn(

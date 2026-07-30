@@ -21,7 +21,7 @@ function Booting({ progress }: { progress: BootProgress }) {
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-4 px-6 font-mono">
       <p className="text-sm">
-        ChenDB <span className="text-muted">— the whole engine, in this tab</span>
+        ChenDB <span className="text-muted">· the whole engine, in this tab</span>
       </p>
       <div
         className="surface-sunken h-1.5 w-full max-w-sm overflow-hidden rounded-full"
@@ -70,7 +70,7 @@ function Failed({ error }: { error: unknown }) {
       </button>
       <p className="text-muted max-w-lg text-center text-[11px]">
         This build needs WebAssembly and about 15 MB of download. Your databases
-        are stored in this browser only — nothing is uploaded anywhere.
+        are stored in this browser only. Nothing is uploaded anywhere.
       </p>
     </div>
   );

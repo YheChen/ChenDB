@@ -290,7 +290,7 @@ class LockManager:
         raise DeadlockError(
             f"deadlock: transaction {transaction_id}{where} is the youngest in "
             f"the cycle{' ' + path if path else ''}, so it is the one rolled "
-            f"back. Retry it — the other transactions will now proceed."
+            f"back. Retry it; the other transactions will now proceed."
         )
 
     def _already_holds(

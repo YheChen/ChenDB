@@ -243,7 +243,7 @@ function CreateIndexForm({
         />
         <span>
           unique
-          <span className="text-muted"> — rejects duplicates; NULLs are exempt</span>
+          <span className="text-muted">: rejects duplicates, NULLs are exempt</span>
         </span>
       </label>
       {create.isError ? <ErrorNotice error={create.error} /> : null}
@@ -427,7 +427,7 @@ function TreeLegend({
         <Field
           label="root splits"
           value={stats.root_splits}
-          title="The only operation that changes the tree's height — every leaf gets one level deeper at once."
+          title="The only operation that changes the tree's height: every leaf gets one level deeper at once."
         />
         <Field label="searches" value={formatCount(stats.searches)} />
       </dl>

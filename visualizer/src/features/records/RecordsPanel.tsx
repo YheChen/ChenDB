@@ -198,7 +198,7 @@ export function RecordsPanel({
             <span>{formatDuration(query.data.duration_ns)}</span>
             <Badge
               tone="neutral"
-              title="This panel always reads the heap in physical order. An index scan is chosen by the planner, which only sees SQL — run a SELECT in the Execution workspace to see one."
+              title="This panel always reads the heap in physical order. An index scan is chosen by the planner, which only sees SQL. Run a SELECT in the Execution workspace to see one."
             >
               seq scan
             </Badge>

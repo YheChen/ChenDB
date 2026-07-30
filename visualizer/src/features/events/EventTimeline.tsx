@@ -154,7 +154,7 @@ export function EventTimeline({
         >
           {dropped.toLocaleString()} events were dropped
           {droppedByServer > 0 ? ` (${droppedByServer.toLocaleString()} by the server's backpressure policy)` : ""}
-          . The timeline below has gaps — lower the trace level to keep up.
+          . The timeline below has gaps. Lower the trace level to keep up.
         </p>
       ) : null}
 
@@ -164,7 +164,7 @@ export function EventTimeline({
           hint={
             paused
               ? "Resume to keep receiving events from the engine."
-              : "Insert a row or open a page — every storage operation the engine performs appears here."
+              : "Insert a row or open a page. Every storage operation the engine performs appears here."
           }
         />
       ) : (

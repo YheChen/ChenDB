@@ -890,7 +890,7 @@ def _explain_lines(
         f"Statistics: {planned.statistics.row_count} rows, "
         f"{planned.statistics.page_count} pages"
         + (
-            " (STALE — the table has been written to since ANALYZE)"
+            " (STALE: the table has been written to since ANALYZE)"
             if planned.statistics_are_stale
             else ""
         )
