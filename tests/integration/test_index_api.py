@@ -59,9 +59,12 @@ def test_a_fresh_database_has_no_indexes(client: TestClient):
 def test_an_index_appears_after_create_index(seeded: TestClient):
     run(seeded, "CREATE INDEX users_age ON users (age);")
     body = seeded.get(f"{BASE}/indexes").json()
-    assert len(body["indexes"]) == 1
+    # Two, not one: `users` has a primary key, and since Milestone 17 that
+    # implies a unique index on it. It is listed like any other because it *is*
+    # one — a real B+ tree with real pages, not bookkeeping.
+    assert sorted(i["name"] for i in body["indexes"]) == ["users_age", "users_pkey"]
 
-    index = body["indexes"][0]
+    (index,) = [i for i in body["indexes"] if i["name"] == "users_age"]
     assert index["name"] == "users_age"
     assert index["table_name"] == "users"
     assert index["column_name"] == "age"
@@ -78,8 +81,10 @@ def test_listing_can_be_narrowed_to_one_table(seeded: TestClient):
     run(seeded, "CREATE INDEX other_a ON other (a);")
 
     names = [i["name"] for i in seeded.get(f"{BASE}/indexes?table=users").json()["indexes"]]
-    assert names == ["users_age"]
-    assert len(seeded.get(f"{BASE}/indexes").json()["indexes"]) == 2
+    assert sorted(names) == ["users_age", "users_pkey"]
+    # `other` has no primary key, so it contributes only the index just made.
+    everything = seeded.get(f"{BASE}/indexes").json()["indexes"]
+    assert sorted(i["name"] for i in everything) == ["other_a", "users_age", "users_pkey"]
 
 
 def test_creating_an_index_over_the_api_matches_creating_it_in_sql(seeded: TestClient):

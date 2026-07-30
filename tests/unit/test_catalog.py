@@ -123,9 +123,28 @@ def test_ids_are_assigned_in_order_from_the_reserved_boundary(catalog: Catalog):
     first = catalog.create_table("a", SCHEMA)
     second = catalog.create_table("b", SCHEMA)
     assert first.table_id == FIRST_USER_OBJECT_ID
-    assert second.table_id == FIRST_USER_OBJECT_ID + 1
+
+    # Not +1. `SCHEMA` has a primary key, and since Milestone 17 that means an
+    # implied unique index — which draws from the same id sequence, because
+    # tables and indexes share one counter the way PostgreSQL shares OIDs. So
+    # the gap is the demonstration rather than a surprise: table, its index,
+    # next table.
+    assert second.table_id == FIRST_USER_OBJECT_ID + 2
+    (index,) = [entry for entry in catalog.list_indexes() if entry.table_name == "a"]
+    assert index.index_id == FIRST_USER_OBJECT_ID + 1
+
     # Reserved ids must stay out of reach.
     assert first.table_id > COLUMNS_TABLE_ID
+
+
+def test_a_table_without_a_primary_key_gets_no_implied_index(catalog: Catalog):
+    # The other half of the rule above, and the reason the ids can still be
+    # consecutive: nothing is created that was not asked for.
+    keyless = Schema.of(Column("a", DataType.INTEGER), Column("b", DataType.TEXT))
+    first = catalog.create_table("x", keyless)
+    second = catalog.create_table("y", keyless)
+    assert second.table_id == first.table_id + 1
+    assert catalog.list_indexes() == []
 
 
 def test_a_duplicate_name_is_refused_case_insensitively(catalog: Catalog):
@@ -245,10 +264,14 @@ def test_a_lookup_miss_costs_scans_and_a_hit_costs_none(catalog: Catalog):
     assert catalog.stats.scans > scans_before, "a miss scans both system tables"
 
     scans_after_miss = catalog.stats.scans
+    hits_after_miss = catalog.stats.cache_hits
     for _ in range(50):
         catalog.get_table("users")
     assert catalog.stats.scans == scans_after_miss
-    assert catalog.stats.cache_hits == 50
+    # Measured from the baseline rather than from zero. Building the implied
+    # primary-key index looks up the table too, so an absolute count here was
+    # really asserting how many lookups `create_table` happens to make.
+    assert catalog.stats.cache_hits == hits_after_miss + 50
 
 
 def test_hit_rate_reports_the_cache_being_worth_it(catalog: Catalog):

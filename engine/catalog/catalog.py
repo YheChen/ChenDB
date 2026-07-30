@@ -46,6 +46,7 @@ from engine.catalog.system import (
     TABLES_TABLE_NAME,
     TABLES_TABLE_SCHEMA,
     is_system_table,
+    primary_key_index_name,
 )
 from engine.diagnostics.events import (
     CatalogLookupEvent,
@@ -490,6 +491,12 @@ class Catalog:
                     first_page=heap.first_page_id,
                 )
             )
+
+        if (key := schema.primary_key) is not None:
+            self.create_index(primary_key_index_name(name), name, key.name, unique=True)
+            # Re-read: creating the index wrote to the catalog, and `info` above
+            # is a frozen snapshot taken before that happened.
+            info = self.require_table(name)
         return info
 
     def heap_for(self, name: str) -> HeapFile:

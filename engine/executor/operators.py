@@ -70,7 +70,12 @@ from engine.diagnostics.tracer import NULL_TRACER, Tracer
 from engine.errors import RecordNotFoundError
 from engine.executor.binder import BoundAggregate, BoundSortKey, ResultColumn, RowLayout
 from engine.executor.controller import NULL_CONTROLLER, StepController, StepKind
-from engine.executor.expression import describe_expression, evaluate, is_true
+from engine.executor.expression import (
+    check_numeric_range,
+    describe_expression,
+    evaluate,
+    is_true,
+)
 from engine.index.bplustree import BPlusTree
 from engine.index.key import SMALLEST_VALUE_KEY, describe_key
 from engine.parser.ast import AggregateFunction, Expression
@@ -638,7 +643,7 @@ class Filter(Operator):
                 tracer=self.context.tracer,
                 operator_id=self.operator_id,
             )
-            if is_true(verdict):
+            if is_true(verdict, clause="WHERE"):
                 return row
             self._rows_rejected += 1
         return None
@@ -743,14 +748,14 @@ class JoinOperator(Operator):
         return tuple(merged)
 
     def _matches(self, row: Row) -> bool:
-        return (
+        return is_true(
             evaluate(
                 self._predicate,
                 row,
                 tracer=self.context.tracer,
                 operator_id=self.operator_id,
-            )
-            is True
+            ),
+            clause="a join condition",
         )
 
 
@@ -1011,14 +1016,14 @@ class HashAggregate(Operator):
         self._output = []
         for key in order:
             row = (*key, *(accumulator.value() for accumulator in groups[key]))
-            if self._having is not None and (
+            if self._having is not None and not is_true(
                 evaluate(
                     self._having,
                     row,
                     tracer=self.context.tracer,
                     operator_id=self.operator_id,
-                )
-                is not True
+                ),
+                clause="HAVING",
             ):
                 continue
             self._output.append(row)
@@ -1042,6 +1047,12 @@ class _Accumulator:
     ``AVG`` of ``[1, NULL, 3]`` equal 2 and not 1.33 — the NULL is not a zero,
     it is a row that does not participate. ``SUM`` and ``AVG`` over no non-NULL
     values are NULL, and only ``COUNT`` is 0.
+
+    The accumulator no longer has to ask what it is adding: the binder has
+    already refused ``SUM`` and ``AVG`` over anything but a number
+    (:func:`~engine.executor.binder._require_aggregable`). It does still have to
+    ask how *big* the total has grown, because Python's integers do not overflow
+    and ``INTEGER`` does — a sum of int64 values need not be one.
     """
 
     __slots__ = ("_count", "_function", "_max", "_min", "_sum")
@@ -1060,7 +1071,8 @@ class _Accumulator:
         if value is None:
             return
         self._count += 1
-        self._sum = value if self._sum is None else self._sum + value
+        total = value if self._sum is None else self._sum + value
+        self._sum = check_numeric_range(total, "SUM")
         self._min = value if self._min is None else min(self._min, value)
         self._max = value if self._max is None else max(self._max, value)
 

@@ -56,7 +56,7 @@ from engine.executor.binder import (
     RowLayout,
 )
 from engine.executor.expression import describe_expression
-from engine.index.key import SMALLEST_VALUE_KEY, describe_key
+from engine.index.key import SMALLEST_VALUE_KEY, decode_key, describe_key
 from engine.optimizer.cost import (
     Cost,
     aggregate_cost,
@@ -1297,11 +1297,43 @@ def _bounds_for(
             key = info.encode(value)
         except IndexingError:
             continue  # a literal of a type this index cannot encode
+        if decode_key(key, info.data_type) != value:
+            # The key encoding lost something, so this bound is not the
+            # predicate. A FLOAT index encodes its key as a double, and
+            # ``f = 9223372036854775807`` against one rounds *up* to 2⁶³ — so the
+            # index answered ``=`` with the row a sequential scan excludes, and
+            # ``>`` by excluding the row a scan returns. Both answers inverted,
+            # and only when an index happened to exist: adding an index changed
+            # the result of a query, which is the one thing an index must never
+            # do.
+            #
+            # Skipping leaves the comparison to a filter over exact values.
+            # A range bound *could* be kept if it were widened in the safe
+            # direction and the predicate re-checked above, which is what
+            # PostgreSQL's lossy index scans do — but it must then not be
+            # absorbed, and the case is a FLOAT column compared to an integer
+            # too large to be a double. Correct and occasionally slower beats
+            # clever here.
+            continue
 
         match operator:
             case BinaryOperator.EQ:
-                low = high = key
-                include_low = include_high = True
+                # An equality is a lower *and* an upper bound, and both have to be
+                # **intersected** with what is already there rather than replace
+                # it. Assigning `low = high = key` looked equivalent and was not:
+                # `WHERE id = 3 AND id = 2` folded to `id = 2` and marked *both*
+                # conjuncts absorbed, so `id = 3` was dropped and the query
+                # returned the row with id 2. Unsatisfiable predicates are not a
+                # curiosity — they are what a generated query produces constantly,
+                # and what a query built by string concatenation produces by
+                # accident.
+                #
+                # Intersecting gives low=3, high=2 for that pair: an empty range,
+                # which is the right answer and one the B+ tree already handles.
+                if low is None or key > low:
+                    low, include_low = key, True
+                if high is None or key < high:
+                    high, include_high = key, True
             case BinaryOperator.GT | BinaryOperator.GTE:
                 inclusive = operator is BinaryOperator.GTE
                 if low is None or key > low or (key == low and not inclusive):

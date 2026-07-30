@@ -59,6 +59,7 @@ __all__ = [
     "TABLES_TABLE_NAME",
     "TABLES_TABLE_SCHEMA",
     "is_system_table",
+    "primary_key_index_name",
 ]
 
 #: Reserved so a user table can never collide with a system one.
@@ -130,3 +131,18 @@ def is_system_table(name: str) -> bool:
     before it exists.
     """
     return name.casefold().startswith(SYSTEM_TABLE_PREFIX)
+
+
+def primary_key_index_name(table: str) -> str:
+    """What the index behind a ``PRIMARY KEY`` is called.
+
+    PostgreSQL's convention, and it is a *user-visible* name on purpose. The
+    index is a real B+ tree that costs real pages and shows up in the plan view,
+    the index list and ``EXPLAIN``; hiding it would make the primary key look
+    free and the page count unexplained.
+
+    Not in the ``chendb_`` namespace, so it can be dropped — a primary key
+    without its index is a documented gap this closes, not an invariant the
+    catalog defends.
+    """
+    return f"{table}_pkey"

@@ -132,7 +132,33 @@ def test_only_exactly_true_passes_a_where_clause():
     assert is_true(True) is True
     assert is_true(False) is False
     assert is_true(None) is False
-    assert is_true(1) is False, "a truthy non-boolean must not pass"
+
+
+def test_a_non_boolean_predicate_is_an_error_not_a_rejection():
+    """This test used to assert ``is_true(1) is False``.
+
+    Its comment read "a truthy non-boolean must not pass", and that intent was
+    exactly right: Python's truthiness must not leak into SQL, or ``WHERE name``
+    would quietly keep every row with a non-empty name. It stopped one step
+    short. Not passing and being rejected are the same thing to a ``Filter``, so
+    ``WHERE v`` over an INTEGER column returned zero rows and no complaint — the
+    test was pointed straight at the bug and agreed with it.
+
+    Milestone 17 found it by asking SQLite, which answers ``3``. The rule the
+    original test wanted is stronger than the one it wrote down: a value that is
+    not a boolean is not a condition at all.
+    """
+    for value in (1, 0, -1, 2.5, "", "a"):
+        with pytest.raises(EvaluationError, match="must be a boolean"):
+            is_true(value)
+
+
+def test_a_non_boolean_predicate_names_the_clause_it_came_from():
+    # "WHERE must be a boolean" is worth more than "a predicate must be", and
+    # the three call sites — WHERE, HAVING and a join condition — each pass
+    # their own name.
+    with pytest.raises(EvaluationError, match="HAVING must be a boolean, got number"):
+        is_true(1, clause="HAVING")
 
 
 # -- arithmetic ------------------------------------------------------------

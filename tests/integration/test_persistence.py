@@ -164,14 +164,16 @@ def test_table_ids_are_stable_and_start_above_the_reserved_range(
         first = db.create_table("users", users_schema)
         second = db.create_table("orders", ORDERS)
         assert first.table_id == FIRST_USER_OBJECT_ID
-        assert second.table_id == FIRST_USER_OBJECT_ID + 1
+        # Each table's PRIMARY KEY takes the next id for its implied unique
+        # index, so user objects step by two here rather than by one.
+        assert second.table_id == FIRST_USER_OBJECT_ID + 2
 
     with Database.open(db_path) as db:
         assert db.require_table("users").table_id == first.table_id
         assert db.require_table("orders").table_id == second.table_id
         # A third table must not reuse an id after a restart.
         third = db.create_table("items", ORDERS)
-        assert third.table_id == FIRST_USER_OBJECT_ID + 2
+        assert third.table_id == FIRST_USER_OBJECT_ID + 4
 
 
 def test_the_system_tables_are_readable_like_any_other(db_path: Path, users_schema: Schema):
@@ -257,10 +259,16 @@ def test_the_catalog_cache_avoids_rescanning(db_path: Path, users_schema: Schema
 
         db.require_table("users")  # a miss: two full catalog scans
         scans_after_miss = db.catalog.stats.scans
+        hits_after_miss = db.catalog.stats.cache_hits
         for _ in range(20):
             db.require_table("users")
         assert db.catalog.stats.scans == scans_after_miss
-        assert db.catalog.stats.hit_rate > 0.9
+
+        # Every one of the twenty was a hit. Asserting on the *lifetime* hit
+        # rate instead made this a test of how many lookups `create_table`
+        # happens to do — and building the implied primary-key index added
+        # some, which dragged a ratio that was never the point below 0.9.
+        assert db.catalog.stats.cache_hits == hits_after_miss + 20
 
 
 # -- file-level invariants -------------------------------------------------

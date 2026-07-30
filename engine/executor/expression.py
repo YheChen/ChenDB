@@ -42,8 +42,10 @@ behaviour, not a bug.
 
 from __future__ import annotations
 
+import math
 import operator
 from collections.abc import Callable, Sequence
+from fractions import Fraction
 from typing import Any, Final
 
 from engine.diagnostics.events import ExpressionEvalEvent
@@ -60,9 +62,9 @@ from engine.parser.ast import (
     UnaryOp,
     UnaryOperator,
 )
-from engine.serialization.types import DataType
+from engine.serialization.types import INT64_MAX, INT64_MIN, DataType
 
-__all__ = ["describe_expression", "evaluate", "is_true"]
+__all__ = ["check_numeric_range", "describe_expression", "evaluate", "is_true"]
 
 #: Comparison operators. Applied only after both operands are known non-NULL.
 _COMPARISONS: Final[dict[BinaryOperator, Callable[[Any, Any], bool]]] = {
@@ -79,6 +81,10 @@ _ARITHMETIC: Final[dict[BinaryOperator, Callable[[Any, Any], Any]]] = {
     BinaryOperator.SUBTRACT: operator.sub,
     BinaryOperator.MULTIPLY: operator.mul,
 }
+
+#: Above this an integer is not exactly a double, so mixed int/float
+#: arithmetic has to be done another way. 2**53.
+_EXACT_IN_DOUBLE: Final = 9007199254740992
 
 #: Types that can be compared with each other. TEXT is not comparable to a
 #: number: SQL requires an explicit cast, and silently coercing "10" < 9 to
@@ -163,7 +169,10 @@ def _evaluate_unary(
             if value is None:
                 return None
             _require_number(value, "unary -")
-            return -value
+            # Negation overflows in exactly one place, and it is the one people
+            # forget: int64 is asymmetric, so -(-9223372036854775808) has no
+            # int64 to be.
+            return check_numeric_range(-value, "unary -")
         case UnaryOperator.PLUS:
             if value is None:
                 return None
@@ -201,7 +210,7 @@ def _evaluate_binary(
     if op in _ARITHMETIC:
         _require_number(left, op.value)
         _require_number(right, op.value)
-        return _ARITHMETIC[op](left, right)
+        return check_numeric_range(_ARITHMETIC[op](left, right), op.value)
 
     if op is BinaryOperator.DIVIDE:
         return _divide(left, right)
@@ -264,7 +273,7 @@ def _divide(left: Any, right: Any) -> Any:
         # toward negative infinity as Python's // does.
         quotient = abs(left) // abs(right)
         return -quotient if (left < 0) != (right < 0) else quotient
-    return left / right
+    return check_numeric_range(left / right, "/")
 
 
 def _modulo(left: Any, right: Any) -> Any:
@@ -273,8 +282,65 @@ def _modulo(left: Any, right: Any) -> Any:
     if right == 0:
         raise EvaluationError("modulo by zero")
     # Sign follows the dividend, matching C and PostgreSQL rather than Python.
-    remainder = abs(left) % abs(right)
-    return -remainder if left < 0 else remainder
+    magnitude = _exact_remainder(abs(left), abs(right))
+    return check_numeric_range(-magnitude if left < 0 else magnitude, "%")
+
+
+def _exact_remainder(left: Any, right: Any) -> Any:
+    """``left % right`` for non-negative operands, without a silent widening.
+
+    Python's ``int % float`` converts the integer to a double first, and an int64
+    need not survive that: ``9223372036854775807 % 2.0`` rounded the dividend up
+    to 2⁶³ and answered ``0.0`` for an odd number. Both SQLite and PostgreSQL say
+    ``1``.
+
+    :class:`~fractions.Fraction` is exact over both, because every finite double
+    *is* a rational. It is only reached when an integer is too large to be a
+    double exactly — outside 2⁵³ — so the ordinary path keeps doing one machine
+    modulo, and the expensive one runs where the cheap one would be wrong.
+    """
+    mixed = isinstance(left, int) != isinstance(right, int)
+    if mixed and max(abs(left), abs(right)) > _EXACT_IN_DOUBLE:
+        return float(Fraction(left) % Fraction(right))
+    return left % right
+
+
+def check_numeric_range(value: Any, what: str) -> Any:
+    """Return ``value``, or raise if it is a number the engine cannot represent.
+
+    An expression must not be able to produce a value that a column of the same
+    type would refuse. It could, in both directions, and both were found by
+    asking SQLite the same questions:
+
+    ``INTEGER`` is 64 bits — :mod:`engine.serialization.types` says so and the
+    codec enforces it on the way to disk — but nothing enforced it in an
+    expression, so ``SELECT n + 1`` on the largest int64 returned
+    9223372036854775808 under a column labelled INTEGER. Python's unbounded
+    integers are both why it was possible and why the check is needed; in C it
+    would have wrapped, which is worse.
+
+    ``FLOAT`` is a *finite* double, for the reasons :class:`FloatCodec` sets out
+    at length, so ``1e308 * 10`` must not quietly hand back ``inf`` either.
+
+    PostgreSQL raises ``integer out of range`` for the first and keeps infinity
+    for the second; SQLite promotes the integer to a float and turns the
+    infinity into NULL on store. Both of those change the *type* of an answer to
+    avoid an error. Raising keeps each type meaning exactly one thing, wherever
+    the value came from.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not INT64_MIN <= value <= INT64_MAX:
+        raise EvaluationError(
+            f"{what} overflowed: {value} does not fit in a 64-bit INTEGER "
+            f"[{INT64_MIN}, {INT64_MAX}]"
+        )
+    if isinstance(value, float) and not math.isfinite(value):
+        raise EvaluationError(
+            f"{what} produced {value}, which FLOAT cannot represent; NaN and "
+            f"infinity have no total order, so nothing could sort or index it"
+        )
+    return value
 
 
 # -- type checks -----------------------------------------------------------
@@ -331,13 +397,31 @@ def _render(value: Any) -> str:
 # -- helpers ---------------------------------------------------------------
 
 
-def is_true(value: Any) -> bool:
+def is_true(value: Any, *, clause: str = "a predicate") -> bool:
     """Whether a predicate result lets a row through a ``WHERE``.
 
     Only an exact ``True`` passes. ``None`` (unknown) and ``False`` both filter
     the row out — the reason `WHERE age > 18` drops rows whose age is NULL.
+
+    A value that is not a boolean at all is an **error**, not a rejection. That
+    distinction was worth a bug: ``WHERE v`` over an INTEGER column used to
+    return no rows and no complaint, because ``5 is True`` is ``False`` and a
+    filter cannot tell "this row failed" from "this was never a condition". The
+    same silence dropped every group from ``HAVING SUM(v)``. Differential
+    testing against SQLite is what found it, after thirteen milestones —
+    precisely the shape of bug a hand-written test suite does not look for,
+    because you have to think of the query first.
+
+    ``AND`` and ``OR`` have always checked their operands (:func:`_require_boolean`).
+    This closes the one path that did not: a predicate that is a bare column or
+    a bare arithmetic expression, with no logical operator anywhere in it.
     """
-    return value is True
+    if value is None or isinstance(value, bool):
+        return value is True
+    raise EvaluationError(
+        f"{clause} must be a boolean, got {_type_name(value)}; "
+        f"a bare value is not a condition"
+    )
 
 
 def describe_expression(expression: Expression) -> str:

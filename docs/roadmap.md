@@ -22,6 +22,7 @@ the UI until the engine behind it exists.
 | 14 | — (a transport seam, so the app can carry the engine) | Same UI, no server required | **done** |
 | 15 | — (the engine, compiled to WebAssembly) | The whole explorer in a browser tab, no backend | **done** |
 | 16 | — (deployment and persistence) | Databases survive a refresh, kept in IndexedDB | **done** |
+| 17 | Enforced primary keys, and seven bug fixes a differential tester found | — (a test suite, not a panel) | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -33,8 +34,14 @@ integration, which is a guarantee about the other eleven — see
 `docs/milestone-12-ci.md` for why `MILESTONE_FEATURES` stopped at eleven
 entries.
 
+The seventeenth is the interesting case. It shipped a *test suite*, which is a
+statement about the engine like CI — but one of the seven bugs it found was that
+`PRIMARY KEY` had never been enforced, and fixing that gave the engine something
+it could not do before. So it is a feature after all, and it is named rather
+than excused.
+
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-16-persistence.md`.
+the newest is `docs/milestone-17-differential.md`.
 
 ## What each milestone adds to the file format
 
