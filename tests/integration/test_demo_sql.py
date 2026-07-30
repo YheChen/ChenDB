@@ -159,7 +159,15 @@ def test_the_catalogue_covers_every_workspace_with_a_demo(statements: list[dict]
     # A guard that silently stops finding anything is worse than no guard, so
     # this asserts the shape of what it found rather than trusting the count.
     prefixes = {statement["id"].split("/")[0] for statement in statements}
-    assert prefixes == {"buffer", "transactions", "wal", "mvcc", "editor", "execution"}
+    assert prefixes == {
+        "buffer",
+        "transactions",
+        "wal",
+        "mvcc",
+        "editor",
+        "execution",
+        "sql",
+    }
     assert len(statements) >= 20
 
 

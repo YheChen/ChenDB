@@ -328,6 +328,30 @@ SELECT "select" FROM "order";`,
 ];
 
 /**
+ * What the SQL workspace opens with.
+ *
+ * That workspace *only* parses — it is the tokens-and-AST view, and its Parse
+ * button never touches a database. The comment says so without implying the
+ * engine cannot execute, which the previous one did: it read "nothing executes
+ * yet (that is Milestone 3)" for thirteen milestones after Milestone 3 shipped,
+ * because it lived in a component rather than here and the demo-SQL guard never
+ * saw it.
+ */
+export const SQL_INITIAL_SQL = `-- This view parses; it does not run anything.
+-- Click any token or AST node to highlight the SQL it came from, or put the
+-- cursor in the SQL to select the innermost node containing it.
+--
+-- To execute, use the Execution workspace.
+
+SELECT u.email, COUNT(*) AS orders, SUM(o.total) AS spend
+FROM users u JOIN orders o ON u.id = o.user_id
+WHERE u.age >= 18 AND u.email IS NOT NULL
+GROUP BY u.email
+HAVING SUM(o.total) > 100
+ORDER BY spend DESC
+LIMIT 10;`;
+
+/**
  * What the Execution workspace opens with.
  *
  * The two examples that reference `users` before creating it are the editor's
@@ -415,6 +439,14 @@ export function demoStatements(table: TableDetail): DemoStatement[] {
       runs: "skip",
     });
   }
+  add({
+    id: "sql/initial",
+    label: "SQL workspace opener",
+    sql: SQL_INITIAL_SQL,
+    // Parsed, never run: that workspace has no database behind it, and the
+    // statement names tables the user may not have.
+    runs: "skip",
+  });
   add({
     id: "execution/initial",
     label: "Execution workspace opener",

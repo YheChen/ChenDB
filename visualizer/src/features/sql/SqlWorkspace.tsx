@@ -14,18 +14,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SplitPane } from "@/components/SplitPane";
 import { useParseSql } from "@/hooks/useEngine";
+import { SQL_INITIAL_SQL } from "@/lib/demoSql";
 import type { AstNodeModel, ParseResponse } from "@/types/api";
 import { PipelinePanel, type Selection } from "./PipelinePanel";
 import { SqlEditor } from "./SqlEditor";
 
 const STORAGE_KEY = "chendb.sql";
-
-const INITIAL_SQL = `-- Milestone 2 parses; nothing executes yet (that is Milestone 3).
--- Click any token or AST node to highlight the SQL it came from.
-
-SELECT email, age * 2 AS doubled
-FROM users
-WHERE age >= 18 AND email IS NOT NULL;`;
 
 /** How long to wait after a keystroke before re-parsing. */
 const DEBOUNCE_MS = 250;
@@ -58,9 +52,9 @@ export function SqlWorkspace({
 }) {
   const [sql, setSql] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) ?? INITIAL_SQL;
+      return localStorage.getItem(STORAGE_KEY) ?? SQL_INITIAL_SQL;
     } catch {
-      return INITIAL_SQL;
+      return SQL_INITIAL_SQL;
     }
   });
   const [selection, setSelection] = useState<Selection>(null);
