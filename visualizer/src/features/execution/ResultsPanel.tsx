@@ -7,7 +7,28 @@
 
 import { Badge, EmptyState, Panel } from "@/components/primitives";
 import { cn, formatCount, formatDuration, formatValue } from "@/lib/format";
-import type { QueryResultModel } from "@/types/api";
+import type { PlanModel, QueryResultModel } from "@/types/api";
+
+/**
+ * How the chosen plan reads its tables — `seq scan`, `index scan`, or both.
+ *
+ * Read off the plan rather than assumed. This badge was the literal string
+ * "seq scan" from Milestone 3 until Milestone 16, so every index scan the
+ * planner chose from Milestone 5 onward was mislabelled, and every join from
+ * Milestone 13 was reported by only one of its two sides.
+ */
+function accessPath(plan: PlanModel | null | undefined): string | null {
+  if (!plan) return null;
+  const scans = plan.nodes
+    .map((node) => node.operator_type)
+    .filter((type) => type.endsWith("Scan"));
+  if (scans.length === 0) return null;
+  const kinds = [...new Set(scans)].map((type) =>
+    type === "IndexScan" ? "index scan" : "seq scan",
+  );
+  // A join can read one side each way, and saying so is the interesting part.
+  return [...new Set(kinds)].sort().join(" + ");
+}
 
 export function ResultsPanel({
   results,
@@ -215,7 +236,7 @@ function CostFooter({ result }: { result: QueryResultModel }) {
       ) : (
         <span>affected {formatCount(result.rows_affected)}</span>
       )}
-      <span title="Page reads this statement caused. No buffer pool yet, so every one is a syscall.">
+      <span title="Page reads and writes this statement caused. A read served from the buffer pool costs about a third of a miss.">
         pages {formatCount(result.pages_read)}r
         {result.pages_written > 0 ? ` ${formatCount(result.pages_written)}w` : ""}
       </span>
@@ -226,9 +247,12 @@ function CostFooter({ result }: { result: QueryResultModel }) {
         </Badge>
       ) : null}
       {result.cancelled ? <Badge tone="neutral">cancelled</Badge> : null}
-      {result.plan ? (
-        <Badge tone="neutral" title="No index exists until Milestone 5">
-          seq scan
+      {accessPath(result.plan) ? (
+        <Badge
+          tone="neutral"
+          title="The access path the planner actually chose. An index scan needs an index covering the predicate and a cost model that believes it is cheaper — EXPLAIN shows what it rejected."
+        >
+          {accessPath(result.plan)}
         </Badge>
       ) : null}
     </footer>

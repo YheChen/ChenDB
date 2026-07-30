@@ -192,11 +192,14 @@ export function RecordsPanel({
               scanned {formatCount(query.data.rows_scanned)}
             </span>
             <span>returned {formatCount(query.data.returned)}</span>
-            <span title="Page reads this request caused. There is no buffer pool yet, so every one is a real syscall.">
+            <span title="Page reads this request caused. A hit served from the buffer pool costs about a third of a miss; the Buffer pool workspace shows which.">
               pages read {formatCount(query.data.pages_read)}
             </span>
             <span>{formatDuration(query.data.duration_ns)}</span>
-            <Badge tone="neutral" title="No index exists until Milestone 5">
+            <Badge
+              tone="neutral"
+              title="This panel always reads the heap in physical order. An index scan is chosen by the planner, which only sees SQL — run a SELECT in the Execution workspace to see one."
+            >
               seq scan
             </Badge>
           </footer>
