@@ -57,7 +57,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-16 are merged; master is 1.5.0 and CI is green. Nothing is in progress and no branch is open. THE ONE BLOCKING ITEM IS NOT CODE: the repo is not linked on Vercel, so the public demo does not exist yet. Everything in the backlog is polish on something nobody can see until that is done.",
+    "next": "Milestones 1-16 are merged; master is 1.6.0 and CI is green. Nothing is in progress. The Vercel deployment is LIVE and the browser demo now keeps its databases in IndexedDB. Next by value: differential testing against SQLite (correctness), then outer joins (the most likely thing a visitor tries that does not work).",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -162,9 +162,14 @@
       ]
     },
     "milestone_16": {
-      "state": "COMPLETE and MERGED (PR #17)",
-      "shipped": "vercel.json \u2014 buildCommand, outputDirectory, immutable cache headers. Deleted .github/workflows/pages.yml, which never deployed (Pages was never enabled) and failed on every push to master. Versioned the cached assets: wasm-manifest.json names chendb-engine-<v>.json and pyodide-<v>/, so `immutable` is honest.",
-      "why_vercel_not_pages": "Pages cannot set response headers at all, so 12 MB of interpreter is revalidated every load. It also serves gzip where Vercel serves brotli, and a project site from /<repo>/ where Vercel serves a root. The header limitation is the only route to SharedArrayBuffer (COOP/COEP), which is what would give Pyodide real threads and therefore step mode."
+      "state": "COMPLETE and MERGED (PR #17 deploy config, PR #21 persistence)",
+      "shipped": "Vercel deployment, versioned cache paths, and the browser workspace backed by IndexedDB. /workspace is mounted IDBFS; syncfs(true) populates at boot, syncfs(false) stores after any non-GET, debounced 400ms and flushed on pagehide. A /workspace/.chendb-format stamp holds the engine's FORMAT_VERSION and the store is cleared on a mismatch. Escape hatch: 'Clear saved databases and reload' on the failure screen, and chendb.clearStoredData().",
+      "the_line_that_matters": "workspace.close_all() before every syncfs(false). Persisting stores the FILESYSTEM, and a page still in the buffer pool is not on it \u2014 syncing without closing stores the state recovery exists to repair. A test asserts the ordering.",
+      "two_mistakes": [
+        "persist() ended .catch(() => {}). The debounced sync failed silently while an explicit one worked, and 'nothing persisted' was indistinguishable from 'persisting threw'. It logs and counts failures now.",
+        "clearStoredData() was called mid-session during testing, which deletes the IndexedDB database IDBFS is mounted over. Concluded persistence was broken when it was not. RELOAD IMMEDIATELY AFTER \u2014 it is in the docstring in bold."
+      ],
+      "verified": "Two hard reloads in a real browser. users 3 / orders 4 restored, join returning london 3 190 / ny 1 15, page 4 checksum_valid TRUE (so the round trip is byte-exact), a row written after the first restore surviving the second reload, and the crash button recovering on a database that came out of IndexedDB. Also: the store written by engine 1.5.0 opened cleanly under 1.6.0, because FORMAT_VERSION never moved."
     }
   },
   "architecture_invariants": {
@@ -291,7 +296,10 @@
     "Vercel Root Directory must stay at the REPO ROOT. bundle-engine.mjs reads ../engine, so pointing it at visualizer/ breaks the build.",
     "User-facing text must never say a feature is missing. Six strings did, for up to thirteen milestones. visualizer/src/test/uiText.test.ts strips comments and then fails on milestone-deferral or shipped-subsystem-absent claims \u2014 a comment explaining history is fine, the same sentence in a title= is a lie. Describe what a thing does, or use the /health feature flag.",
     "Never hardcode a value the engine can report. The access-path badge was the literal string 'seq scan' from Milestone 3 to 16, so every index scan from Milestone 5 on was mislabelled \u2014 persuasively, by naming a real access path with confidence.",
-    "The guards work only over what they enumerate. Milestone 12's covers SQL in demoSql.ts; two of the six stale strings were not SQL. uiText.test.ts covers source prose; it cannot catch a wrong NUMBER, only wrong words."
+    "The guards work only over what they enumerate. Milestone 12's covers SQL in demoSql.ts; two of the six stale strings were not SQL. uiText.test.ts covers source prose; it cannot catch a wrong NUMBER, only wrong words.",
+    "clearStoredData() deletes the IndexedDB database IDBFS is mounted over. RELOAD IMMEDIATELY AFTER. Clearing and carrying on leaves the mount pointing at nothing: in-memory files remain so the session looks fine, and the next sync writes into a recreated store. This made persistence look broken when it was not.",
+    "Never end a persistence path with .catch(() => {}). A silent sync failure is indistinguishable from nothing having been written, which cost three rounds of debugging in Milestone 16.",
+    "The browser build's format stamp uses FORMAT_VERSION (engine/storage/constants.py), not engine.__version__. Bumping the engine version must NOT clear a visitor's databases; only a file-format change should."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
@@ -306,19 +314,9 @@
   "known_issues": [],
   "backlog": [
     {
-      "item": "Link the repo on Vercel",
-      "status": "BLOCKED ON THE USER \u2014 not a code change",
-      "why": "vercel.json already sets buildCommand, outputDirectory and headers. Framework Preset: Other. Root Directory MUST stay at the repo root, because bundle-engine.mjs reads ../engine.",
-      "note": "Bandwidth: ~8 MB compressed per cold visit, so the 100 GB free tier is ~12,000 loads/month."
-    },
-    {
-      "item": "Persistence in the WASM build (IndexedDB)",
-      "status": "not started",
-      "why": "Closing the tab loses the database. For a demo opened from a link that is the largest experience gap: build something, refresh, gone. Pyodide can mount IDBFS over the workspace and syncfs on write.",
-      "touches": [
-        "visualizer/src/lib/wasmBootstrap.py",
-        "visualizer/src/lib/wasmTransport.ts"
-      ]
+      "item": "Differential testing against SQLite",
+      "status": "not started \u2014 RECOMMENDED NEXT",
+      "why": "The highest-value correctness work left. 1,239 tests were all written by whoever wrote the engine, so they test what its author thought of. Milestone 11 turned up four real bugs by accident, Milestone 12's CI failed on a real staleness on its first run, six UI strings were wrong for a dozen milestones, and Milestone 16 had two self-inflicted bugs found only by trying it in a browser. A fuzzer comparing random schemas and queries against SQLite would find the semantic corners nobody writes a test for: NULL ordering, integer division, comparison across types, aggregates over empty groups."
     },
     {
       "item": "Outer joins",
