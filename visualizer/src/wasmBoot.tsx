@@ -3,8 +3,8 @@
  *
  * Starting the engine takes a few seconds and about 15 MB, so this renders a
  * progress screen first and mounts the app only once the transport is ready.
- * The alternative — mount immediately and let every panel show its own
- * "cannot reach the engine" — would be technically fine and read as broken.
+ * The alternative, mount immediately and let every panel show its own
+ * "cannot reach the engine", would be technically fine and read as broken.
  */
 
 import { StrictMode, useState } from "react";
@@ -47,7 +47,7 @@ function Failed({ error }: { error: unknown }) {
    *
    * Databases now survive a refresh, which means a bad one survives too. A
    * visitor whose store cannot be opened would otherwise have a permanently
-   * broken page and no way to know it is fixable — worse than a demo that
+   * broken page and no way to know it is fixable, worse than a demo that
    * forgets everything. So the failure screen offers the fix rather than
    * describing it.
    */

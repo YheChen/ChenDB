@@ -214,7 +214,7 @@ def benchmark_storage_primitives(workdir: Path) -> None:
 
 
 def main() -> int:
-    print("ChenDB — diagnostics and storage benchmark")
+    print("ChenDB, diagnostics and storage benchmark")
     print(f"Python {sys.version.split()[0]}  ·  page size {PAGE_SIZE} B")
 
     with tempfile.TemporaryDirectory() as tmp:

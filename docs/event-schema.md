@@ -46,7 +46,7 @@ serialization method.
 | `OFF`      | 0     | nothing; every fast-path flag is `False`                |
 | `SUMMARY`  | 10    | one event per top-level operation                       |
 | `OPERATOR` | 20    | query-plan operator lifecycle (Milestone 3)             |
-| `STORAGE`  | 30    | page reads/writes, allocations, record I/O — **default**|
+| `STORAGE`  | 30    | page reads/writes, allocations, record I/O, **default**|
 | `VERBOSE`  | 40    | per-row and per-expression detail                       |
 
 Levels are strictly nested and spaced by ten so a tier can be inserted later
@@ -80,7 +80,7 @@ branch.
 |------------------|------------------------------------------------------------|
 | `NullSink`       | discards; installed when tracing is off                    |
 | `RingBufferSink` | bounded history, lock-guarded; `snapshot()` copies atomically |
-| `CallbackSink`   | forwards to a function — one per WebSocket connection      |
+| `CallbackSink`   | forwards to a function, one per WebSocket connection      |
 | `FanoutSink`     | delivers to several; swallows per-sink exceptions          |
 
 `FanoutSink` swallowing exceptions is deliberate. Diagnostics are best-effort:
@@ -127,7 +127,7 @@ the wire format does not change when those milestones land.
 | `RecordReadEvent` | VERBOSE | `page_id`, `slot_id`, `length` |
 | `HeapScanEvent` | SUMMARY | `action`, `first_page_id`, `pages_scanned`, `rows_emitted`, `duration_ns` |
 
-### `parser` — added in Milestone 2
+### `parser`: added in Milestone 2
 
 | Event | Level | Fields |
 |---|---|---|
@@ -142,7 +142,7 @@ recursive descent building the tree bottom-up: leaves first, root last.
 `ParseErrorEvent` is `OPERATOR` rather than `VERBOSE` because a failed parse is a
 headline event and the editor needs its position to place a marker.
 
-### `catalog` — added in Milestone 4
+### `catalog`: added in Milestone 4
 
 | Event | Level | Fields |
 |---|---|---|
@@ -153,7 +153,7 @@ headline event and the editor needs its position to place a marker.
 `chendb_tables` plus one of `chendb_columns`, so the hit rate is what makes the
 in-memory catalog cache worth having.
 
-### `operator` — added in Milestone 3
+### `operator`: added in Milestone 3
 
 | Event | Level | Fields |
 |---|---|---|
@@ -171,11 +171,11 @@ moving through the plan.
 per row.
 
 `RecordReadEvent` is `VERBOSE` for the same reason: a scan would otherwise emit
-one event per row — exactly the flood trace levels exist to prevent.
+one event per row, exactly the flood trace levels exist to prevent.
 
 ---
 
-## `index` — Milestone 5
+## `index`: Milestone 5
 
 ```
 IndexCreatedEvent   SUMMARY  index_name, index_id, table_name, column_name,
@@ -200,7 +200,7 @@ Two field names are worth explaining. `tree_level` is called that, and not
 `level`, because `DiagnosticEvent` already declares `level` as the *trace* level;
 re-annotating a `ClassVar` as an instance field makes `dataclass` build a broken
 `__init__`. And `key`, `low`, `high` and `promoted_key` arrive **already rendered
-as strings** — an encoded key is an order-preserving byte string only
+as strings**. An encoded key is an order-preserving byte string only
 `engine.index.key` can interpret, and carrying the raw bytes plus a column type
 would make every consumer of the bus depend on the index package.
 
@@ -209,7 +209,7 @@ clean descent, larger when duplicates span leaves and the search steps right.
 
 ---
 
-## `planner` — Milestone 6
+## `planner`: Milestone 6
 
 ```
 StatisticsGatheredEvent SUMMARY  table_name, row_count, page_count,
@@ -236,7 +236,7 @@ is a read of the table and happens whether or not anything is being planned.
 
 ---
 
-## `buffer_pool` — Milestone 7
+## `buffer_pool`: Milestone 7
 
 ```
 BufferPoolEvent  STORAGE  action: miss|dirty|evict|flush, frame_id, page_id,
@@ -251,7 +251,7 @@ see.
 
 There is **no `pin_count`**, despite the planned schema naming one. ChenDB's pool
 copies out of a frame rather than lending it, so no caller can be holding one
-when it is reused and a pin count would always read zero — a number that never
+when it is reused and a pin count would always read zero, a number that never
 prevents anything. `engine/storage/buffer.py` explains when that stops being
 true.
 
@@ -261,13 +261,13 @@ Two existing events changed meaning in this milestone:
   `"buffer_pool"` on a hit. The field was in the schema from the start precisely
   so this change needed no consumer to be updated.
 * `PageWriteEvent` gained `deferred`, true when the pool absorbed the write and
-  nothing reached the disk — which since Milestone 7 is the common case. The
+  nothing reached the disk, which since Milestone 7 is the common case. The
   bytes go out later, reported as a `BufferPoolEvent` with action `evict` or
   `flush`.
 
 ---
 
-### Milestone 8 — `transaction`
+### Milestone 8: `transaction`
 
 | Event | Level | Fields |
 |---|---|---|
@@ -279,7 +279,7 @@ Two existing events changed meaning in this milestone:
 names for one thing in a stream people read is a way to make them wonder what
 the difference is.
 
-There is no `isolation_level` either — this was in the plan and turned out to
+There is no `isolation_level` either. This was in the plan and turned out to
 name nothing. One writer at a time means every transaction sees a database only
 it is changing, so the field would have read `SERIALIZABLE` forever. It arrives
 in Milestone 10 with MVCC, where the value can actually differ.
@@ -294,7 +294,7 @@ from one the user asked for. Most transactions in a session are implicit, and a
 timeline that did not say so would look like the user was running `BEGIN`
 constantly.
 
-### Milestone 9 — `wal`, `recovery`
+### Milestone 9: `wal`, `recovery`
 
 | Event | Level | Fields |
 |---|---|---|
@@ -305,7 +305,7 @@ constantly.
 | `RecoveryActionEvent` | `OPERATOR` | `phase`, `lsn`, `page_id`, `decision`, `reason` |
 
 The append is `STORAGE` and the flush is `SUMMARY`, which is the wrong way round
-until you look at what each one is. There is one append per page write — the log
+until you look at what each one is. There is one append per page write. The log
 is the busiest thing in the engine, and a summary-level trace of a bulk insert
 should not be mostly WAL. A flush is the **fsync**, and its duration is the
 number that decides how fast commits can possibly go; that belongs in a trace
@@ -314,17 +314,17 @@ otherwise reporting only statements.
 `CheckpointEvent` reports `pages_flushed` rather than the planned
 `dirty_pages`/`active_transactions`. Those two were specified for a *fuzzy*
 checkpoint, which records what is dirty and what is running and lets both keep
-going. ChenDB's checkpoints are sharp — they flush everything and refuse to run
-while a transaction is open — so `active_transactions` would always be zero and
+going. ChenDB's checkpoints are sharp (they flush everything and refuse to run
+while a transaction is open) so `active_transactions` would always be zero and
 `dirty_pages` would always be "all of them, and now none".
 
 `RecoveryPhaseEvent` is deliberately loud at `SUMMARY`: recovery running at all
 means the last process did not shut down cleanly, and that is something a user
 should see without having turned tracing up. `RecoveryActionEvent` is one per
-record, so it sits at `OPERATOR` — and `skip` matters as much as `redo`, because
+record, so it sits at `OPERATOR`, and `skip` matters as much as `redo`, because
 a skipped record is the last checkpoint having done its job.
 
-### Milestone 10 — `lock`, `mvcc`
+### Milestone 10: `lock`, `mvcc`
 
 | Event | Level | Fields |
 |---|---|---|
@@ -335,7 +335,7 @@ a skipped record is the last checkpoint having done its job.
 
 `LockEvent` is `SUMMARY` and every one of them is a **writer**: under MVCC a
 reader takes no lock, so a lock event appearing at all means two writers met.
-The `waiting` action is the interesting one — row-level locking is supposed to
+The `waiting` action is the interesting one, row-level locking is supposed to
 make it rare.
 
 `DeadlockEvent` names the whole cycle rather than just the victim, because being
@@ -350,7 +350,7 @@ the page that this snapshot had to walk past. If it grows and never falls, a
 vacuum is overdue.
 
 There is no `isolation_level` on `TransactionEvent`, which the original plan
-had. It went on `SnapshotEvent` instead — the level only ever *does* anything at
+had. It went on `SnapshotEvent` instead. The level only ever *does* anything at
 the moment a snapshot is taken, and putting it on both would mean two places to
 keep in step.
 
@@ -364,8 +364,8 @@ document exists.
 1. Add the frozen dataclass to `engine/diagnostics/events.py` with `category`
    and `level` as `ClassVar`s, and export it from `engine/diagnostics/__init__.py`.
 2. Emit it behind a cached tracer flag at the point the work happens.
-3. Nothing else. Serialization is generic — `mappers._event_payload` walks the
-   dataclass fields — so no mapper change is needed unless a field holds a
+3. Nothing else. Serialization is generic (`mappers._event_payload` walks the
+   dataclass fields) so no mapper change is needed unless a field holds a
    non-primitive.
 4. Add the event type to the table above.
 

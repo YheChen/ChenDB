@@ -4,7 +4,7 @@
     python examples/milestone2_parser.py
 
 Shows tokens, the AST, operator precedence, and what happens when the SQL is
-wrong. Nothing executes — that is Milestone 3.
+wrong. Nothing executes, that is Milestone 3.
 """
 
 from __future__ import annotations

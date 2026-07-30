@@ -14,7 +14,7 @@ present. A recovery view that only showed the work done would hide the work the
 last checkpoint saved.
 
 Page images are **not** sent. A log record carries up to two of them, so a
-thousand records is eight megabytes of JSON that no panel renders — the sizes
+thousand records is eight megabytes of JSON that no panel renders. The sizes
 are, because the sizes are the interesting part.
 """
 

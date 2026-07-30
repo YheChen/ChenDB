@@ -9,7 +9,7 @@ The crash button
 ----------------
 ``POST /crash`` **destroys uncommitted work on purpose.** It drops the database
 handle without flushing dirty pages, running a checkpoint, or rolling anything
-back, and the next request reopens the file — which runs recovery.
+back, and the next request reopens the file, which runs recovery.
 
 It is here because the alternative is a recovery panel that describes recovery
 instead of showing it, and a reader has no reason to believe a description. The
@@ -83,7 +83,7 @@ def get_recovery(managed: DatabaseDep) -> RecoveryReportModel:
     summary="Flush every dirty page, then discard the log",
 )
 def run_checkpoint(managed: DatabaseDep) -> CheckpointResponse:
-    """Refused while a transaction is open — see :meth:`Database.checkpoint`."""
+    """Refused while a transaction is open, see :meth:`Database.checkpoint`."""
     with managed.use() as db:
         log = db.pager.wal
         before = log.path.stat().st_size if log is not None else 0
@@ -118,7 +118,7 @@ def simulate_crash(managed: DatabaseDep, workspace: WorkspaceDep) -> CrashRespon
 
     The row counts are gathered on both sides of the crash by this endpoint
     rather than left to the caller, because a caller that forgot to ask first
-    would have nothing to compare against — and "some rows are gone" is not a
+    would have nothing to compare against, and "some rows are gone" is not a
     demonstration without the number they were.
     """
     with managed.use() as db:
@@ -150,6 +150,6 @@ def simulate_crash(managed: DatabaseDep, workspace: WorkspaceDep) -> CrashRespon
 
 
 def _row_counts(db) -> dict[str, int]:
-    """Rows per user table. Counted, not estimated — the planner's statistics
+    """Rows per user table. Counted, not estimated. The planner's statistics
     would be a guess, and a guess is not evidence of anything."""
     return {table.name: db.count(table.name) for table in db.catalog.list_tables()}

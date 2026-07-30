@@ -11,7 +11,7 @@
 Every page write in the engine funnels through ``Pager._write_at``, so that is
 the single place a before-image is captured.  One hook covers the heap, every
 index, both catalog tables and the meta page, with nothing in any of them
-changed — which is why ``CREATE TABLE`` became atomic in this milestone without
+changed, which is why ``CREATE TABLE`` became atomic in this milestone without
 the catalog knowing transactions exist.
 
 Implicit and explicit
@@ -21,7 +21,7 @@ finishes.  So ``INSERT INTO t VALUES (a), (b), (c)`` that fails on ``c`` leaves
 none of them, which it did not before.
 
 :func:`execute_script` wraps a whole script rather than each statement. That is
-*not* what the SQL standard says — autocommit is per statement — and it is what
+*not* what the SQL standard says (autocommit is per statement) and it is what
 ``execute_script``'s docstring has promised since Milestone 3: "a script that
 fails half-way leaves the statements before the failure applied. Milestone 8
 makes that atomic." A script is one unit of work here; a client that wants
@@ -47,7 +47,7 @@ ChenDB allows steal, and the consequence is precise:
   evict is on disk, the undo log died with the process, and nothing on disk says
   a transaction was open.
 
-The obvious fix — pin dirty uncommitted pages so they cannot be stolen — was
+The obvious fix (pin dirty uncommitted pages so they cannot be stolen) was
 considered and rejected, because *it does not buy crash atomicity either*.
 No-steal keeps uncommitted pages out of the file, but a crash **during the
 commit flush** still leaves a partial transaction, and nothing on disk
@@ -105,12 +105,12 @@ class TransactionState(StrEnum):
     ACTIVE = "active"
     FAILED = "failed"
     """Open, but doomed. A statement raised inside it, so the only things that
-    may follow are ``COMMIT`` — which rolls back — and ``ROLLBACK``.
+    may follow are ``COMMIT`` (which rolls back) and ``ROLLBACK``.
 
     PostgreSQL has exactly this state and reports it as "current transaction is
     aborted, commands ignored until end of transaction block". Without it, a
     client that sent ``BEGIN``, hit an error, and then sent ``COMMIT`` would
-    keep whatever ran before the failure — half a transaction, committed, which
+    keep whatever ran before the failure, half a transaction, committed, which
     is the one outcome this milestone exists to prevent."""
     COMMITTED = "committed"
     ABORTED = "aborted"
@@ -180,7 +180,7 @@ class TransactionManager:
     session*, which is a smaller change than it sounds: the engine still runs
     one statement at a time, so nothing here has to arbitrate simultaneous
     access to a page. What is new is that a transaction can stay open across
-    statements belonging to *other* sessions — and a lock it holds meanwhile is
+    statements belonging to *other* sessions, and a lock it holds meanwhile is
     what blocks them.
 
     That is the honest shape of the concurrency this engine has. Two sessions
@@ -205,7 +205,7 @@ class TransactionManager:
     )
 
     #: Finished transactions kept for the timeline. Bounded, because a long
-    #: session would otherwise accumulate every transaction it ever ran — the
+    #: session would otherwise accumulate every transaction it ever ran, the
     #: same reason the execution store is bounded.
     HISTORY_LIMIT = 50
 
@@ -214,7 +214,7 @@ class TransactionManager:
         self._lock = threading.RLock()
         #: The open transaction for each session that has one.
         self._by_session: dict[str, Transaction] = {}
-        #: The same transactions, keyed by id — what a snapshot needs.
+        #: The same transactions, keyed by id, what a snapshot needs.
         self._running: dict[int, Transaction] = {}
         self._history: list[Transaction] = []
         self._history_limit = self.HISTORY_LIMIT
@@ -227,7 +227,7 @@ class TransactionManager:
     def frozen_xid(self) -> int:
         """Ids below this committed before this process started.
 
-        Read from the meta page at open. It is the entire commit log — see
+        Read from the meta page at open. It is the entire commit log, see
         :mod:`engine.concurrency.snapshot` for why one number suffices here and
         does not in PostgreSQL.
         """
@@ -382,7 +382,7 @@ class TransactionManager:
         Vacuum's horizon: a version deleted by a transaction below this can no
         longer be wanted by anybody, so its space is reclaimable. A single
         long-running transaction holds this number down and stops vacuuming
-        making progress — which is PostgreSQL's most common "why is my disk
+        making progress, which is PostgreSQL's most common "why is my disk
         full" answer, and it is the same mechanism.
         """
         with self._lock:
@@ -413,7 +413,7 @@ class TransactionManager:
         """Accept the work. The undo log is discarded, not applied.
 
         Nothing is written here. The pages are already in the buffer pool, dirty
-        or already stolen, and durability is still :meth:`Pager.sync`'s job — so
+        or already stolen, and durability is still :meth:`Pager.sync`'s job, so
         a commit costs a state change and a freed undo log. That is *no-force*
         in ARIES terms, and it is only safe because a commit here does not claim
         to be durable. Milestone 9 is where commit means something on disk.
@@ -497,13 +497,13 @@ class TransactionManager:
         """Capture ``page_id``'s current bytes, if a transaction needs them.
 
         ``current`` is a callable rather than the bytes themselves so the page
-        is only read when a record is actually going to be kept — which, thanks
+        is only read when a record is actually going to be kept, which, thanks
         to first-write-wins, is the minority of writes in any real transaction.
 
         Returns what the pager needs to log this change: which transaction it
         belongs to, and the before-image if this is that transaction's first
-        write to the page. Both mechanisms — the in-memory undo log and the
-        on-disk one — capture on exactly the same rule, so the page is read at
+        write to the page. Both mechanisms (the in-memory undo log and the
+        on-disk one) capture on exactly the same rule, so the page is read at
         most once either way.
         """
         transaction = self.active_in(session)

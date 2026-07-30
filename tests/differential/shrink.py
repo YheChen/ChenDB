@@ -9,7 +9,7 @@ Two properties make it trustworthy.
 
 **It keeps the *same* failure.** A candidate is accepted only when the smaller case
 still produces a comparison with the identical
-:meth:`~tests.differential.oracle.Comparison.signature` — not merely when it still
+:meth:`~tests.differential.oracle.Comparison.signature`, not merely when it still
 fails somehow. Without that, a shrinker wanders onto a second, easier bug and
 reports a beautiful minimal case for something nobody was looking at. That is the
 most common way a shrinker lies, and it costs one comparison per candidate to
@@ -37,7 +37,7 @@ from tests.differential.oracle import Comparison
 __all__ = ["MAX_STEPS", "reductions", "shrink", "size"]
 
 #: Each candidate costs about a millisecond and a half, so this is under a second
-#: — which is why shrinking runs inside the failing test rather than in a separate
+#:, which is why shrinking runs inside the failing test rather than in a separate
 #: tool a developer has to know to invoke.
 MAX_STEPS = 400
 
@@ -134,7 +134,7 @@ def _renumber(table: TableSpec, rows: tuple[tuple[object, ...], ...]) -> tuple:
     """Keep the primary key dense after a row is dropped.
 
     The key is an index, so removing row 1 of three would otherwise leave keys
-    0 and 2 — which is legal, but makes a shrunk case read as though the gap
+    0 and 2, which is legal, but makes a shrunk case read as though the gap
     mattered. Renumbering keeps the repro about the thing that is wrong.
     """
     position = next(
@@ -156,7 +156,7 @@ def _fewer_indexes(instance: Case) -> Iterator[Case]:
 
 
 def _weaker_constraints(instance: Case) -> Iterator[Case]:
-    """Drop a ``NOT NULL``. The primary key stays — the rows depend on it."""
+    """Drop a ``NOT NULL``. The primary key stays. The rows depend on it."""
     for position, table in enumerate(instance.schema.tables):
         for index, column in enumerate(table.columns):
             if column.nullable or column.primary_key:

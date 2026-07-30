@@ -3,7 +3,7 @@
 The interesting number here is ``pages_held``: the size of the undo log, which
 is the price of being able to change your mind. It grows with *distinct pages
 touched*, not with rows written, and the difference between those two is the
-whole point of first-write-wins — a transaction that updates the same page ten
+whole point of first-write-wins. A transaction that updates the same page ten
 thousand times still holds one before-image.
 
 ``undo_bytes`` makes that concrete in a unit the browser can render as a bar

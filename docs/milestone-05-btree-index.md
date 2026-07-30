@@ -1,7 +1,7 @@
-# Milestone 5 — B+ tree indexes
+# Milestone 5: B+ tree indexes
 
 A sequential scan of a 20,000-row table reads 233 pages to find one row. With an
-index it reads 4. That single change — O(pages) to O(log pages) — is what
+index it reads 4. That single change (O(pages) to O(log pages)) is what
 separates a database from a file of rows, and it is what this milestone builds.
 
 It also builds the reason *not* to use one, because a rule-based planner gets
@@ -9,7 +9,7 @@ that wrong and the numbers below show it doing so.
 
 ```
 engine/index/
-    key.py         order-preserving key encoding — read this first
+    key.py         order-preserving key encoding, read this first
     node.py        one slotted page interpreted as a tree node
     bplustree.py   search, insert, split, range scan, delete
 ```
@@ -44,7 +44,7 @@ keys, and the tree cannot work around it:
 ```
 
 Compared byte by byte, `1 > 256`, because the first byte examined is the *least*
-significant one. Two's complement makes it worse — `-1` is all ones, which is the
+significant one. Two's complement makes it worse, `-1` is all ones, which is the
 largest unsigned value there is.
 
 There were two ways out.
@@ -64,20 +64,20 @@ that sorts a list of values and asserts the encodings sort the same way.
 
 The transforms, and the traps in each:
 
-- **INTEGER** — big-endian of `value + 2**63`. The bias flips the sign bit,
+- **INTEGER**: big-endian of `value + 2**63`. The bias flips the sign bit,
   mapping `INT64_MIN → 0x0000…` and `INT64_MAX → 0xffff…`, a monotonic map from
   signed to unsigned.
-- **FLOAT** — big-endian IEEE-754 bits, then flip *all* bits if negative and
+- **FLOAT**: big-endian IEEE-754 bits, then flip *all* bits if negative and
   *only the sign bit* if positive. IEEE-754 was designed so positive floats sort
   correctly as integers; the transform extends that to negatives, whose
   magnitude ordering runs backwards. `-0.0` is normalised to `0.0`, or a unique
   index would accept both. `NaN` sorts above everything, as in PostgreSQL.
-- **TEXT** — raw UTF-8, *no length prefix*. UTF-8's defining property is that
+- **TEXT**: raw UTF-8, *no length prefix*. UTF-8's defining property is that
   byte order equals code-point order. A length prefix would sort `"z"` before
   `"aa"`, which is the classic version of this mistake.
 
 Ordering is binary, not linguistic: `"Z" < "a"`. Real collation is a much larger
-problem — PostgreSQL delegates it to ICU or libc, and a glibc upgrade that
+problem, PostgreSQL delegates it to ICU or libc, and a glibc upgrade that
 changed collation famously corrupted people's indexes silently. Binary ordering
 at least never changes underneath you.
 
@@ -93,12 +93,12 @@ Every key carries a one-byte tag. It does two jobs at once:
 
 The sentinel removes the need for a special "leftmost child" field in the page
 header: slot 0 of an internal node is always minus infinity, so a descent always
-finds a child to follow. PostgreSQL does the same thing — "the first data key on
+finds a child to follow. PostgreSQL does the same thing. "the first data key on
 a non-leaf page is always minus infinity".
 
 The `NULL` tag is load-bearing in a way that is easy to miss. `WHERE age < 18`
 becomes a range scan bounded only from above, and an unbounded low end would
-sweep up every NULL key — but no comparison is ever true for NULL. The planner
+sweep up every NULL key, but no comparison is ever true for NULL. The planner
 therefore anchors the low end at `SMALLEST_VALUE_KEY` (`0x02`), which excludes
 the NULL tag by construction.
 
@@ -125,7 +125,7 @@ small and the fanout stays large. A plain B-tree stores values in internal nodes
 too, so it is taller for the same data.
 
 **Leaves are linked.** A range scan descends once and then walks sideways, so
-`WHERE age BETWEEN 30 AND 40` costs one descent plus the leaves it touches — no
+`WHERE age BETWEEN 30 AND 40` costs one descent plus the leaves it touches, no
 re-descent per row.
 
 **Growth is at the root.** A node that overflows splits and pushes a separator
@@ -140,7 +140,7 @@ which buys three things a per-key list of record ids does not:
 
 - deleting one row's entry is a descent, not a scan of every duplicate;
 - a split can happen anywhere, including in the middle of a run of duplicates;
-- a page holding one repeated key is still splittable — a list is not, once it
+- a page holding one repeated key is still splittable, a list is not, once it
   outgrows a page.
 
 PostgreSQL adopted exactly this in version 12 ("make the heap TID a tiebreaker
@@ -151,7 +151,7 @@ The two compare as a *pair*, not as concatenated bytes. Concatenating would
 reintroduce the prefix problem the key encoding avoids: `"ab" ‖ rid` and
 `"abc" ‖ rid` interleave, and whether the comparison comes out right would
 depend on the numeric value of the record id. Splitting the fixed-width 6-byte
-suffix off by length is exact and needs no escaping layer — which is also the
+suffix off by length is exact and needs no escaping layer, which is also the
 reason Milestone 5 indexes one column and not two. A composite key *would* need
 that layer: escape `0x00` as `0x00 0xff`, terminate with `0x00 0x00`, exactly as
 FoundationDB's tuple layer does.
@@ -181,8 +181,8 @@ version 11 to reclaim empty index pages and still never merges partly-full ones;
 SQLite does merge, and pays with a far more complex balance routine.
 
 The cost is measurable and bounded: a delete-heavy index keeps its pages. Space
-is reused by later inserts into the same key range — `test_space_from_deletions_is_reused_in_place`
-pins that down — but never returned to the file.
+is reused by later inserts into the same key range (`test_space_from_deletions_is_reused_in_place`
+pins that down) but never returned to the file.
 
 **No bulk loading.** `CREATE INDEX` inserts row by row: O(n log n), with a split
 roughly every half-node. Over 20,000 rows that is 3.2 seconds and 185 splits. A
@@ -191,7 +191,7 @@ is O(n log n) for the sort and then O(n), and produces a tree with no wasted
 space.
 
 **No concurrency.** One writer at a time, enforced by the database-level lock.
-Real B+ trees use latch coupling — grab the child's latch, release the parent's —
+Real B+ trees use latch coupling (grab the child's latch, release the parent's)
 and the B<sup>link</sup>-tree right-link trick that lets a reader recover when a
 concurrent split moves the key it wanted. Milestone 10.
 
@@ -213,7 +213,7 @@ WHERE age <> 7                index on age   →  SeqScan + Filter
 The rule is "use an index whenever one covers a comparison". A conjunction is
 flattened, comparisons on one indexed column are folded into a single
 `[low, high]` range, and whatever the index could not express stays as a
-residual `Filter` — which is exactly PostgreSQL's "Index Cond" versus "Filter"
+residual `Filter`, which is exactly PostgreSQL's "Index Cond" versus "Filter"
 distinction, and the distinction matters: an index condition bounds how much is
 *read*, a filter only discards what was already read.
 
@@ -240,7 +240,7 @@ decides whether an index helps. Measured on 20,000 rows, 4 KiB pages
 A point lookup is **328× faster**. A predicate matching 70% of the table is
 **3.8× slower**, and the page counts say why: a sequential scan reads every page
 exactly once whatever the predicate, while an index scan reads one heap page per
-matching row — the same page over and over when several matches share it, since
+matching row. The same page over and over when several matches share it, since
 there is no buffer pool until Milestone 7.
 
 The crossover sits between 5% and 20% selectivity here. Estimating selectivity,
@@ -257,7 +257,7 @@ every index on the table:
 - `insert_many` descends each index once per row. An insert into a table with
   three indexes is four B+ tree operations plus the heap write. That is the cost
   indexes impose on writes, and the reason you do not add one per column.
-- `delete` has to *read the row first* — an index entry is keyed on the value, so
+- `delete` has to *read the row first*. An index entry is keyed on the value, so
   removing it needs to know what the value was. This is why PostgreSQL instead
   leaves index entries pointing at dead tuples and cleans them up in `VACUUM`.
 
@@ -265,7 +265,7 @@ None of it is atomic. A unique violation on the second index leaves the first
 updated and the row in the heap. One more thing Milestone 9's write-ahead log is
 for.
 
-`IndexScan` skips a record id whose row is gone rather than failing — the same
+`IndexScan` skips a record id whose row is gone rather than failing. The same
 recovery PostgreSQL performs when it reaches a dead tuple through an index.
 
 ---
@@ -283,7 +283,7 @@ _INDEX_EVENTS = (IndexSearchEvent, NodeSplitEvent, RangeScanEvent)
 ```
 
 The controller is registered as a diagnostics sink, so a B+ tree event *becomes*
-a checkpoint without the tree knowing that stepping exists — the same mechanism
+a checkpoint without the tree knowing that stepping exists. The same mechanism
 `UNTIL_PAGE_READ` has used since Milestone 3, and the payoff for Milestone 1
 building a general event bus instead of a logging call.
 
@@ -297,7 +297,7 @@ The tree is drawn by hand in SVG rather than with a tree component, because a
 generic one gets two things wrong that are the whole point:
 
 - **a node holds many keys, not one.** A binary-tree renderer draws a circle with
-  a label; a B+ tree node is a row of cells whose width is how full it is — and a
+  a label; a B+ tree node is a row of cells whose width is how full it is, and a
   node filling up is what precedes a split;
 - **leaves are linked, and that link is not a tree edge.** It runs sideways
   between siblings that may have different parents, so it is drawn dashed.
@@ -307,7 +307,7 @@ assumes uniform node widths and only draws tree edges, so bending it to this
 shape is more code than placing the boxes directly. That keeps the dependency
 list where it is.
 
-Real indexes are *wide* — 600 rows on a 512-byte page is thirty leaves — so the
+Real indexes are *wide* (600 rows on a 512-byte page is thirty leaves) so the
 cell budget per node shrinks as a level gets wider, eliding the middle and
 keeping the first and last keys, which are the two that bound the subtree. The
 count of hidden keys is shown on the node's label, so nothing is silently lost.
@@ -323,7 +323,7 @@ path: p82 → p81 → p67
 Clicking any node opens it in the page inspector, where the same bytes appear as
 a `BTREE_LEAF` page with a checksum, a slot directory and a hexdump. There is no
 separate model of the tree in the browser to drift out of sync with the one on
-disk — which was the requirement.
+disk, which was the requirement.
 
 ---
 

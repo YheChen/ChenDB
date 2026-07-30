@@ -2,7 +2,7 @@
 
 The whole difficulty is that "same" is not "equal". Two engines running the same
 correct query can legitimately return rows in a different order, and the oracle
-must not confuse that with a wrong row — while still catching a sort that does not
+must not confuse that with a wrong row, while still catching a sort that does not
 sort. The rule it uses is: **the query's own shape decides how it is compared,
 never the data.** A comparison that inspected the results to choose its own
 strictness could always find a reading in which the two agree.
@@ -13,7 +13,7 @@ strictness could always find a reading in which the two agree.
 
 That last row is where the care is. With ties, the sequence of *rows* is
 undefined, but three properties are not: the sequence of sort-key values, the
-multiset of rows, and — the one that matters — the multiset of rows *within each
+multiset of rows, and (the one that matters) the multiset of rows *within each
 run of equal keys*. Without the third, a sort that carries a row across a group
 boundary satisfies the first two and passes. It is four lines of
 :func:`itertools.groupby` and it is the difference between testing the ordering
@@ -22,12 +22,12 @@ and merely testing that nothing was lost.
 Errors are four cases, not two, and they are not symmetric:
 
     both ok         compare the values
-    both error      agree — weakly; the classes are recorded, messages ignored
+    both error      agree, weakly; the classes are recorded, messages ignored
     ChenDB only     suspicious: strictness (registered) or a bug
     SQLite only     a *harness* failure, and never excusable
 
 A SQLite-only error almost always means the generator emitted something outside
-SQLite's dialect, which silently narrows coverage — a generator whose output the
+SQLite's dialect, which silently narrows coverage. A generator whose output the
 reference engine refuses is testing less than it claims. That must never be
 registrable, so it is not.
 """

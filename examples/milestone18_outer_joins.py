@@ -101,7 +101,7 @@ all, and edsger has never worked a shift. An inner join loses all three.
         database,
         "SELECT s.name FROM staff s LEFT JOIN shifts sh ON s.id = sh.staff_id "
         "WHERE sh.id IS NULL;",
-        "who has never worked — only askable because the join preserved them",
+        "who has never worked, only askable because the join preserved them",
     )
 
 
@@ -109,7 +109,7 @@ def extension_is_free(database: Database) -> None:
     rule("2. NULL-extending a row turned out to cost nothing")
     print("""
 Milestone 13 decided that a row's layout is the written order of the FROM,
-always — so every row below the topmost join is the full width of the query,
+always, so every row below the topmost join is the full width of the query,
 with the tables not yet joined left as None. It paid for that in row width and
 said so. This is the refund:
 
@@ -120,7 +120,7 @@ said so. This is the refund:
                      never written
 
 The join copies the right side's columns into the left row by slice. A left row
-that found no partner has simply never had that copy done to it — so emitting it
+that found no partner has simply never had that copy done to it, so emitting it
 unchanged *is* the NULL extension. The whole of it.
 """)
     (row,) = run(
@@ -156,7 +156,7 @@ of that is false for an outer join.
     )
     print("""
     Both are correct. They are different queries, and the planner has to keep
-    them apart — which is why an outer join's ON never enters the pool.
+    them apart, which is why an outer join's ON never enters the pool.
 """)
 
     heading("And the plans show it")
@@ -172,7 +172,7 @@ of that is false for an outer join.
                 continue
             print(f"      {line}")
         print()
-    print("""    Inner: the condition is pushed BELOW the join — a rewrite that can
+    print("""    Inner: the condition is pushed BELOW the join, a rewrite that can
     never be worse. Outer with it in the ON: it stays AT the join. Outer with it
     in the WHERE: it stays ABOVE. Three placements, three different queries.
 """)
@@ -191,7 +191,7 @@ where it was written, and its result becomes ONE OPAQUE RELATION that the next
 segment sees as a single input.
 
 That is exactly the right amount of freedom, and it falls out rather than being
-enforced. The search CAN commute that relation with others — swapping an inner
+enforced. The search CAN commute that relation with others, swapping an inner
 join's two inputs is sound. It CANNOT re-associate into it, because there is
 nothing inside to reach: it can never turn (a ⟕ b) ⨝ c into a ⟕ (b ⨝ c).
 """)
@@ -219,8 +219,8 @@ nothing inside to reach: it can never turn (a ⟕ b) ⨝ c into a ⟕ (b ⨝ c).
     print("""
     preserve_left and preserve_right describe the *physical* inputs, not the
     LEFT or RIGHT in the query. Swapping an outer join's two inputs and flipping
-    the flags gives the identical output row — because the row layout fixes every
-    column's position by written order — so the cost model keeps its freedom to
+    the flags gives the identical output row (because the row layout fixes every
+    column's position by written order) so the cost model keeps its freedom to
     hash the smaller side. Only the order relative to other joins is constrained.
 """)
     planned = run(
@@ -248,7 +248,7 @@ in it. Its bucket was not empty; it matched nothing. Rows went missing.
 
 I had tested FULL JOIN by hand, nine ways, and every one of my cases had a bare
 equality for its ON. Milestone 17's generative suite found this on its first run
-with outer joins enabled — because a third of the outer joins it emits carry an
+with outer joins enabled, because a third of the outer joins it emits carry an
 extra term on the null-supplied side. I put that in the generator because it was
 the shape the *planner* had to get right. It caught the executor.
 """)
@@ -286,7 +286,7 @@ def what_it_costs(database: Database) -> None:
   Preserving the probe side is one flag test per probe row. Preserving the build
   side needs the buckets to hold *indices* into a list of build rows rather than
   the rows themselves, plus a set of which ones matched and a pass over the
-  leftovers — one integer per build row over the old layout.
+  leftovers, one integer per build row over the old layout.
 
   The matched set is set[int] and not set[Row], which is not a micro-decision:
   two identical build rows are two rows, and a set of row values would treat
@@ -301,7 +301,7 @@ def _timed(database: Database, sql: str) -> int:
 
 
 def main() -> int:
-    print("ChenDB — Milestone 18: outer joins")
+    print("ChenDB, Milestone 18: outer joins")
 
     with tempfile.TemporaryDirectory() as workspace:
         path = Path(workspace) / "outer.chendb"
@@ -326,7 +326,7 @@ def main() -> int:
   inner join, because a null-rejecting WHERE on the null-supplied side discards
   every row the join preserved. Every serious planner spots that and rewrites it,
   which removes the barrier *and* re-enables pushdown. ChenDB executes the outer
-  join and then filters — correct, and slower than it needs to be.
+  join and then filters, correct, and slower than it needs to be.
 - No USING and no NATURAL JOIN. Both are sugar over ON, and both need the binder
   to merge two columns into one output column, which the flat row layout has no
   way to express.

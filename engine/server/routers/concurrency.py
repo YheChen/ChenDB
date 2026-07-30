@@ -6,7 +6,7 @@
 
 Sessions are named in the **query string** of the endpoints that already exist
 (``?session=alice``) rather than being resources of their own. A session here is
-not a thing the server allocates and hands back — it is just a label saying
+not a thing the server allocates and hands back. It is just a label saying
 which transaction a statement belongs to, and inventing a create/destroy
 lifecycle for a label would be ceremony with no state behind it.
 
@@ -60,7 +60,7 @@ def run_vacuum(managed: DatabaseDep) -> CheckpointResponse:
     reclaimed at delete time is exactly what this milestone is trying to show.
 
     Reuses ``CheckpointResponse`` because it is answering the same question in
-    the same units — how much space came back — and a second near-identical
+    the same units (how much space came back) and a second near-identical
     model would only mean two things to keep in step.
     """
     with managed.use() as db:

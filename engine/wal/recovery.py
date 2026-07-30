@@ -5,7 +5,7 @@
     analysis   t7 committed → winner                  │
                t9 never did → loser                   │
                                                       ▼
-    redo       replay u1 u2 u3 u4 — everything, losers included
+    redo       replay u1 u2 u3 u4, everything, losers included
     undo       walk t9's records backwards, restore before-images
                logging each restore, then abort t9
 
@@ -13,8 +13,8 @@ Three passes, in that order, and the middle one looks wrong the first time you
 see it: **redo replays the losers too.** ARIES calls this *repeating history*,
 and the reason is that recovery cannot know which of a loser's changes reached
 the disk and which did not. Rather than reason about each page, it puts the
-database into the exact state the crash left it in — every logged change
-applied — and then rolls the losers back from there, using the same undo path a
+database into the exact state the crash left it in (every logged change
+applied) and then rolls the losers back from there, using the same undo path a
 live rollback uses. One mechanism, exercised constantly, instead of a second
 one that only ever runs after a crash.
 
@@ -29,8 +29,8 @@ crashed once can crash again while recovering. Two things make that work:
   before it is applied. ARIES calls these compensation log records; the effect
   is that a crash mid-undo leaves the completed part of the undo *in the log*,
   so the next recovery redoes it during its own redo pass and only undoes what
-  is left. Without them, undo would restart from the beginning and — with
-  before-images rather than deltas — would still be correct, but only by
+  is left. Without them, undo would restart from the beginning and (with
+  before-images rather than deltas) would still be correct, but only by
   accident of this design rather than by construction.
 
 What is not here
@@ -38,7 +38,7 @@ What is not here
 No dirty-page table and no transaction table are reconstructed during analysis.
 Both exist in real ARIES so that redo can start at the earliest change that
 might not be on disk, rather than at the checkpoint. ChenDB's checkpoints are
-*sharp* — they flush everything — so the earliest such change is always the
+*sharp* (they flush everything) so the earliest such change is always the
 first record after the checkpoint, and the log never contains anything that can
 be skipped wholesale. That is the simplification a stop-the-world checkpoint
 buys, and it is the reason this file is a page long instead of five.
@@ -63,7 +63,7 @@ class RecoveryReport:
     """What recovery found and did. Empty on a clean open."""
 
     ran: bool = False
-    """False when the log was empty — the usual case, and the fast path."""
+    """False when the log was empty. The usual case, and the fast path."""
     records_scanned: int = 0
     truncated_tail: bool = False
     """A record at the end of the log was incomplete. Expected after a crash:
@@ -186,7 +186,7 @@ def _redo(
     The LSN comparison is what makes this idempotent, and it is the only reason
     a page needs to carry an LSN at all: without it recovery could not tell a
     change that reached the disk from one that did not, and would have to
-    replay the whole log every time — correct here, because whole-page images
+    replay the whole log every time, correct here, because whole-page images
     are idempotent anyway, but not correct for any real log format, and it
     would turn every recovery into a full rewrite of the database.
     """
@@ -233,8 +233,8 @@ def _undo(
 ) -> None:
     """Roll back everything the crash caught in flight, newest first.
 
-    Only one record per page per transaction carries a before-image —
-    first-write-wins, the same rule the in-memory undo log follows — so there is
+    Only one record per page per transaction carries a before-image (
+    first-write-wins, the same rule the in-memory undo log follows) so there is
     exactly one image to restore per page and no need to reason about which of
     several is the right one. Walking backwards is still what ARIES specifies
     and still what happens here, because a reader who sees it walk forwards will

@@ -2,7 +2,7 @@
 
 This is the module Milestone 5 was missing.  Its planner picked an index
 whenever one covered a comparison, which is right below about 14% selectivity
-and wrong — by 3.8x — above it.  Here the same candidates are *generated*, each
+and wrong (by 3.8x) above it.  Here the same candidates are *generated*, each
 is costed against real statistics, and the cheapest wins.
 
     LogicalScan(users)  +  WHERE bucket < 700
@@ -11,7 +11,7 @@ is costed against real statistics, and the cheapest wins.
             └── PhysicalIndexScan(bucket)  cost 11553   rejected: 3.6x the cost
                                                         of a sequential scan
 
-Every candidate is kept, costed, and reported — not just the winner.  A planner
+Every candidate is kept, costed, and reported, not just the winner.  A planner
 that shows only its answer is unarguable; one that shows what it rejected and
 why can be checked, and is the difference between a plan view that teaches and
 one that decorates.
@@ -24,8 +24,8 @@ predicate.  That is *k+1* candidates for *k* indexes, and picking the minimum is
 a loop.
 
 That is not what makes planning hard.  Join order is: *n* tables admit
-``(2n-2)! / (n-1)!`` left-deep orders — 30,240 for six tables, 17 billion for
-ten — which is why PostgreSQL enumerates exhaustively only below
+``(2n-2)! / (n-1)!`` left-deep orders (30,240 for six tables, 17 billion for
+ten) which is why PostgreSQL enumerates exhaustively only below
 ``geqo_threshold`` (12 relations) and switches to a genetic algorithm above it,
 and why System R's 1979 dynamic-programming approach is still the reference.
 None of that is needed here, and pretending otherwise would be architecture for
@@ -129,7 +129,7 @@ DISABLE_COST: Final = 1e10
 
 #: Entries per leaf when the real figure is unknown. Only affects how many leaf
 #: pages a range scan is charged for, which is a small term next to the heap
-#: fetches — so an estimate is fine, and reading the tree to find out would make
+#: fetches, so an estimate is fine, and reading the tree to find out would make
 #: costing do I/O.
 _ASSUMED_ENTRIES_PER_LEAF = 200.0
 
@@ -168,7 +168,7 @@ class PhysicalNode:
 
     @property
     def total_cost(self) -> float:
-        """This node plus everything below it — what a comparison uses."""
+        """This node plus everything below it, what a comparison uses."""
         return self.estimated.total + sum(child.total_cost for child in self.children)
 
 
@@ -244,8 +244,8 @@ class PhysicalJoin(PhysicalNode):
 
     ``preserve_left`` and ``preserve_right`` are about the *physical* inputs, not
     about the ``LEFT`` or ``RIGHT`` a user wrote. The two differ: the planner is
-    free to put either logical side in either position — build side selection is
-    the whole reason it wants to — so ``a LEFT JOIN b`` planned with ``b`` as the
+    free to put either logical side in either position (build side selection is
+    the whole reason it wants to) so ``a LEFT JOIN b`` planned with ``b`` as the
     physical left is ``preserve_right=True``.
 
     That is what makes the flags the right representation. An outer join's inputs
@@ -292,12 +292,12 @@ class PhysicalJoin(PhysicalNode):
 class PhysicalNestedLoopJoin(PhysicalJoin):
     """For every outer row, scan the inner side. The algorithm of last resort.
 
-    Kept because it is the only one that works on *any* predicate. A hash join
-    needs an equality to hash; ``a.x < b.y`` has no key, so this is what is left
-    — which is why a range join is slow in every engine and not just this one.
+        Kept because it is the only one that works on *any* predicate. A hash join
+        needs an equality to hash; ``a.x < b.y`` has no key, so this is what is left
+    , which is why a range join is slow in every engine and not just this one.
 
-    It is also the only one that can do a ``FULL`` join here: see
-    :class:`PhysicalHashJoin`.
+        It is also the only one that can do a ``FULL`` join here: see
+        :class:`PhysicalHashJoin`.
     """
 
     @property
@@ -311,13 +311,13 @@ class PhysicalHashJoin(PhysicalJoin):
     """Build a hash table on the left, probe it with the right.
 
     ``left`` is always the build side, and the planner puts the *smaller*
-    estimate there — memory is proportional to it, and getting that backwards
+    estimate there, memory is proportional to it, and getting that backwards
     is the difference between a hash table of ten rows and one of ten million.
 
     Both outer directions work, and neither is free. Preserving the *probe* side
     is easy: a probe row that finds no bucket is emitted on the spot. Preserving
     the *build* side needs a set of which build rows were ever matched and a pass
-    over the leftovers after the probe input runs dry — which is why the operator
+    over the leftovers after the probe input runs dry, which is why the operator
     keeps the build rows in insertion order rather than only in buckets.
     """
 
@@ -408,7 +408,7 @@ class PlannerOptions:
     The equivalent of PostgreSQL's ``enable_seqscan`` / ``enable_indexscan``,
     and they exist for the same two reasons: proving what the planner *would*
     have done, and letting a benchmark measure the path that was not chosen.
-    A disabled path is penalised, not removed — see :data:`DISABLE_COST`.
+    A disabled path is penalised, not removed, see :data:`DISABLE_COST`.
     """
 
     enable_seq_scan: bool = True
@@ -441,8 +441,8 @@ class Alternative:
     """Which question this was an answer to.
 
     With one table there was one decision and the field would have been noise.
-    With joins there are several independent ones — how to read each table, and
-    what order to join them in — and a flat list of winners and losers reads as
+    With joins there are several independent ones (how to read each table, and
+    what order to join them in) and a flat list of winners and losers reads as
     a contradiction: three entries marked "chosen" for what looks like one
     choice. Grouping by this is what makes the plan legible again."""
 
@@ -486,7 +486,7 @@ def plan_select(
     With one table "enumerate" meant listing access paths and taking the
     minimum. With several it means that *and* choosing an order to join them
     in, which is the first decision in this project with a search space bigger
-    than a handful — see :func:`_plan_joins`.
+    than a handful, see :func:`_plan_joins`.
     """
     rewritten = apply_rules(logical)
     scans = _find_scans(rewritten.plan)
@@ -496,14 +496,14 @@ def plan_select(
     stale = any(database.statistics.is_stale(scan.table_name) for scan in scans)
 
     # WHERE and every *inner* ON, in one pool. For an inner join the two are
-    # interchangeable — `a JOIN b ON p` and `a, b WHERE p` mean the same thing —
+    # interchangeable (`a JOIN b ON p` and `a, b WHERE p` mean the same thing)
     # and merging them is what lets a condition written as an ON end up pushed
     # down to a scan, or a condition written in the WHERE become a join key.
     #
     # For an outer join none of that holds, and the difference is not subtle.
     # `a LEFT JOIN b ON a.id = b.id AND b.y > 5` keeps every row of `a`; the same
     # predicate in the WHERE throws away the NULL-extended ones. So an outer
-    # join's ON stays *at* its join, and never enters this pool — which is also
+    # join's ON stays *at* its join, and never enters this pool: which is also
     # why it cannot be pushed down to a scan or pulled up into a filter.
     steps = _join_steps(rewritten.plan)
     predicate = _predicate_of(rewritten.plan)
@@ -541,7 +541,7 @@ def plan_select(
 #: one. PostgreSQL's ``geqo_threshold`` is 12 and it switches to a genetic
 #: algorithm; ChenDB switches to "join the cheapest pair you can see", which is
 #: worse and finishes. The number is far lower because the DP below is written
-#: for clarity rather than speed — 8 tables is 6,561 subsets, which is fine, and
+#: for clarity rather than speed, 8 tables is 6,561 subsets, which is fine, and
 #: 12 would be 531,441, which is not.
 MAX_TABLES_TO_ENUMERATE: Final = 8
 
@@ -578,7 +578,7 @@ def _join_steps(plan: LogicalNode) -> list[_Step]:
     """The join chain in *written* order.
 
     :func:`build_logical_plan` emits a left-deep chain in written order, and
-    :func:`_find_joins` walks parents before children — so the outermost join
+    :func:`_find_joins` walks parents before children, so the outermost join
     comes back first and reversing gives the order the user typed. That order is
     what an outer join constrains, so it has to be recoverable.
     """
@@ -598,7 +598,7 @@ def _null_supplied(steps: list[_Step]) -> frozenset[int]:
     ``a LEFT JOIN b ON a.id = b.id WHERE b.y > 5``: pushed to ``b``'s scan and
     consumed, the surviving ``a`` rows come back NULL-extended, when the WHERE
     should have rejected them. Kept above the join it is correct, and it rejects
-    them for free — ``NULL > 5`` is NULL, which is not TRUE.
+    them for free, ``NULL > 5`` is NULL, which is not TRUE.
 
     Pushing to the *preserved* side stays legal and still happens, which is what
     keeps ``a LEFT JOIN b WHERE a.x = 5`` fast.
@@ -634,7 +634,7 @@ def _plan_joins(
 
     Predicate pushdown happens first and is not a choice: a conjunct that names
     one table only is applied at that table's scan, where it shrinks the input
-    to every join above it. Pushing it down can never be worse — *unless* the
+    to every join above it. Pushing it down can never be worse, *unless* the
     table can be NULL-extended by an outer join above, which is what
     :func:`_null_supplied` excludes.
 
@@ -718,7 +718,7 @@ def _plan_chain(
     segment's search sees as a single input.
 
     Opaque is exactly the right amount of freedom, and it falls out for free.
-    The search can *commute* that relation with others — an inner join's two
+    The search can *commute* that relation with others. An inner join's two
     inputs may be swapped, so joining ``c`` to ``(a ⟕ b)`` either way round is
     sound. It cannot *re-associate* into it, because the relation is one item in
     the search's world and there is nothing inside to reach: it can never build
@@ -727,12 +727,12 @@ def _plan_chain(
 
     **What this gives up**, stated rather than hidden: an inner join written after
     an outer one cannot move before it, even where that would be legal and
-    cheaper. The general treatment is PostgreSQL's — a ``SpecialJoinInfo`` per
+    cheaper. The general treatment is PostgreSQL's. A ``SpecialJoinInfo`` per
     outer join carrying ``min_lefthand`` and ``min_righthand`` relation sets, so
     the search can prove a particular reordering safe by set containment rather
     than assuming it is not. That is the right answer for a planner that must be
     fast on twelve-table queries. Here it would be a large amount of machinery to
-    recover orderings for a shape — an outer join with inner joins after it — that
+    recover orderings for a shape (an outer join with inner joins after it) that
     the cost model cannot yet estimate well anyway, and the honest version of "we
     do not reorder across an outer join" is one sentence in ``EXPLAIN``.
     """
@@ -834,12 +834,12 @@ def _search_join_order(
     each subset is solved once and reused rather than re-derived down every
     branch that contains it.
 
-    ``n`` tables have ``2ⁿ`` subsets and the loop below is ``O(3ⁿ)`` — 27 for
+    ``n`` tables have ``2ⁿ`` subsets and the loop below is ``O(3ⁿ)``, 27 for
     three tables, 6,561 for eight, 531,441 for twelve. That growth is why
     PostgreSQL gives up at ``geqo_threshold`` and why
     :data:`MAX_TABLES_TO_ENUMERATE` exists.
 
-    **Left-deep only.** Bushy plans — joining ``(a⨝b)`` to ``(c⨝d)`` — are
+    **Left-deep only.** Bushy plans (joining ``(a⨝b)`` to ``(c⨝d)``) are
     sometimes better and multiply the search space again. System R excluded
     them in 1979 for that reason and most optimizers still do.
     """
@@ -885,7 +885,7 @@ def _greedy_join_order(
     """Repeatedly join the cheapest available pair. Used past the threshold.
 
     No guarantee of optimality, and it is reported as such rather than passed
-    off as the answer — a planner that silently degrades is worse than one that
+    off as the answer. A planner that silently degrades is worse than one that
     says it gave up.
     """
     remaining = list(relations)
@@ -938,13 +938,13 @@ def _join(
     """The cheaper of a hash join and a nested loop, for one pair of subsets.
 
     ``kind`` and ``on`` are supplied only for an outer join, whose predicate comes
-    from its own ``ON`` rather than from the shared pool — that separation is the
+    from its own ``ON`` rather than from the shared pool. That separation is the
     whole reason an outer join's condition behaves differently from a ``WHERE``.
 
     ``left`` is the physical left, and for an outer join it is the *preserved*
     side as written, because :func:`_plan_chain` hands the sides over in written
     order. If a later change lets the two be swapped for a cheaper build side, the
-    preserve flags must swap with them — see :class:`PhysicalJoin`.
+    preserve flags must swap with them, see :class:`PhysicalJoin`.
     """
     tables = left.tables | right.tables
     applicable = [
@@ -983,8 +983,8 @@ def _join(
     }
 
     if predicate is None:
-        # A cross product. Not an error — `FROM a, b` with no condition means
-        # exactly this — but it is the one plan whose cost really is the product.
+        # A cross product. Not an error (`FROM a, b` with no condition means
+        # exactly this) but it is the one plan whose cost really is the product.
         node: PhysicalNode = PhysicalNestedLoopJoin(
             node_id=namer.next("nestloop"),
             estimated=nested_loop_join_cost(left.rows, right.rows, matches=matches),
@@ -1016,7 +1016,7 @@ def _join(
         build_key, probe_key, used = keys
         if kind.is_outer:
             # An outer join's terms come from its own ON, which was never in the
-            # pool — so the residual is the rest of *that*, not the rest of
+            # pool: so the residual is the rest of *that*, not the rest of
             # `applicable` (which is empty here, and would silently drop
             # `ON a.id = b.id AND b.y > 5`'s second term).
             terms = _split_conjunction(predicate)
@@ -1053,7 +1053,7 @@ def _outer_equijoin_keys(
     Separate from :func:`_equijoin_keys` only because that one indexes into the
     shared conjunct pool and an outer join's terms are never in it. The returned
     position indexes the ``ON``'s own conjuncts, which is what the caller needs to
-    rebuild the residual — and nothing marks an outer ``ON`` as *handled*, because
+    rebuild the residual, and nothing marks an outer ``ON`` as *handled*, because
     it was never a pool entry that could be applied twice.
     """
     terms = _split_conjunction(predicate)
@@ -1066,7 +1066,7 @@ def _equijoin_keys(
     """The first ``left.x = right.y`` among the applicable conjuncts.
 
     One key, not several. A composite hash key is a real optimisation and a
-    real escaping problem — the same one :mod:`engine.index.key` describes —
+    real escaping problem (the same one :mod:`engine.index.key` describes)
     and the second equality is re-checked per matching pair instead.
     """
     for index in applicable:
@@ -1106,7 +1106,7 @@ def _join_cardinality(
     four-table plan 100x.
 
     ``terms`` are the join's own conditions, whatever they came from. It used to
-    take positions into the shared conjunct pool, and an outer join has none —
+    take positions into the shared conjunct pool, and an outer join has none,
     which quietly turned every outer join into a *cross product* for costing
     purposes: ``a LEFT JOIN b ON a.id = b.aid`` over 60 and 300 rows was estimated
     at 18,000 instead of 90, because the equality it joins on was not in the list
@@ -1145,7 +1145,7 @@ def _record_join_alternatives(
 ) -> None:
     """Report the winning order, and the two-table pairings it was built from.
 
-    Not every subset — a four-table query has fifteen and listing them all
+    Not every subset. A four-table query has fifteen and listing them all
     would bury the answer. The pairs are the interesting ones, because that is
     where "join the small side first" is visible.
     """
@@ -1182,7 +1182,7 @@ def _record_join_alternatives(
 
 
 def _order_of(node: PhysicalNode) -> str:
-    """``users ⨝ orders ⨝ items`` — the order the plan actually joins in.
+    """``users ⨝ orders ⨝ items``, the order the plan actually joins in.
 
     An outer join is spelled out rather than shown as ``x``, because "the order it
     joins in" is the one thing an outer join constrains and a display that hid the
@@ -1206,7 +1206,7 @@ def _tables_of(expression: Expression) -> set[int]:
     """Which tables an expression reads, by position in the ``FROM``.
 
     Read off the *scan position* stashed on each bound column by the logical
-    planner, so this needs no scope and no lookup — and so a predicate can be
+    planner, so this needs no scope and no lookup, and so a predicate can be
     classified as single-table or not in one walk.
     """
     return {
@@ -1247,7 +1247,7 @@ def _stack(
 
     The order is SQL's evaluation order and not its written order, which is the
     single most useful thing a plan tree teaches: ``WHERE`` runs before
-    ``GROUP BY``, ``HAVING`` after it, ``ORDER BY`` after the select list — so
+    ``GROUP BY``, ``HAVING`` after it, ``ORDER BY`` after the select list, so
     ``ORDER BY`` can use an alias and ``WHERE`` cannot.
     """
     stats = next(iter(stats_by_table.values()))
@@ -1328,7 +1328,7 @@ def _estimate_groups(
 ) -> float:
     """How many groups a ``GROUP BY`` will produce.
 
-    One, if there are no keys — the scalar case, and it is one group even over
+    One, if there are no keys. The scalar case, and it is one group even over
     no rows. Otherwise the distinct count of the key columns if it is known,
     and ten percent of the input if it is not. That fallback is crude and
     visible: an aggregate whose estimated rows are exactly a tenth of its
@@ -1574,7 +1574,7 @@ def _as_column_comparison(
     """Match ``column <op> literal``, mirroring a reversed comparison.
 
     ``<>`` is refused: an index cannot bound it, so the scan would read the
-    whole tree and then do a random heap read per row — strictly worse than a
+    whole tree and then do a random heap read per row, strictly worse than a
     sequential scan, every time.
     """
     if not isinstance(expression, BinaryOp) or not expression.operator.is_comparison:
@@ -1623,7 +1623,7 @@ def _bounds_for(
         if decode_key(key, info.data_type) != value:
             # The key encoding lost something, so this bound is not the
             # predicate. A FLOAT index encodes its key as a double, and
-            # ``f = 9223372036854775807`` against one rounds *up* to 2⁶³ — so the
+            # ``f = 9223372036854775807`` against one rounds *up* to 2⁶³: so the
             # index answered ``=`` with the row a sequential scan excludes, and
             # ``>`` by excluding the row a scan returns. Both answers inverted,
             # and only when an index happened to exist: adding an index changed
@@ -1633,7 +1633,7 @@ def _bounds_for(
             # Skipping leaves the comparison to a filter over exact values.
             # A range bound *could* be kept if it were widened in the safe
             # direction and the predicate re-checked above, which is what
-            # PostgreSQL's lossy index scans do — but it must then not be
+            # PostgreSQL's lossy index scans do: but it must then not be
             # absorbed, and the case is a FLOAT column compared to an integer
             # too large to be a double. Correct and occasionally slower beats
             # clever here.
@@ -1647,7 +1647,7 @@ def _bounds_for(
                 # `WHERE id = 3 AND id = 2` folded to `id = 2` and marked *both*
                 # conjuncts absorbed, so `id = 3` was dropped and the query
                 # returned the row with id 2. Unsatisfiable predicates are not a
-                # curiosity — they are what a generated query produces constantly,
+                # curiosity: they are what a generated query produces constantly,
                 # and what a query built by string concatenation produces by
                 # accident.
                 #
@@ -1673,7 +1673,7 @@ def _bounds_for(
         return None
 
     # A range with no lower bound would sweep up the NULL keys, which sort below
-    # every value — and no comparison is ever true for NULL. Anchoring at the
+    # every value: and no comparison is ever true for NULL. Anchoring at the
     # smallest possible *value* key excludes them.
     if low is None:
         low, include_low = SMALLEST_VALUE_KEY, True
@@ -1720,7 +1720,7 @@ def walk_physical(node: PhysicalNode) -> list[PhysicalNode]:
 def describe_physical(node: PhysicalNode, indent: int = 0) -> str:
     """Render a physical plan the way ``EXPLAIN`` prints it.
 
-    The cost shown is **cumulative** — this node plus everything below it —
+    The cost shown is **cumulative** (this node plus everything below it)
     which is what PostgreSQL prints and what a comparison between two plans
     actually uses. A per-node figure would make the root look free.
     """

@@ -4,7 +4,7 @@ A catalog stores every table's schema.  So what stores the *catalog's* schema?
 
 That is a genuine chicken-and-egg: to decode a row of ``chendb_tables`` you need
 its schema, which would live in ``chendb_tables``.  Every real database solves it
-the same way — the system tables' own definitions are **compiled into the
+the same way. The system tables' own definitions are **compiled into the
 engine** rather than read from disk.  PostgreSQL generates them from
 ``pg_class.h`` and friends at build time; SQLite hardcodes the shape of
 ``sqlite_schema`` in ``prepare.c``.  ChenDB declares them here.
@@ -26,14 +26,14 @@ engine** rather than read from disk.  PostgreSQL generates them from
                   a user table's heap                                 a B+ tree root
 
 The meta page holds only the pointers needed to *start* reading. Everything
-else — including where every user table's heap begins and where every index's
-tree is rooted — is a row in a system table, which is the whole point: adding a
+else (including where every user table's heap begins and where every index's
+tree is rooted) is a row in a system table, which is the whole point: adding a
 table or an index is an insert, not a file-format change.
 
 One deliberate difference from PostgreSQL: ``chendb_tables`` does **not** contain
 rows describing itself. PostgreSQL's ``pg_class`` does have a row for
 ``pg_class``, which is elegant but creates two sources of truth for where the
-catalog lives — the row and the bootstrap pointer — that must never disagree.
+catalog lives (the row and the bootstrap pointer) that must never disagree.
 ChenDB synthesises the system tables' descriptors from the declarations below
 plus the meta pointers, so there is exactly one place each fact lives.
 """
@@ -71,7 +71,7 @@ INDEXES_TABLE_NAME: Final = "chendb_indexes"
 
 #: Fixed ids, like PostgreSQL's hardcoded OIDs for the bootstrap catalogs.
 #: Milestone 4 left 3..99 reserved precisely so this could be added without
-#: renumbering anything already written to disk — and it was.
+#: renumbering anything already written to disk, and it was.
 TABLES_TABLE_ID: Final = 1
 COLUMNS_TABLE_ID: Final = 2
 INDEXES_TABLE_ID: Final = 3
@@ -96,7 +96,7 @@ TABLES_TABLE_SCHEMA: Final[Schema] = Schema.of(
 )
 
 #: One row per column of every table. ``position`` is the column's index in its
-#: table, which is also its position in an encoded record — the link between the
+#: table, which is also its position in an encoded record, the link between the
 #: catalog and the on-disk row format.
 COLUMNS_TABLE_SCHEMA: Final[Schema] = Schema.of(
     Column("table_id", DataType.INTEGER, nullable=False),
@@ -111,7 +111,7 @@ COLUMNS_TABLE_SCHEMA: Final[Schema] = Schema.of(
 #: One row per index.  ``root_page`` is the mutable one: a root split allocates
 #: a new root page, and this row has to follow or the index becomes unreachable
 #: on the next open.  ``column_position`` rather than a column name, because
-#: position is what the record layout is keyed on — the same link
+#: position is what the record layout is keyed on, the same link
 #: ``chendb_columns`` uses.
 INDEXES_TABLE_SCHEMA: Final[Schema] = Schema.of(
     Column("index_id", DataType.INTEGER, nullable=False, primary_key=True),
@@ -127,7 +127,7 @@ def is_system_table(name: str) -> bool:
     """Whether ``name`` belongs to the engine rather than the user.
 
     Matched on the prefix, not the known set, so a future system table is
-    protected the moment it is named — and a user cannot squat on the name
+    protected the moment it is named, and a user cannot squat on the name
     before it exists.
     """
     return name.casefold().startswith(SYSTEM_TABLE_PREFIX)
@@ -141,7 +141,7 @@ def primary_key_index_name(table: str) -> str:
     the index list and ``EXPLAIN``; hiding it would make the primary key look
     free and the page count unexplained.
 
-    Not in the ``chendb_`` namespace, so it can be dropped — a primary key
+    Not in the ``chendb_`` namespace, so it can be dropped. A primary key
     without its index is a documented gap this closes, not an invariant the
     catalog defends.
     """

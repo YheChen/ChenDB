@@ -5,8 +5,8 @@
  * offline use and adds a third-party runtime dependency to a local development
  * tool, so the bundled copy is wired in explicitly instead.
  *
- * Monaco also needs a web worker. Only the base editor worker is required —
- * there is no TypeScript or JSON language service here, just SQL tokenizing —
+ * Monaco also needs a web worker. Only the base editor worker is required,
+ * there is no TypeScript or JSON language service here, just SQL tokenizing,
  * so exactly one worker is registered.
  *
  * The import is `editor.api` rather than the `monaco-editor` entry point: that

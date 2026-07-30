@@ -11,7 +11,7 @@ first checkpoint, and returns an execution id. The client then drives it with
 engine thread genuinely blocks on a condition variable until told to continue.
 
 A stepped execution holds its database's lock for as long as it is alive, which
-is inherent — it is a query suspended mid-operation. Two things keep that from
+is inherent, it is a query suspended mid-operation. Two things keep that from
 becoming a hang: every step call has a timeout, and idle executions are reaped.
 ``/cancel`` deliberately needs no lock, so it always works.
 """
@@ -81,13 +81,13 @@ def run_query(
     A list rather than a single object because a script is a normal thing to
     send: ``CREATE TABLE …; INSERT …; SELECT …`` is one request and three results.
 
-    Unlike ``/parse``, a failure here *is* a failed request — 422 with the source
-    position attached — because there is no useful partial answer to return.
+    Unlike ``/parse``, a failure here *is* a failed request (422 with the source
+    position attached) because there is no useful partial answer to return.
 
     ``session`` says whose transaction this statement belongs to. Two consoles
     on one database pass different ones and get different transactions, which
-    can then see different data and block each other — the whole of Milestone
-    10 from the client's side. Omitting it means the default session, which is
+    can then see different data and block each other, which is the whole of
+    Milestone 10 from the client's side. Omitting it means the default session, which is
     what every request before Milestone 10 was doing implicitly.
     """
     max_rows = payload.max_rows or request.app.state.config.max_rows_per_query

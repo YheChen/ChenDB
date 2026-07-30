@@ -1,7 +1,7 @@
 /**
  * A hexdump with the page's regions colour-coded.
  *
- * The point is not to show hex — it is to make the *structure* visible: which
+ * The point is not to show hex, it is to make the *structure* visible: which
  * bytes are the header, which are the slot directory, which are the record a
  * slot points at. Selecting a slot highlights exactly its bytes, so the link
  * between "slot 1 says offset 4039, length 24" and the actual bytes at 4039 is

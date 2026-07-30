@@ -107,7 +107,7 @@ def test_an_update_that_keeps_matching_its_own_predicate_still_runs_once(
 
     Every raise keeps the row under 50,000, so a scan that saw its own new
     versions would raise ada and alan again and again until they escaped the
-    predicate — 40,000 would end at 50,000 rather than 42,000. Materialising the
+    predicate, 40,000 would end at 50,000 rather than 42,000. Materialising the
     row set before writing is what stops it.
     """
     result = run(db, "UPDATE staff SET pay = pay + 2000 WHERE pay < 50000")
@@ -271,7 +271,7 @@ def test_deleting_from_a_table_that_does_not_exist_names_the_ones_that_do(
     ],
 )
 def test_the_catalog_cannot_be_written_to_through_sql(db: Database, sql: str):
-    # It is readable — that is how the schema view works — but a DELETE here
+    # It is readable (that is how the schema view works) but a DELETE here
     # would drop a table's definition out from under the heap holding its rows.
     with pytest.raises(BindingError, match="system table"):
         run(db, sql)
@@ -293,7 +293,7 @@ def test_a_rolled_back_update_leaves_no_version_behind(db: Database):
     execute_script("ROLLBACK", db)
     assert pay(db)["ada"] == 40_000
     # Rollback restores pages, so the new versions are physically gone rather
-    # than left for the vacuum — which is why ChenDB needs no commit log.
+    # than left for the vacuum: which is why ChenDB needs no commit log.
     assert db.version_count("staff") == versions
 
 

@@ -4,7 +4,7 @@ The engine side is covered by `docs/how-to-instrument.md`. This is the rest.
 
 ## 1. Expose it over HTTP
 
-**Schema** — a Pydantic model in `engine/server/schemas/`:
+**Schema**: a Pydantic model in `engine/server/schemas/`:
 
 ```python
 class BTreeNodeModel(ApiModel):
@@ -15,14 +15,14 @@ class BTreeNodeModel(ApiModel):
     next_leaf_id: int | None
 ```
 
-**Mapper** — in `engine/server/mappers.py`, and nowhere else:
+**Mapper**: in `engine/server/mappers.py`, and nowhere else:
 
 ```python
 def btree_node_to_api(node: BTreeNode) -> BTreeNodeModel:
     return BTreeNodeModel(...)
 ```
 
-**Router** — a synchronous handler, so FastAPI runs it in a worker thread:
+**Router**: a synchronous handler, so FastAPI runs it in a worker thread:
 
 ```python
 @router.get("/indexes/{index_name}", response_model=BTreeModel)
@@ -33,9 +33,9 @@ def get_index(managed: DatabaseDep, index_name: str) -> BTreeModel:
 ```
 
 Take the lock, copy a snapshot, release, then map. Never serialize under the
-lock — one slow client would stall every query.
+lock, one slow client would stall every query.
 
-**Feature flag** — flip it in `engine/server/app.py`:
+**Feature flag**: flip it in `engine/server/app.py`:
 
 ```python
 FEATURES = { ..., "indexes": True }
@@ -48,7 +48,7 @@ python scripts/generate_api_types.py
 ```
 
 Writes `docs/openapi.json` and `visualizer/src/types/api.ts`. Never hand-edit
-the latter — a renamed Pydantic field should break the TypeScript build, and it
+the latter. A renamed Pydantic field should break the TypeScript build, and it
 only can if the file is generated.
 
 ## 3. Add the client call and hook
@@ -60,7 +60,7 @@ getIndex: (id: string, name: string) =>
   request<BTreeModel>(`/databases/${id}/indexes/${name}`),
 ```
 
-`visualizer/src/hooks/useEngine.ts` — and add the key to
+`visualizer/src/hooks/useEngine.ts`: and add the key to
 `invalidateDatabase()` if a write changes it:
 
 ```ts
@@ -76,7 +76,7 @@ export function useIndex(id: string | null, name: string | null) {
 ## 4. Build the panel
 
 One directory under `visualizer/src/features/`. Use `Panel` from
-`components/primitives` so the chrome matches, and handle all four states —
+`components/primitives` so the chrome matches, and handle all four states,
 loading, error, empty, and populated. An empty state should say what to do
 next, not just "no data".
 
@@ -109,7 +109,7 @@ worse than no control.
 
 ## 6. Test it
 
-`visualizer/src/features/index/IndexPanel.test.tsx` — stub `fetch`, render, and
+`visualizer/src/features/index/IndexPanel.test.tsx`: stub `fetch`, render, and
 assert on what a user can perceive: roles, accessible names, visible text.
 Every interactive element needs an accessible name; a row whose content is
 entirely visual (a badge, a bar, a number) needs an explicit `aria-label`.
@@ -149,8 +149,8 @@ Two reasons, and both are bugs this project has already shipped:
 - **Build it from the open table, never from a guessed column name.**
   `demoRows.ts` has `insertRow`, `literalFor` and `notNullColumn` for exactly
   this. A hardcoded `VALUES (1, 'x')` works until someone's table has three
-  columns, and then the button reports `row has 2 values but 3 columns` —
-  the demonstration failing for a reason that has nothing to do with what it
+  columns, and then the button reports `row has 2 values but 3 columns`.
+  The demonstration failing for a reason that has nothing to do with what it
   was demonstrating.
 - **The catalogue is enumerable, so it gets tested.**
   `tests/integration/test_demo_sql.py` asks Node to evaluate that module and
@@ -158,7 +158,7 @@ Two reasons, and both are bugs this project has already shipped:
   the parser refuses fails CI by name. One shipped and sat in the UI for a
   whole milestone before that existed.
 
-State what the statement should do — `parses`, `runs: "ok" | "error" | "skip"`,
+State what the statement should do, `parses`, `runs: "ok" | "error" | "skip"`,
 and which fixture it needs. A demo that is *supposed* to fail is as much a
 claim as one that works.
 
@@ -171,9 +171,9 @@ make demo-sql
 ## Don't tell the user a feature is missing
 
 A tooltip is written once, while it is true, and then nobody reads it again. Six
-of them had gone stale by Milestone 16 — `"nothing executes yet (that is
+of them had gone stale by Milestone 16. `"nothing executes yet (that is
 Milestone 3)"`, `"There is no buffer pool yet"`, `"No index exists until
-Milestone 5"` — every one a confident statement of fact about an engine that had
+Milestone 5"`. Every one a confident statement of fact about an engine that had
 done that thing for eight milestones or more.
 
 `src/test/uiText.test.ts` now reads every `.ts`/`.tsx` under `src/`, strips
@@ -194,7 +194,7 @@ So:
 
 - **Describe what it does, not what it lacks.** "A hit served from the buffer
   pool costs about a third of a miss" instead of "there is no buffer pool yet".
-- **A past reference is fine** — the transactions demo says "Before Milestone 8
+- **A past reference is fine**: the transactions demo says "Before Milestone 8
   they would have stayed", which is the point of it.
 - **For something genuinely unbuilt, use the feature flag**, not prose. `/health`
   reports what exists and the UI hides the rest; see `useFeature` and the WASM
@@ -202,5 +202,5 @@ So:
 
 And do not hardcode a value the engine can tell you. The results footer's access
 path badge was the literal string `seq scan` from Milestone 3 to Milestone 16, so
-every index scan chosen from Milestone 5 on was mislabelled — persuasively, by
+every index scan chosen from Milestone 5 on was mislabelled, persuasively, by
 naming a real access path with total confidence.

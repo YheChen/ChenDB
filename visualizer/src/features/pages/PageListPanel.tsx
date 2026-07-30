@@ -2,7 +2,7 @@
  * The disk map: every page in the file, in file order.
  *
  * This is the view that makes "a database is a file of fixed-size pages"
- * concrete — page 0 is the header, then the schema, then the table's heap
+ * concrete, page 0 is the header, then the schema, then the table's heap
  * chain, each at a byte offset you can point at.
  */
 

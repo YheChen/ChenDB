@@ -3,7 +3,7 @@
 Every one of these tests is really the same assertion: **sorting the encoded
 bytes must give the same order as sorting the Python values**.  That property is
 what the whole B+ tree rests on, and it is the one that little-endian record
-encoding does *not* have — so it is worth checking exhaustively rather than
+encoding does *not* have, so it is worth checking exhaustively rather than
 sampling, especially around the sign boundary and IEEE-754's special values.
 """
 

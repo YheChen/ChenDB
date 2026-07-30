@@ -1,7 +1,7 @@
 """Tokens, keywords, and source positions.
 
 A :class:`Token` is a slice of the input plus a classification.  Crucially it
-also carries a :class:`SourceSpan` — the exact character range it came from.
+also carries a :class:`SourceSpan`, the exact character range it came from.
 Every AST node inherits a span from the tokens it was built out of, which is
 what lets the visualizer highlight the SQL text that produced any node.
 
@@ -57,7 +57,7 @@ class TokenType(StrEnum):
     """What kind of thing a token is.
 
     Keywords all share :attr:`KEYWORD`, with the specific word in
-    :attr:`Token.keyword`.  The alternative — one ``TokenType`` per keyword —
+    :attr:`Token.keyword`.  The alternative (one ``TokenType`` per keyword)
     makes the enum enormous and forces the lexer to know the full keyword set at
     the type level. Separating "it is a keyword" from "which keyword" keeps the
     parser's ``expect(TokenType.KEYWORD, Keyword.FROM)`` calls readable.
@@ -133,7 +133,7 @@ class Keyword(StrEnum):
     ``MIN`` and ``MAX`` are parsed as an identifier followed by ``(``, exactly
     as PostgreSQL and SQLite do, so ``count`` stays usable as a column name.
     Reserving five words that common, to save one token of lookahead, would be
-    a bad trade — and a table with a ``min`` and a ``max`` column is not an
+    a bad trade, and a table with a ``min`` and a ``max`` column is not an
     unusual table.
     """
 

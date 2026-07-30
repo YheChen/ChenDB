@@ -5,8 +5,8 @@ way: the *cost of being able to change your mind*. So the tests care about the
 undo log's size as much as about the rollback working, and they check that the
 number reported is the page count rather than the row count.
 
-Both routes into a transaction are exercised — the three POST endpoints and the
-three SQL statements — because the explorer uses the buttons and the SQL console
+Both routes into a transaction are exercised (the three POST endpoints and the
+three SQL statements) because the explorer uses the buttons and the SQL console
 interchangeably, and they must agree.
 """
 
@@ -165,7 +165,7 @@ def test_the_undo_log_grows_with_pages_not_rows(seeded: TestClient):
     """The whole point of first-write-wins, visible over HTTP.
 
     Twenty rows into a fresh table land on very few pages, so the undo log must
-    be far smaller than the row count — otherwise the engine would be keeping a
+    be far smaller than the row count, otherwise the engine would be keeping a
     before-image per write, which is the naive design this one rejects.
     """
     seeded.post(TXN)

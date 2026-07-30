@@ -3,7 +3,7 @@
  *
  * Query keys are structured `[resource, databaseId, ...]` so a mutation can
  * invalidate exactly the slice it affected. Inserting a row, for example,
- * changes the records, the page list, the database summary and the event feed —
+ * changes the records, the page list, the database summary and the event feed,
  * but not the list of databases.
  */
 
@@ -98,7 +98,7 @@ function invalidateDatabase(
  * The default matters. `/health` takes a moment to arrive, and treating an
  * unanswered question as "absent" would make every panel flicker off and back
  * on at load. A feature is only hidden once the engine has actually said it is
- * missing — which is what the WASM build does for step mode, because there is
+ * missing, which is what the WASM build does for step mode, because there is
  * no thread there for a paused execution to sit on.
  */
 export function useFeature(name: string): boolean {
@@ -233,7 +233,7 @@ export function useIndexSearch(
 /**
  * The frame grid. Polled rather than pushed: the pool changes on *every* page
  * read, so streaming it would be a firehose, and a cache's interesting
- * behaviour — a working set settling in, a scan wiping it out — is visible at
+ * behaviour (a working set settling in, a scan wiping it out) is visible at
  * a human refresh rate anyway.
  */
 export function useBufferPool(
@@ -253,8 +253,8 @@ export function useBufferPool(
  *
  * Polled for the same reason the pool is: the undo log grows on every write to
  * a page it has not seen yet, and a stream of that would be noise. Unlike the
- * pool, this is also *correctness*-relevant — a forgotten open transaction is
- * something the user must be able to see — so it keeps polling even when the
+ * pool, this is also *correctness*-relevant, a forgotten open transaction is
+ * something the user must be able to see, so it keeps polling even when the
  * transactions workspace is not on screen, and the top bar reads from the same
  * cache entry.
  */
@@ -282,7 +282,7 @@ export function useTransactions(
  *
  * Polled rather than streamed, for the reason the pool is: there is one record
  * per page write, so a stream of them would be the busiest thing in the app and
- * the interesting shape — the log filling up, then collapsing at a checkpoint —
+ * the interesting shape (the log filling up, then collapsing at a checkpoint)
  * is perfectly legible at a human refresh rate.
  */
 export function useWal(
@@ -314,7 +314,7 @@ export function useRecovery(
 /**
  * The lock table and the wait-for graph.
  *
- * Polled fast — a lock that is held for two hundred milliseconds is invisible
+ * Polled fast. A lock that is held for two hundred milliseconds is invisible
  * at a one-second refresh, and short-lived contention is most of what there is
  * to see with two consoles driven by hand.
  */
@@ -350,8 +350,8 @@ export function useSessions(
 /**
  * BEGIN, COMMIT and ROLLBACK as one hook.
  *
- * A rollback rewrites pages the rest of the UI is displaying — rows, the disk
- * map, the catalog, the page inspector — so every one of them is invalidated,
+ * A rollback rewrites pages the rest of the UI is displaying, rows, the disk
+ * map, the catalog, the page inspector, so every one of them is invalidated,
  * not just the transaction panel. Anything less would leave the explorer
  * showing rows that no longer exist, which is exactly the "fake frontend
  * simulation" this project refuses to ship.
@@ -464,7 +464,7 @@ export function useDeleteRecord(databaseId: string, table: string) {
 /**
  * Parse SQL. A mutation rather than a query: parsing is an explicit action the
  * user takes (⌘↵), not state to keep in sync. Nothing here invalidates any
- * cache — Milestone 2 parsing has no side effects on the database.
+ * cache, Milestone 2 parsing has no side effects on the database.
  */
 export function useCreateIndex(databaseId: string) {
   const client = useQueryClient();
@@ -472,7 +472,7 @@ export function useCreateIndex(databaseId: string) {
     mutationFn: (payload: CreateIndexRequest) =>
       api.createIndex(databaseId, payload),
     // Building an index allocates pages and writes the catalog, so the storage
-    // views are stale too — not just the index list.
+    // views are stale too, not just the index list.
     onSuccess: () => invalidateDatabase(client, databaseId),
   });
 }

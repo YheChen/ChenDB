@@ -1,8 +1,8 @@
 /**
  * Every piece of SQL the explorer will run on the user's behalf, in one place.
  *
- * The buttons scattered through the workspaces — walkthroughs, workloads,
- * "break it half-way", the editor's examples — all write real SQL against the
+ * The buttons scattered through the workspaces, walkthroughs, workloads,
+ * "break it half-way", the editor's examples, all write real SQL against the
  * user's real tables. Nothing checked that any of it was valid, and twice it
  * was not:
  *
@@ -19,8 +19,8 @@
  *
  *   1. Build it from the table that is open, never from a guessed column name.
  *      `demoRows.ts` exists for that.
- *   2. Say honestly what it should do. A demo that is *supposed* to fail —
- *      "break it half-way", the editor's syntax-error example — is as much a
+ *   2. Say honestly what it should do. A demo that is *supposed* to fail,
+ *      "break it half-way", the editor's syntax-error example, is as much a
  *      claim as one that works, and goes stale the same way when the engine
  *      changes underneath it.
  *
@@ -47,24 +47,24 @@ export type DemoStatement = {
   /**
    * What executing it must do:
    *
-   *   `"ok"`    — a button runs this, and it must succeed. The assertion that
+   *   `"ok"`: a button runs this, and it must succeed. The assertion that
    *               would have caught the two-value `INSERT` into a three-column
    *               table.
-   *   `"error"` — a button runs this and it is *meant* to fail. "Break it
+   *   `"error"`: a button runs this and it is *meant* to fail. "Break it
    *               half-way" has no point if the last row succeeds.
-   *   `"skip"`  — never run by a button. The editor's examples illustrate
+   *   `"skip"`: never run by a button. The editor's examples illustrate
    *               syntax against whatever tables the user happens to have, so
    *               whether they execute is not this file's claim to make.
    */
   runs: "ok" | "error" | "skip";
-  /** `"seeded"` — the fixture table, with rows. `"empty"` — a fresh database. */
+  /** `"seeded"`, the fixture table, with rows. `"empty"`, a fresh database. */
   on: "seeded" | "empty";
 };
 
 export type Demo<T> = T & { id: string; label: string; hint: string };
 
 // --------------------------------------------------------------------------
-// Buffer pool — workloads
+// Buffer pool, workloads
 // --------------------------------------------------------------------------
 
 export type Workload = Demo<{ sql: (table: string) => string }>;
@@ -92,7 +92,7 @@ export const WORKLOADS: Workload[] = [
 ];
 
 // --------------------------------------------------------------------------
-// Transactions — rollback demonstrations
+// Transactions, rollback demonstrations
 // --------------------------------------------------------------------------
 
 export type TransactionDemo = Demo<{
@@ -100,7 +100,7 @@ export type TransactionDemo = Demo<{
   sql: (table: TableDetail) => string;
   /** Why this demo cannot run against this table, or null when it can. */
   blockedBy?: (table: TableDetail) => string | null;
-  /** True when the statement is supposed to fail — that *is* the demonstration. */
+  /** True when the statement is supposed to fail, that *is* the demonstration. */
   failsOnPurpose?: boolean;
 }>;
 
@@ -133,13 +133,13 @@ export const TRANSACTION_DEMOS: TransactionDemo[] = [
 ];
 
 // --------------------------------------------------------------------------
-// WAL — durability demonstrations
+// WAL, durability demonstrations
 // --------------------------------------------------------------------------
 
 export type WalDemo = Demo<{
   sql: (table: TableDetail) => string;
   note: string;
-  /** True for the one that must not commit — the crash button undoes it. */
+  /** True for the one that must not commit, the crash button undoes it. */
   requiresNoTransaction?: boolean;
 }>;
 
@@ -162,7 +162,7 @@ export const WAL_DEMOS: WalDemo[] = [
 ];
 
 // --------------------------------------------------------------------------
-// MVCC — two consoles, one database
+// MVCC, two consoles, one database
 // --------------------------------------------------------------------------
 
 export type Walkthrough = Demo<{ alice: string; bob: string }>;
@@ -351,7 +351,7 @@ SELECT "select" FROM "order";`,
     label: "Not implemented yet",
     parses: false,
     // Third occupant of this slot. It was `ORDER BY` until Milestone 13, then
-    // `LEFT JOIN` until Milestone 18 — and both times the guard in
+    // `LEFT JOIN` until Milestone 18, and both times the guard in
     // tests/integration/test_demo_sql.py failed with "was accepted" on the very
     // next run. That is the failure mode this catalogue exists for, and it has
     // now fired twice for the same reason: an example of what the engine cannot
@@ -363,7 +363,7 @@ SELECT "select" FROM "order";`,
 /**
  * What the SQL workspace opens with.
  *
- * That workspace *only* parses — it is the tokens-and-AST view, and its Parse
+ * That workspace *only* parses, it is the tokens-and-AST view, and its Parse
  * button never touches a database. The comment says so without implying the
  * engine cannot execute, which the previous one did: it read "nothing executes
  * yet (that is Milestone 3)" for thirteen milestones after Milestone 3 shipped,
@@ -409,7 +409,7 @@ SELECT email, age * 2 AS doubled FROM users WHERE age >= 18;`;
  * A two-table schema and a query that has to choose an order to join it in.
  *
  * Loaded by the Execution workspace's "Joins" button. It builds its own tables
- * because the interesting part is the *plan*, and a plan needs statistics —
+ * because the interesting part is the *plan*, and a plan needs statistics,
  * hence the ANALYZE, without which the planner is guessing and says so.
  */
 // --------------------------------------------------------------------------
@@ -421,7 +421,7 @@ SELECT email, age * 2 AS doubled FROM users WHERE age >= 18;`;
  *
  * Statements that reference `users` by name are only meaningful against a
  * table called `users`, so the guard passes one in. Everything else is built
- * from `table` and works whatever its columns are — which is the property
+ * from `table` and works whatever its columns are, which is the property
  * being checked as much as the SQL itself.
  */
 export function demoStatements(table: TableDetail): DemoStatement[] {
@@ -438,7 +438,7 @@ export function demoStatements(table: TableDetail): DemoStatement[] {
     });
   }
   for (const demo of TRANSACTION_DEMOS) {
-    // A blocked demo's button is disabled and its SQL would not be built —
+    // A blocked demo's button is disabled and its SQL would not be built,
     // `half-way` needs a NOT NULL column to violate.
     if (demo.blockedBy?.(table)) continue;
     add({

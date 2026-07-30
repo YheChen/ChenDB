@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure when a B+ tree index beats a sequential scan — and when it loses.
+"""Measure when a B+ tree index beats a sequential scan, and when it loses.
 
     python benchmarks/index_vs_scan.py
 
@@ -11,11 +11,11 @@ half the story, and the other half is what a *cost model* exists to know:
 
 A query matching one row in a million reads three index pages and one heap
 page. A query matching a third of the table reads three index pages and then
-333,000 scattered heap reads — through pages a sequential scan would have read
+333,000 scattered heap reads, through pages a sequential scan would have read
 once each. Somewhere between those, the index stops being worth using.
 
-Milestone 5's planner chose by *rule* — use an index whenever one covers a
-comparison — and so got the second case wrong, visibly. Milestone 6 costs both
+Milestone 5's planner chose by *rule* (use an index whenever one covers a
+comparison) and so got the second case wrong, visibly. Milestone 6 costs both
 and picks the cheaper. This benchmark forces each path in turn so the two can be
 compared, then reports what the planner actually chose, which is the only way to
 tell a good decision from a lucky one.
@@ -41,7 +41,7 @@ from engine.planner.physical import PlannerOptions
 
 #: The API caps a response at 10,000 rows so a request cannot be unbounded.
 #: A benchmark measuring a predicate that matches 14,000 must lift it, or the
-#: measurement stops early while the estimate covers the whole predicate — which
+#: measurement stops early while the estimate covers the whole predicate, which
 #: makes a correct cost model look like it over-estimates by 40%.
 NO_ROW_CEILING = 10_000_000
 
@@ -168,7 +168,7 @@ def main() -> int:
             "  engine/optimizer/cost.py were fitted to exactly this."
         )
 
-        header("Point lookup — one row out of 20,000")
+        header("Point lookup, one row out of 20,000")
         for label, db in (("no index", plain), ("index", indexed)):
 
             def lookup(db: Database = db) -> int:
@@ -187,7 +187,7 @@ def main() -> int:
                 f"{pages:5d} pages/lookup   {path}"
             )
 
-        header("Selectivity — and whether the planner gets it right")
+        header("Selectivity, and whether the planner gets it right")
         # bucket has 1000 distinct values over 20,000 rows, so `bucket < k`
         # matches roughly k/1000 of the table. Each path is forced in turn, then
         # the planner is left to choose: the last column is the one being graded.
@@ -225,7 +225,7 @@ def main() -> int:
         print(
             "\n  The scan reads every page once, whatever the predicate. The index\n"
             "  reads one heap page per matching row, and the same page repeatedly\n"
-            "  when several matches share it — no buffer pool until Milestone 7."
+            "  when several matches share it, no buffer pool until Milestone 7."
         )
 
         header("Ordered scan")

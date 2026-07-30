@@ -5,8 +5,8 @@ that is the whole point of the callback boundary: ``recover`` never learns what
 a page is, so its argument is a ``dict[int, bytes]`` here and a pager in
 production, and the algorithm is the same either way.
 
-The crash tests in ``tests/recovery/`` cover the other direction — a real
-process killed with ``SIGKILL`` — and neither replaces the other. These say the
+The crash tests in ``tests/recovery/`` cover the other direction (a real
+process killed with ``SIGKILL``) and neither replaces the other. These say the
 algorithm is right; those say it is wired up.
 """
 
@@ -61,7 +61,7 @@ def test_the_lsn_is_the_byte_offset():
     """Not a counter. The whole design leans on this.
 
     "Durable up to LSN n" becomes "the first n bytes are on disk", and a
-    record's LSN is knowable before it is written — which the pager needs,
+    record's LSN is knowable before it is written, which the pager needs,
     because the page inside the record has to carry it.
     """
     first = LogRecord(0, 0, 1, RecordType.UPDATE, 4, b"", page(1))
@@ -88,7 +88,7 @@ def test_a_record_found_at_the_wrong_offset_is_rejected():
 
     A checkpoint truncates the file and moves the base LSN. If the meta page's
     new base reaches the disk but the truncation does not, the next open reads
-    old records at a base they were not written for — and this is what stops
+    old records at a base they were not written for, and this is what stops
     them being replayed.
     """
     raw = LogRecord(0, 0, 1, RecordType.UPDATE, 4, b"", page(1)).to_bytes()
@@ -202,7 +202,7 @@ def test_a_torn_tail_is_reported_not_raised(tmp_path: Path):
 
 def test_consecutive_writes_to_one_page_coalesce(log: WriteAheadLog):
     """A bulk insert writes the same heap page row after row, and only the last
-    image matters — redo replays them in order and each overwrites the last.
+    image matters, redo replays them in order and each overwrites the last.
     """
     images = [page(n) for n in range(1, 4)]
     for image in images:
@@ -278,7 +278,7 @@ def test_a_flushed_record_is_never_coalesced_into(log: WriteAheadLog):
 
 def test_the_lsn_handed_to_the_callback_is_the_records_own(log: WriteAheadLog):
     # The page has to be stamped with the LSN of the record that ends up
-    # carrying it — which, when coalescing, is the *superseded* record's.
+    # carrying it: which, when coalescing, is the *superseded* record's.
     seen: list[int] = []
 
     def image(lsn: int) -> bytes:
@@ -317,7 +317,7 @@ def test_lsns_keep_increasing_across_a_checkpoint(log: WriteAheadLog):
     """The reason ``base_lsn`` is persisted at all.
 
     If the stream restarted at 0, a record written after a checkpoint would
-    carry an LSN below the one already stamped on a page — and redo, which
+    carry an LSN below the one already stamped on a page, and redo, which
     skips a record whose LSN the page has passed, would skip it.
     """
     first = log.append(RecordType.UPDATE, transaction_id=1, page_id=2, after_image=page(1))
@@ -355,7 +355,7 @@ def run(log: WriteAheadLog, disk: dict[int, bytes]):
 
     Pages here are raw fill bytes with no header, so there is no LSN to read:
     a page that is absent answers -1 and one that is present answers 0. That is
-    the state a crash leaves — every record newer than every page — which is
+    the state a crash leaves (every record newer than every page) which is
     what makes redo do its work rather than skip it.
     """
     return recover(
@@ -482,7 +482,7 @@ def test_two_transactions_are_split_correctly(log: WriteAheadLog):
 
 
 def test_records_outside_any_transaction_are_kept(log: WriteAheadLog):
-    # Engine bookkeeping — the meta page written when a database is created —
+    # Engine bookkeeping (the meta page written when a database is created)
     # belongs to nobody and has nobody to roll it back.
     log.append(
         RecordType.UPDATE, transaction_id=NO_TRANSACTION, page_id=0, after_image=page(7)

@@ -2,8 +2,8 @@
  * The live event timeline.
  *
  * Diagnostic events arrive over the WebSocket as the engine works. Each row is
- * one thing the storage engine actually did — a page read, an allocation, a
- * record insert — with the numbers it reported.
+ * one thing the storage engine actually did, a page read, an allocation, a
+ * record insert, with the numbers it reported.
  */
 
 import { useMemo, useState } from "react";

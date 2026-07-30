@@ -2,7 +2,7 @@
 
 What the API has to carry that Milestone 5's did not: what the planner
 *expected*, beside what actually happened, and what it turned down. A plan view
-that shows only the chosen operators cannot explain a slow query — the gap
+that shows only the chosen operators cannot explain a slow query. The gap
 between estimated and actual rows is where the answer almost always is.
 """
 
@@ -88,8 +88,8 @@ def test_a_good_estimate_is_close_to_the_actual(seeded: TestClient):
 
 
 def test_io_and_cpu_are_reported_separately(seeded: TestClient):
-    # They answer different questions — "would a buffer pool help?" against
-    # "would a faster predicate help?" — and a single total hides both.
+    # They answer different questions ("would a buffer pool help?" against
+    # "would a faster predicate help?") and a single total hides both.
     plan = plan_of(seeded, "SELECT id FROM users WHERE bucket < 90")
     scan = next(n for n in plan["nodes"] if n["operator_type"] == "SeqScan")
     assert scan["estimated_io_cost"] > 0
@@ -189,7 +189,7 @@ def test_writing_makes_the_statistics_report_themselves_stale(seeded: TestClient
     run(seeded, "INSERT INTO users VALUES (99999, 5, 'late');")
     stats = plan_of(seeded, "SELECT id FROM users WHERE bucket = 5")["statistics"]
     assert stats["stale"] is True
-    assert stats["row_count"] == 2000, "still the old count — that is the point"
+    assert stats["row_count"] == 2000, "still the old count, that is the point"
 
 
 def test_analyze_clears_the_stale_flag(seeded: TestClient):
@@ -320,7 +320,7 @@ def test_a_stepped_query_carries_its_estimates(seeded: TestClient):
 
 
 def test_stepping_starts_at_the_query_not_the_planner(seeded: TestClient):
-    # Planning reads pages — gathering statistics scans the whole table — and
+    # Planning reads pages (gathering statistics scans the whole table) and
     # from Milestone 6 it happens before the first operator opens. Stepping
     # through it would mean the first dozen steps of every query were the
     # planner counting rows.

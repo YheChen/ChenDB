@@ -201,7 +201,7 @@ class Lexer:
         return Token(TokenType.IDENTIFIER, lexeme, span)
 
     def _scan_quoted_identifier(self, start: int, line: int, column: int) -> Token:
-        """``"quoted name"`` — lets a column be called ``select`` or ``order``."""
+        """``"quoted name"``, lets a column be called ``select`` or ``order``."""
         self._advance()  # opening quote
         parts: list[str] = []
         while True:

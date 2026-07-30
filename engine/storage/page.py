@@ -19,13 +19,13 @@ the entire point of the design:
 * records can be moved within the page (compaction) without invalidating any
   external reference, because only the slot entry changes;
 * records are variable length, yet lookup by slot is O(1);
-* deletion is O(1) — write a tombstone into the slot entry.
+* deletion is O(1), write a tombstone into the slot entry.
 
 PostgreSQL's ``PageHeaderData`` + ``ItemIdData`` array is the same structure.
 Its ``pd_lower``/``pd_upper`` are our ``free_start``/``free_end``, and its
 4-byte ``ItemIdData`` bit-packs ``lp_off:15, lp_flags:2, lp_len:15`` where we
 use two plain uint16 fields.  SQLite also uses a slotted layout, but its cell
-pointer array holds only offsets — cell lengths are re-derived by parsing the
+pointer array holds only offsets, cell lengths are re-derived by parsing the
 cell header, which saves 2 bytes per row at the cost of CPU on every access.
 
 Complexity
@@ -113,7 +113,7 @@ class SlotInfo:
     """One entry of the slot directory, decoded for inspection.
 
     Produced by :meth:`Page.slot_directory` and consumed by tests and by the
-    visualizer's page inspector.  It is a read-only view — mutating a page goes
+    visualizer's page inspector.  It is a read-only view, mutating a page goes
     through :meth:`Page.insert` / :meth:`Page.delete`.
     """
 
@@ -176,7 +176,7 @@ class Page:
     ) -> Page:
         """Decode a page, checking its invariants unless told not to.
 
-        ``validate`` runs :meth:`validate_header` — the O(1) checks — not the
+        ``validate`` runs :meth:`validate_header` (the O(1) checks) not the
         full slot walk, which is 13 µs on a full 4 KiB page and belongs to the
         inspector rather than the read path.
 
@@ -360,17 +360,17 @@ class Page:
     def validate_header(self) -> None:
         """Check the O(1) invariants: the free-space pointers agree.
 
-        Split out from :meth:`validate` because this is what a page read can
-        afford. Walking the slot directory costs one ``struct`` unpack per slot
-        — **13 µs on a full 4 KiB page**, measured, against 100 ns for the
-        checksum — so doing it per read made the buffer pool nearly pointless.
+               Split out from :meth:`validate` because this is what a page read can
+               afford. Walking the slot directory costs one ``struct`` unpack per slot
+        (**13 µs on a full 4 KiB page**, measured, against 100 ns for the
+               checksum) so doing it per read made the buffer pool nearly pointless.
 
-        PostgreSQL draws the same line: it verifies the checksum and a few
-        header fields on read, and never walks the line pointer array to prove
-        it is self-consistent. A page that passes its checksum but has bad slots
-        is an engine bug, not media corruption, and a per-read scan is a poor
-        way to find one — :meth:`validate` is called explicitly by the page
-        inspector and by the tests, which is where it earns its cost.
+               PostgreSQL draws the same line: it verifies the checksum and a few
+               header fields on read, and never walks the line pointer array to prove
+               it is self-consistent. A page that passes its checksum but has bad slots
+               is an engine bug, not media corruption, and a per-read scan is a poor
+               way to find one, :meth:`validate` is called explicitly by the page
+               inspector and by the tests, which is where it earns its cost.
         """
         expected_free_start = PAGE_HEADER_SIZE + self.slot_count * SLOT_SIZE
         if self.free_start != expected_free_start:
@@ -450,7 +450,7 @@ class Page:
     def insert(self, payload: bytes) -> int | None:
         """Store ``payload`` and return its slot id, or ``None`` if it will not fit.
 
-        Only the contiguous free region is considered — this never compacts.
+        Only the contiguous free region is considered, this never compacts.
         Deciding between "compact this page" and "move to another page" is a
         storage *policy* question, so it belongs to the heap, not here.
 
@@ -485,8 +485,8 @@ class Page:
     # A heap addresses records by slot id, so a slot id must never change
     # meaning: the two methods below shift the slot directory and therefore
     # *renumber* every slot after the one they touch.  That is exactly what a
-    # B+ tree node wants — its entries must sit in key order, and nothing
-    # outside the node holds a reference to slot 4 in particular — and exactly
+    # B+ tree node wants: its entries must sit in key order, and nothing
+    # outside the node holds a reference to slot 4 in particular: and exactly
     # what a heap must never do, because every ``RecordId`` in the database
     # would silently start pointing at the wrong row.
     #
@@ -498,7 +498,7 @@ class Page:
         """Insert ``payload`` so it occupies slot ``index``, shifting the rest up.
 
         Returns ``False`` if it does not fit without compacting, mirroring
-        :meth:`insert`.  **Renumbers slots** — see the note above.
+        :meth:`insert`.  **Renumbers slots**, see the note above.
         """
         length = len(payload)
         if length > self.max_payload_size:
@@ -535,7 +535,7 @@ class Page:
         """Remove slot ``index`` entirely, shifting later slots down.
 
         The payload bytes stay where they are until :meth:`compact` runs; only
-        the directory shrinks.  **Renumbers slots** — see the note above.
+        the directory shrinks.  **Renumbers slots**, see the note above.
         """
         slot_count = self.slot_count
         if not 0 <= index < slot_count:
@@ -579,7 +579,7 @@ class Page:
 
         Same length is the whole reason this can exist. A slotted page cannot
         grow a record without moving it, and moving it would change its record
-        id — which every index entry points at. Refusing anything but an
+        id, which every index entry points at. Refusing anything but an
         equal-length write keeps that impossible rather than merely unlikely.
 
         Milestone 10 is the only caller: marking a row version deleted writes
@@ -638,7 +638,7 @@ class Page:
         """Slide live records together, reclaiming tombstoned space.
 
         Returns the number of bytes added to the free region.  **Slot ids are
-        preserved** — only the offsets inside slot entries change — so any
+        preserved** (only the offsets inside slot entries change) so any
         ``RecordId`` held elsewhere in the system stays valid.  That property
         is the reason the slot directory exists at all.
         """
@@ -725,7 +725,7 @@ def stamp_lsn(raw: bytes, lsn: int) -> bytes:
 
     The checksum covers everything after itself, and the LSN is inside that
     range, so changing one means recomputing the other. That is a second CRC32
-    pass over the page on every write — measured at about 1 microsecond for
+    pass over the page on every write, measured at about 1 microsecond for
     4 KiB, against ~13 microseconds for the insert that caused it. Avoiding it
     would mean threading the LSN down into ``Page.to_bytes``, which would put
     the log into every caller that builds a page.
@@ -742,7 +742,7 @@ def read_lsn(raw: bytes) -> int:
     """The LSN in an encoded page, without decoding the rest of it.
 
     Recovery asks this of every page it is about to redo, so it runs once per
-    log record and must not pay for a slot-directory walk — nor may it raise on
+    log record and must not pay for a slot-directory walk, nor may it raise on
     a page the crash left invalid, which is exactly the page redo is there to
     replace.
     """

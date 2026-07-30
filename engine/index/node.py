@@ -1,6 +1,6 @@
 """B+ tree nodes, built on the ordinary slotted page.
 
-A node is not a new kind of storage — it is a :class:`~engine.storage.page.Page`
+A node is not a new kind of storage. It is a :class:`~engine.storage.page.Page`
 whose ``page_type`` is ``BTREE_LEAF`` or ``BTREE_INTERNAL`` and whose slots hold
 index entries instead of table rows.  Reusing the page means splits, checksums,
 the free list, the page inspector and the disk map all work on index pages the
@@ -39,8 +39,8 @@ in the tree unique, which buys three things:
 * a page full of one repeated key is still splittable, which the list form is
   not once the list outgrows a page.
 
-PostgreSQL adopted exactly this in version 12 — "make the heap TID a tiebreaker
-column" — and reported large reductions in index bloat for low-cardinality
+PostgreSQL adopted exactly this in version 12 ("make the heap TID a tiebreaker
+column") and reported large reductions in index bloat for low-cardinality
 columns.  Internal separators carry the record id for the same reason: without
 it, a descent through duplicates could not tell which child to enter.
 
@@ -114,7 +114,7 @@ def decode_rid(raw: bytes) -> RecordId:
 
 #: The record id attached to a minus-infinity separator.  Page 0 is the meta
 #: page and slot 0 of it is never a record, so this address cannot collide with
-#: a real one — and it is the numerically smallest, so it sorts first.
+#: a real one, and it is the numerically smallest, so it sorts first.
 _SENTINEL_RID: Final = RecordId(0, 0)
 
 
@@ -158,7 +158,7 @@ def plan_split(widths: Sequence[int], capacity: int) -> int:
     comes out empty.
 
     Balancing by **bytes**, not by entry count, matters as soon as entries vary
-    in width — a TEXT index holding ``"a"`` and a 200-character string would
+    in width. A TEXT index holding ``"a"`` and a 200-character string would
     otherwise cut 50/50 by count and leave one page nearly full, which splits
     again on the very next insert.
 
@@ -243,7 +243,7 @@ class BTreeNode:
 
         Stored in the page header's ``next_page_id``, the same field a heap uses
         for its page chain.  Safe to share: a page belongs to exactly one
-        structure, and internal nodes never set it — a range scan only ever
+        structure, and internal nodes never set it. A range scan only ever
         walks leaves, so no internal sibling link is needed.
         """
         if not self.is_leaf:
@@ -300,14 +300,14 @@ class BTreeNode:
     #
     # Both searches are binary, O(log entries) comparisons per node.  A linear
     # scan would be O(entries) and, at a fanout of 214, roughly 27x more
-    # comparisons per level — which is the difference between a B+ tree being
+    # comparisons per level: which is the difference between a B+ tree being
     # worth building and not.
 
     def lower_bound(self, key: bytes, record_id: RecordId | None = None) -> int:
         """Index of the first entry whose sort key is ``>= (key, record_id)``.
 
         With ``record_id=None`` the bound is the first entry with *any* record
-        id for ``key`` — which is what a search for "all rows with this key"
+        id for ``key``, which is what a search for "all rows with this key"
         needs, and why the parameter is optional rather than defaulting to the
         minimum record id.
         """
@@ -336,7 +336,7 @@ class BTreeNode:
         """Index of the separator whose subtree may contain ``(key, record_id)``.
 
         The last entry whose separator is ``<=`` the target.  Slot 0's separator
-        is minus infinity, so this always finds one — the reason internal nodes
+        is minus infinity, so this always finds one. The reason internal nodes
         carry that sentinel instead of a special "leftmost child" header field.
         """
         if not self.count:
@@ -363,7 +363,7 @@ class BTreeNode:
         if self.page.insert_at(index, payload):
             return True
         # Deletions leave payload bytes stranded until something compacts, so try
-        # that before declaring the node full — one compaction is far cheaper
+        # that before declaring the node full: one compaction is far cheaper
         # than a split, which costs a page allocation and touches the parent.
         if self.page.reclaimable_space > 0:
             self.page.compact()
@@ -386,7 +386,7 @@ class BTreeNode:
         """Rewrite the node to hold exactly ``entries``, in the order given.
 
         Used by both halves of a split. Raises rather than silently dropping if
-        the entries do not fit — the split point is chosen by byte size for
+        the entries do not fit. The split point is chosen by byte size for
         precisely this reason, so a failure here is a bug, not a full node.
         """
         self.page.clear_records()

@@ -2,8 +2,8 @@
  * The schema browser: what tables exist, and what each one costs.
  *
  * Everything shown is read out of the real system tables. The catalog's own
- * tables can be shown too — they are ordinary heaps holding ordinary rows, which
- * is the point of Milestone 4 — but they are hidden by default so the user's
+ * tables can be shown too. They are ordinary heaps holding ordinary rows, which
+ * is the point of Milestone 4, but they are hidden by default so the user's
  * schema comes first.
  */
 

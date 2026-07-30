@@ -1,7 +1,7 @@
 # On-disk format (version 1)
 
 A ChenDB database is one file. The file is an array of fixed-size pages, and
-nothing else. Page *n* lives at byte offset `n × page_size` — that single
+nothing else. Page *n* lives at byte offset `n × page_size`. That single
 property is why essentially every disk-based database uses fixed-size pages,
 and it is what makes the disk map in the visualizer possible.
 
@@ -15,14 +15,14 @@ and it is what makes the disk map in the visualizer possible.
 
 `page_size` is chosen at creation and is immutable thereafter. The default is
 4096: it matches SQLite's default and the block size of most filesystems, so
-one page read is one filesystem block. PostgreSQL uses 8192 instead — more read
+one page read is one filesystem block. PostgreSQL uses 8192 instead, more read
 amplification on a point lookup, but a shorter page chain and a larger maximum
 tuple. The test suite uses 256-byte pages so that four rows fill a page and
 chaining is exercised by a handful of inserts.
 
 ---
 
-## Page 0 — the meta page
+## Page 0: the meta page
 
 Page 0 has its own layout rather than the generic page header, so the magic
 string lands at file offset 0 and `head -c 16 x.chendb` identifies the file.
@@ -33,22 +33,22 @@ PostgreSQL instead keeps cluster metadata in a separate `pg_control` file.
  off  size  field                   notes
  ───  ────  ──────────────────────  ────────────────────────────────────
    0    16  magic                   b"ChenDB Format 1\x00"
-  16     4  format_version          u32 — bumped on any layout change
-  20     4  page_size               u32 — fixed at creation
-  24     4  page_count              u32 — pages allocated, this one included
-  28     4  free_list_head          u32 — head of the recycled-page chain
+  16     4  format_version          u32 (bumped on any layout change
+  20     4  page_size               u32) fixed at creation
+  24     4  page_count              u32 (pages allocated, this one included
+  28     4  free_list_head          u32) head of the recycled-page chain
   32     4  catalog_tables_first    u32 ┐ chendb_tables heap
   36     4  catalog_tables_last     u32 ┘ …and its tail, so append is O(1)
   40     4  catalog_columns_first   u32 ┐ chendb_columns heap
   44     4  catalog_columns_last    u32 ┘
   48     4  catalog_indexes_first   u32 ┐ chendb_indexes heap      (v3)
   52     4  catalog_indexes_last    u32 ┘
-  56     4  next_object_id          u32 — shared table/index counter (v3)
-  60     8  lsn                     u64 — last log record for this page (v4)
-  68     8  checkpoint_lsn          u64 — LSN of the log file's byte 0   (v4)
-  76     4  next_xid                u32 — next transaction id            (v5)
-  80     4  flags                   u32 — reserved
-  84     4  checksum                u32 — CRC32 over bytes [0, 84)
+  56     4  next_object_id          u32 (shared table/index counter (v3)
+  60     8  lsn                     u64) last log record for this page (v4)
+  68     8  checkpoint_lsn          u64 (LSN of the log file's byte 0   (v4)
+  76     4  next_xid                u32) next transaction id            (v5)
+  80     4  flags                   u32 (reserved
+  84     4  checksum                u32) CRC32 over bytes [0, 84)
  ─────────────────────────────────────────────────────────────────────────
   88 bytes; the rest of the page is reserved and zero-filled.
 ```
@@ -56,21 +56,21 @@ PostgreSQL instead keeps cluster metadata in a separate `pg_control` file.
 `next_xid` becomes the *frozen horizon* on open: every id below it belonged to a
 transaction that has finished, and because a rollback here physically removes
 its work, every row still on disk came from one that **committed**. That is
-ChenDB's entire commit log, in one number — PostgreSQL needs `pg_xact` and a
+ChenDB's entire commit log, in one number, PostgreSQL needs `pg_xact` and a
 freeze job instead, because it does not undo.
 
 `checkpoint_lsn` is here rather than in the log because it has to be readable
 *before* the log is opened: it says what LSN the log file's first byte
 corresponds to. A checkpoint truncates the log, so that is not zero after the
-first one — and without it, LSNs would restart, page LSNs written earlier would
+first one, and without it, LSNs would restart, page LSNs written earlier would
 compare greater than records written later, and redo would skip work it had to
 do.
 
 `0xFFFFFFFF` is the null page pointer. Zero cannot serve as the sentinel
 because page 0 is a real page.
 
-Only these six pointers are needed to *start* reading. Everything else — where
-each table's heap begins, where each index's tree is rooted — is a row in a
+Only these six pointers are needed to *start* reading. Everything else (where
+each table's heap begins, where each index's tree is rooted) is a row in a
 system table. That is what the catalog buys: creating a table or an index is an
 insert, not a file-format change. Milestone 5 still had to bump the version,
 but only because it added a new *system* table, which by definition cannot
@@ -91,7 +91,7 @@ O(1).
 | 5 | 10 | `next_xid` added; every record gains an 8-byte tuple header |
 
 There is no in-place upgrade. Every bump so far moved where the catalog lives,
-so reading an old file would mean carrying a reader per layout — worth it for a
+so reading an old file would mean carrying a reader per layout, worth it for a
 shipped database, not for a teaching one. An old file is rejected with a message
 naming the milestone that changed it.
 
@@ -113,23 +113,23 @@ two regions that grow toward each other.
                            (grows →)         (← grows)
 ```
 
-### Page header — 24 bytes
+### Page header: 24 bytes
 
 ```
  off  size  field          notes
  ───  ────  ─────────────  ─────────────────────────────────────────────
-   0     4  checksum       u32 — CRC32 over bytes [4, page_size)
-   4     8  lsn            u64 — the log record that last changed this page
-  12     1  page_type      u8  — 0 FREE · 1 META · 2 HEAP · 3 SCHEMA
+   0     4  checksum       u32 (CRC32 over bytes [4, page_size)
+   4     8  lsn            u64) the log record that last changed this page
+  12     1  page_type      u8, 0 FREE · 1 META · 2 HEAP · 3 SCHEMA
                                  4/5 BTREE_* (reserved) · 6 OVERFLOW
-  13     1  flags          u8  — reserved
-  14     2  slot_count     u16 — directory entries, tombstones included
-  16     2  free_start     u16 — end of the directory   (pd_lower)
-  18     2  free_end       u16 — start of record data   (pd_upper)
-  20     4  next_page_id   u32 — next page in this heap's chain
+  13     1  flags          u8 (reserved
+  14     2  slot_count     u16) directory entries, tombstones included
+  16     2  free_start     u16 (end of the directory   (pd_lower)
+  18     2  free_end       u16) start of record data   (pd_upper)
+  20     4  next_page_id   u32, next page in this heap's chain
 ```
 
-`free_start` is redundant — it always equals `24 + 4 × slot_count` — but it is
+`free_start` is redundant (it always equals `24 + 4 × slot_count`) but it is
 stored anyway, mirroring PostgreSQL's `pd_lower`/`pd_upper`, and
 `Page.validate()` asserts the invariant on every read. A redundant field that
 is checked is a corruption detector.
@@ -138,16 +138,16 @@ The `lsn` was reserved from Milestone 1 and became load-bearing in Milestone 9.
 Recovery compares it against each log record: a record whose LSN the page has
 already passed is skipped, which is what makes replaying a log idempotent and
 therefore what makes a crash *during recovery* survivable. It sits inside the
-checksum's range, so stamping it means recomputing the checksum — which is why
+checksum's range, so stamping it means recomputing the checksum, which is why
 `stamp_lsn` exists and why a logged write pays a second CRC32 pass.
 
-### Slot directory — 4 bytes per entry
+### Slot directory: 4 bytes per entry
 
 ```
  slot i, at offset 24 + 4i:
      off  size  field
-       0     2  offset   u16 — where the record starts, or 0 if dead
-       2     2  length   u16 — record length in bytes
+       0     2  offset   u16 (where the record starts, or 0 if dead
+       2     2  length   u16) record length in bytes
 ```
 
 A tombstone is `(0, 0)`. Offset 0 is unambiguous because a live record always
@@ -155,7 +155,7 @@ starts after the header.
 
 PostgreSQL's equivalent `ItemIdData` is also 4 bytes but bit-packs
 `lp_off:15, lp_flags:2, lp_len:15`, buying two spare flag bits. SQLite's cell
-pointer array stores only offsets and re-derives lengths by parsing the cell —
+pointer array stores only offsets and re-derives lengths by parsing the cell,
 2 bytes cheaper per row, at the cost of CPU on every access.
 
 ### Why the indirection
@@ -167,8 +167,8 @@ is the whole point:
   together and rewrites their slot offsets. Slot indices are unchanged, so
   every `RecordId` held anywhere in the system stays valid. This is exactly why
   Milestone 5's index can store `RecordId`s in its leaves.
-- **Records are variable length, yet lookup is O(1)** — one array index.
-- **Deletion is O(1)** — write `(0, 0)`.
+- **Records are variable length, yet lookup is O(1)**: one array index.
+- **Deletion is O(1)**: write `(0, 0)`.
 
 ### Growth
 
@@ -185,7 +185,7 @@ insert of `n` bytes consumes `n + 4` (record plus slot entry), or just `n` when
 a tombstoned slot can be reused.
 
 Largest storable record: `page_size − 24 − 4`, i.e. **4068 bytes** on a 4 KiB
-page. Anything larger raises. Real systems store oversized values out of line —
+page. Anything larger raises. Real systems store oversized values out of line,
 PostgreSQL's TOAST tables, SQLite's overflow-page chains. ChenDB does not yet;
 `PageType.OVERFLOW` is reserved for it.
 
@@ -203,8 +203,8 @@ reports what compaction would recover:
 ```
 
 Slot 1 stays in the directory as a tombstone so slot 2 does not renumber. Only
-*trailing* tombstones are trimmed. The heap decides when to compact — the page
-only knows how — because "compact this page or move to another" is a storage
+*trailing* tombstones are trimmed. The heap decides when to compact (the page
+only knows how) because "compact this page or move to another" is a storage
 policy question. PostgreSQL defers the same work to page pruning and `VACUUM`.
 
 ---
@@ -221,11 +221,11 @@ policy question. PostgreSQL defers the same work to page pruning and `VACUUM`.
 Bit *i* of the bitmap set means column *i* is NULL, and a NULL contributes
 **no bytes** to the value area. A row of five NULLs costs one byte.
 
-### The tuple header — 8 bytes (v5)
+### The tuple header: 8 bytes (v5)
 
 `xmin` is the transaction that created this version; `xmax` is the one that
 deleted it, or zero. Those eight bytes are what make a row a *version*, and
-they are the whole of MVCC's storage cost — 24% on a small row, against
+they are the whole of MVCC's storage cost, 24% on a small row, against
 PostgreSQL's 23-byte `HeapTupleHeaderData`.
 
 The header goes **first** so a reader can decide whether a version is visible
@@ -234,8 +234,8 @@ than a walk of every column.
 
 A **delete rewrites `xmax` in place** and leaves everything else alone, which is
 why `Page.overwrite` exists and why it refuses anything but an equal-length
-write. The slot stays live and the row still decodes — a transaction whose
-snapshot predates the delete has to be able to read it — and the space comes
+write. The slot stays live and the row still decodes (a transaction whose
+snapshot predates the delete has to be able to read it) and the space comes
 back at `VACUUM`.
 
 The catalog's own tables carry **no** tuple header. They do not need versions:
@@ -282,7 +282,7 @@ byte per row plus alignment padding. ChenDB always writes it, trading a byte
 for a branch-free decoder.
 
 **Values are sequential with no alignment padding.** Reading column *k* means
-walking columns 0..k−1 — O(k). Fine for a scan, which decodes whole rows
+walking columns 0..k−1, O(k). Fine for a scan, which decodes whole rows
 anyway, but a projection of the last column of a wide table still pays to walk.
 PostgreSQL caches per-attribute offsets (`attcacheoff`) for the fixed-width
 prefix of a tuple; SQLite puts every field's type-and-length in a header at the
@@ -291,7 +291,7 @@ tables ever matter.
 
 **Fixed-width integers.** Every integer costs 8 bytes even when it holds 1.
 SQLite stores integers in the narrowest of 1/2/3/4/6/8 bytes and records the
-choice per row — much smaller in practice, one branch per column in cost.
+choice per row, much smaller in practice, one branch per column in cost.
 PostgreSQL takes the third road: distinct declared types, so width is a schema
 decision resolved once.
 
@@ -299,7 +299,7 @@ decision resolved once.
 rather than a byte swap. Big-endian would let integer keys be compared with
 `memcmp`, which is genuinely useful for a B+ tree and is why RocksDB and
 FoundationDB encode keys big-endian. Milestone 5 will compare decoded values
-instead — a real cost, taken knowingly.
+instead, a real cost, taken knowingly.
 
 **4-byte text length.** Simple and uniform, three bytes of overhead per short
 string. PostgreSQL uses a 1-byte header for values up to 126 bytes; SQLite uses
@@ -317,7 +317,7 @@ RecordId(page_id=3, slot_id=4)      # rendered as (3,4)
 PostgreSQL calls this a `ctid`. It survives page compaction (the slot directory
 absorbs the move) but **not** a row moving to a different page. Milestone 5's
 index stores these in its leaves, which is why an update that relocates a row
-has to touch every index — PostgreSQL's HOT optimisation exists to dodge
+has to touch every index, PostgreSQL's HOT optimisation exists to dodge
 precisely that cost.
 
 ---
@@ -326,7 +326,7 @@ precisely that cost.
 
 `Pager.allocate_page` prefers the free list; only if it is empty does the file
 grow. A freed page is zeroed, typed `FREE`, and pushed onto the head of the
-chain — the "next free" pointer lives in the page's own `next_page_id`, so the
+chain. The "next free" pointer lives in the page's own `next_page_id`, so the
 free list costs no space outside the pages themselves.
 
 ```
@@ -350,7 +350,7 @@ Every page carries a CRC32 over its own bytes (excluding the checksum field),
 refreshed on write and verified on read. A mismatch raises
 `ChecksumMismatchError`.
 
-This detects torn writes — the OS wrote part of a page before losing power —
+This detects torn writes (the OS wrote part of a page before losing power)
 and media corruption. It cannot *repair* anything: that needs the write-ahead
 log in Milestone 9. Detection alone is still the difference between a loud
 failure and silently wrong query results, which is why PostgreSQL ships
@@ -425,7 +425,7 @@ Every key carries a 1-byte tag:
 | INTEGER | 8 bytes big-endian of `value + 2**63` |
 | FLOAT | 8 bytes big-endian IEEE-754, sign bit flipped (negatives: all bits) |
 | BOOLEAN | 1 byte |
-| TEXT | raw UTF-8, no length prefix — byte order is code-point order |
+| TEXT | raw UTF-8, no length prefix, byte order is code-point order |
 
 `-0.0` is normalised to `0.0` so a unique index cannot hold both. `NaN` sorts
 above every real number, matching PostgreSQL.
@@ -441,21 +441,21 @@ index bloat on low-cardinality columns.
 They compare as a **pair**, not as concatenated bytes: `"ab" ‖ rid` and
 `"abc" ‖ rid` interleave, and the outcome would depend on the numeric record id.
 Splitting the fixed-width 6-byte suffix off by length is exact and needs no
-escaping layer — which is also why Milestone 5 indexes one column and not two.
+escaping layer, which is also why Milestone 5 indexes one column and not two.
 
 ### Capacity
 
 On a 4 KiB page an INTEGER leaf entry is 1 (tag) + 8 (value) + 6 (rid) = 15
 bytes plus a 4-byte slot, so `(4096 − 24) / 19 ≈ 214` entries. Fanout ≈ 214, and
 three levels address ≈ 9.8 million rows. A balanced *binary* tree over the same
-data is 24 levels deep, so 24 page reads against 3 — the entire argument.
+data is 24 levels deep, so 24 page reads against 3, the entire argument.
 
 ---
 
 ## Durability, honestly
 
 `write_page` hands bytes to the operating system. It does **not** make them
-durable — the OS may hold them in its page cache for seconds. Only `sync()`
+durable. The OS may hold them in its page cache for seconds. Only `sync()`
 (`fsync`) survives a power loss.
 
 Milestone 1 therefore has a real crash window:
@@ -468,7 +468,7 @@ Milestone 1 therefore has a real crash window:
 | Crash mid-`create_table`       | orphaned page, table absent      | rolled back |
 
 `tests/recovery/test_crash_and_corruption.py` pins each of these down by
-`SIGKILL`ing a child process — no `close()`, no `fsync`, no atexit hooks. Any
+`SIGKILL`ing a child process, no `close()`, no `fsync`, no atexit hooks. Any
 cooperative shutdown would quietly flush the very buffers under test.
 
 ---
@@ -481,10 +481,10 @@ cooperative shutdown would quietly flush the very buffers under test.
 | `page.read(slot)`    | O(1)                             | one array index |
 | `page.delete(slot)`  | O(1)                             | write a tombstone |
 | `page.compact`       | O(slots + live bytes)            | |
-| `pager.read_page`    | O(1) — 1 seek + 1 read           | a syscall until M7 |
+| `pager.read_page`    | O(1), 1 seek + 1 read           | a syscall until M7 |
 | `pager.allocate`     | O(1) + 1 meta write              | |
-| `heap.insert`        | O(1) — 1 read, 1–2 writes        | tail page only |
-| `heap.get(rid)`      | O(1) — 1 read                    | |
+| `heap.insert`        | O(1) (1 read, 1–2 writes        | tail page only |
+| `heap.get(rid)`      | O(1)) 1 read                    | |
 | `heap.scan`          | O(pages) reads, O(rows) work     | |
 | `heap.count`         | O(pages)                         | no cached count |
 | `encode` / `decode`  | O(row bytes)                     | |
@@ -509,7 +509,7 @@ Every page read is a real syscall until Milestone 7's buffer pool.
   readahead in the general case. Ours stays near-sequential only because pages
   are appended.
 - **One table per file.** Lifted by the catalog in Milestone 4.
-- **No cached row count**, so `COUNT(*)` is a full scan — the same as
+- **No cached row count**, so `COUNT(*)` is a full scan, the same as
   PostgreSQL, and unlike MyISAM.
 - **Meta page written on every allocation**: two writes per new page.
 - **Wide tables** pay O(k) to reach column *k*.

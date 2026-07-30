@@ -5,7 +5,7 @@
 
 Creates a database in a temporary directory, fills it, kills the handle,
 reopens it, and shows the bytes at each step. Everything printed is read back
-from the real file — nothing is simulated.
+from the real file, nothing is simulated.
 """
 
 from __future__ import annotations
@@ -116,13 +116,13 @@ def main() -> int:
         )
 
         # ------------------------------------------------------------------
-        heading(5, "Delete a row — a tombstone, not an erasure")
+        heading(5, "Delete a row. A tombstone, not an erasure")
         victim = next(rid for rid, _ in db.scan("users"))
         db.delete("users", victim)
         after = db.page_detail(victim.page_id)
         print(f"   Deleted {victim}.")
         print(f"   Slot {victim.slot_id} is now a tombstone, but slot_count is still")
-        print(f"   {after.summary.slot_count} — later slot ids must not renumber.")
+        print(f"   {after.summary.slot_count}, later slot ids must not renumber.")
         print(f"   Reclaimable space: {after.summary.reclaimable_space} bytes,")
         print("   recoverable by compaction, which preserves every slot id.")
 

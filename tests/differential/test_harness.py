@@ -1,7 +1,7 @@
 """Tests of the tester.
 
 This is the part worth refusing to ship without. A differential tester that has
-quietly stopped comparing anything is green, fast, and worthless — and it looks
+quietly stopped comparing anything is green, fast, and worthless, and it looks
 exactly like one that works. Every guard here exists to make one specific way of
 going quiet loud instead:
 
@@ -67,7 +67,7 @@ REQUIRED_FEATURES: Final = (
 def corpus() -> tuple[Counter[str], Counter[str], int]:
     """Feature and shape counts over the CI seeds. Generated, not executed.
 
-    No engine runs here — the generator is deterministic, so what it *produces*
+    No engine runs here. The generator is deterministic, so what it *produces*
     can be measured without comparing anything, which keeps this guard fast enough
     to never be the reason someone skips the suite.
     """
@@ -97,8 +97,8 @@ def test_the_corpus_hits_every_corner(corpus, feature: str):
     features, _, _ = corpus
     assert features[feature] >= 5, (
         f"{feature!r} appears {features[feature]} times across {len(CI_SEEDS)} "
-        f"seeds. Either the generator stopped producing it — a coverage "
-        f"regression that leaves the suite green — or the label is dead."
+        f"seeds. Either the generator stopped producing it (a coverage "
+        f"regression that leaves the suite green) or the label is dead."
     )
 
 
@@ -136,8 +136,8 @@ def test_the_corpus_is_not_trivial(tmp_path: Path):
 def test_a_generated_case_is_the_same_case_every_time():
     """The seed is the case's name, so it had better be a name.
 
-    Anything non-deterministic in the generator — the clock, a set iteration, the
-    module-level ``random`` — would make a CI failure unreproducible, which is the
+    Anything non-deterministic in the generator (the clock, a set iteration, the
+    module-level ``random``) would make a CI failure unreproducible, which is the
     one thing that would make the whole suite useless rather than merely weaker.
     """
     first, second = generator.case(1234), generator.case(1234)
@@ -177,7 +177,7 @@ def test_the_oracle_catches_a_planted_difference():
     """One planted difference of each kind the oracle claims to detect.
 
     This is the only guard that would notice ``compare()`` having been reduced to
-    ``return AGREE``, which is what a weakened oracle looks like — and a weakened
+    ``return AGREE``, which is what a weakened oracle looks like, and a weakened
     oracle is the failure mode with no other symptom.
     """
     plain = _query()
@@ -215,7 +215,7 @@ def test_the_oracle_accepts_a_legitimate_tie_order():
     """The other half: with ties, a different row order is *not* a divergence.
 
     Both engines are entitled to it, and reporting it would make the suite red
-    forever — the failure mode that gets a tester deleted.
+    forever, the failure mode that gets a tester deleted.
     """
     ordered = _query(sort_key_indices=(0,))
     mine = _select([(1, "a"), (1, "b"), (2, "c")], ("c0", "c1"))
@@ -285,7 +285,7 @@ def test_the_canonical_key_never_separates_two_equal_values():
     A multiset comparison sorts by :func:`canonical` and then walks the pairs with
     :func:`values_agree`. If the key is *finer* than the equality it serves, two
     equal values sort into different positions and the walk compares the wrong
-    pairs — inventing a divergence out of a correct result.
+    pairs, inventing a divergence out of a correct result.
     """
     for one, other in ((-0.0, 0.0), (0.0, -0.0), (1.5, 1.5), (True, 1), (False, 0)):
         if values_agree(normalise(one), normalise(other)):
@@ -306,7 +306,7 @@ def test_the_canonical_key_orders_mixed_types_without_raising():
 def test_shrinking_reduces_a_case_and_keeps_the_same_failure():
     """A planted failure: the last query of the case, and only that one.
 
-    The shrinker must find it, drop the other fifteen queries, and stop — and the
+    The shrinker must find it, drop the other fifteen queries, and stop, and the
     result must still fail *for the same reason*, which is the property that stops
     a shrinker wandering onto a different bug and reporting a minimal case for it.
     """
@@ -317,7 +317,7 @@ def test_shrinking_reduces_a_case_and_keeps_the_same_failure():
         """Stand in for both engines: everything agrees except the planted query.
 
         The fake outcome has to be as wide as the query projects, or the oracle
-        indexes a sort key past the end of the row — which is a property of a real
+        indexes a sort key past the end of the row, which is a property of a real
         outcome and so not something the oracle should have to defend against.
         """
         results = []

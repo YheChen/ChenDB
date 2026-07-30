@@ -1,4 +1,4 @@
-# Milestone 18 — Outer joins, and the licence the planner had to give up
+# Milestone 18: Outer joins, and the licence the planner had to give up
 
 `LEFT`, `RIGHT` and `FULL OUTER JOIN`. The parser had refused them by name for
 five milestones, with a message that turned out to be exactly right about why:
@@ -6,8 +6,8 @@ five milestones, with a message that turned out to be exactly right about why:
 > an outer join constrains the order the planner may join in, and ChenDB reorders
 > freely
 
-That is the milestone. NULL-extending an unmatched row is nearly free — a
-consequence of a decision made in Milestone 13 — and the entire cost is in the
+That is the milestone. NULL-extending an unmatched row is nearly free (a
+consequence of a decision made in Milestone 13) and the entire cost is in the
 planner, which had been built on a licence it no longer has.
 
 ---
@@ -18,7 +18,7 @@ planner, which had been built on a licence it no longer has.
 |---|---|
 | `engine/parser/parser.py` | `_join_kind` accepts the three sides; `OUTER` is noise |
 | `engine/parser/ast.py` | `JoinKind.is_outer`, `.preserves_left`, `.preserves_right` |
-| `engine/executor/binder.py` | `BoundJoin.kind` — the constraint has to travel |
+| `engine/executor/binder.py` | `BoundJoin.kind`, the constraint has to travel |
 | `engine/planner/logical.py` | `LogicalJoin.kind` |
 | `engine/planner/physical.py` | `PhysicalJoin` base with `preserve_left`/`preserve_right`; `_join_steps`, `_null_supplied`, `_plan_chain`, `_plan_segment`; `_join_cardinality` reads terms, not pool positions |
 | `engine/executor/operators.py` | NULL extension in both algorithms |
@@ -30,7 +30,7 @@ planner, which had been built on a licence it no longer has.
 An unmatched left row does not need to be *extended*. It is already extended.
 
 Milestone 13 decided that **a row's layout is the written order of the `FROM`,
-always** — every row below the topmost join is the full width of the query, with
+always**. Every row below the topmost join is the full width of the query, with
 the tables not yet joined left as `None`. It paid for that in row width, and
 documented the cost. This is the refund:
 
@@ -47,7 +47,7 @@ no partner has simply never had that copy done to it, so emitting it unchanged
 *is* the NULL extension. The mirror holds for an unmatched right row: its subplan
 never touched the left side's slots.
 
-So the operator work is bookkeeping, not construction — and the bookkeeping is
+So the operator work is bookkeeping, not construction, and the bookkeeping is
 where the one real bug was.
 
 ### The bug the fuzzer found and nine hand-written cases did not
@@ -65,7 +65,7 @@ it. Its bucket was not empty; it matched nothing. Two of three rows went missing
 
 I had tested `FULL JOIN` by hand, nine ways, and every one of my cases had a bare
 equality for its `ON`. The generative suite from Milestone 17 found this on its
-first run with outer joins enabled — because 35% of the outer joins it emits carry
+first run with outer joins enabled, because 35% of the outer joins it emits carry
 an extra term on the null-supplied side, which is a corner I put in the generator
 *because* it is the shape the planner had to get right, and it caught the executor
 instead.
@@ -90,7 +90,7 @@ stays out of the hash table and stays in the build list.
 Milestone 13's `plan_select` put the `WHERE` and every join's `ON` into one flat
 list of conjuncts, and its comment said why:
 
-> For an inner join the two are interchangeable — `a JOIN b ON p` and
+> For an inner join the two are interchangeable. `a JOIN b ON p` and
 > `a, b WHERE p` mean the same thing
 
 Exactly so, and every word of it fails for an outer join:
@@ -129,7 +129,7 @@ up, and not merged with anything.
 ### Pushdown becomes conditional, in one direction only
 
 Predicate pushdown was described in Milestone 13 as a *rewrite* rather than a
-costed alternative, because it can never be worse. It still cannot — except into
+costed alternative, because it can never be worse. It still cannot, except into
 a table an outer join above can NULL-extend:
 
 ```sql
@@ -160,7 +160,7 @@ closes the segment, runs at that point with its own `ON`, and the result becomes
 Opaque is exactly the right amount of freedom, and it falls out rather than being
 enforced:
 
-* the search **can commute** it with other relations — an inner join's two inputs
+* the search **can commute** it with other relations. An inner join's two inputs
   may be swapped, so joining `c` to `(a ⟕ b)` either way round is sound;
 * it **cannot re-associate** into it, because the relation is one item in the
   search's world and there is nothing inside to reach. It can never build
@@ -169,8 +169,8 @@ enforced:
 Build-side selection survives intact, and that is worth spelling out because it
 looks like it should not. `preserve_left` and `preserve_right` describe the
 **physical** inputs, not the `LEFT` or `RIGHT` in the query. Swapping an outer
-join's two inputs and flipping the flags produces the identical output row —
-because `RowLayout` fixes every column's position by written order — so the cost
+join's two inputs and flipping the flags produces the identical output row (
+because `RowLayout` fixes every column's position by written order) so the cost
 model keeps its freedom to hash the smaller side. Only the order *relative to
 other joins* is constrained.
 
@@ -180,15 +180,15 @@ outer one cannot move before it, even where that would be legal and cheaper.
 The general treatment is PostgreSQL's. It builds a `SpecialJoinInfo` per outer
 join carrying `min_lefthand` and `min_righthand` relation sets, so the search can
 *prove* a particular reordering safe by set containment instead of assuming it is
-not — and it has identity-3 and identity-2 rules for the specific cases where an
+not, and it has identity-3 and identity-2 rules for the specific cases where an
 outer join and an inner join do commute. That is the right answer for a planner
 that must be fast on twelve-table queries. Here it would be a substantial amount
-of machinery to recover orderings for a shape — an outer join with inner joins
-after it — whose cardinality the cost model cannot estimate well anyway. The
+of machinery to recover orderings for a shape (an outer join with inner joins
+after it) whose cardinality the cost model cannot estimate well anyway. The
 honest version is one line in `EXPLAIN`:
 
 ```
-Decided what order to join in: a LEFT b — an outer join runs where it was
+Decided what order to join in: a LEFT b. An outer join runs where it was
 written, so the search may not reorder across it
 ```
 
@@ -200,7 +200,7 @@ is not merely imprecise but impossible. PostgreSQL clamps the same way in
 `calc_joinrel_size_estimate`.
 
 Adding the clamp exposed something larger. `_join_cardinality` took *positions
-into the shared conjunct pool* — and an outer join contributes nothing to that
+into the shared conjunct pool*, and an outer join contributes nothing to that
 pool, so it received an empty list and returned the raw product. Every outer join
 was being costed as a **cross product**: 60 rows joined to 300 estimated at
 18,000 instead of 90, with the error compounding into every operator above it.
@@ -225,7 +225,7 @@ Measured on the fixture in `examples/milestone18_outer_joins.py`.
 The build-side cost is the interesting one: the buckets now hold **indices** into
 a list of build rows rather than the rows themselves, so a preserved build side
 can find the leftovers. The rows are shared, so that is one integer per build row
-over the previous layout — and it is what makes `LEFT JOIN` work when the planner
+over the previous layout, and it is what makes `LEFT JOIN` work when the planner
 chose to hash the preserved side.
 
 The matched set is `set[int]`, not `set[Row]`, and that is not a micro-decision:
@@ -240,8 +240,8 @@ The claim worth making is not that the tests pass. It is that **160,000 generate
 query pairs agree with SQLite**, with outer joins in about 40% of the generated
 joins and an extra `ON` term on the null-supplied side in a third of those.
 
-Milestone 17's generator needed one change to cover this — `_join_clause` picks a
-kind — and the schema needed none. It already drew `child.parent_id` from keys the
+Milestone 17's generator needed one change to cover this (`_join_clause` picks a
+kind) and the schema needed none. It already drew `child.parent_id` from keys the
 parent has, keys it has not, and NULL, which was written for exactly this:
 
 > That is the difference between exercising a join and merely calling one, and it
@@ -251,12 +251,12 @@ Two guards fired as designed while this landed:
 
 * `test_demo_sql.py::test_every_demo_statement_parses` failed with
   `editor/Not implemented yet (Not implemented yet) was accepted`. That slot has
-  now had three occupants — `ORDER BY` until Milestone 13, `LEFT JOIN` until this
-  one, `DISTINCT` now — and it has caught its own staleness every single time. An
+  now had three occupants (`ORDER BY` until Milestone 13, `LEFT JOIN` until this
+  one, `DISTINCT` now) and it has caught its own staleness every single time. An
   example of what an engine cannot do is a claim with a shelf life.
 * `examples/milestone2_parser.py` asserts that a list of statements produce
   errors, and `LEFT JOIN` was in it. `make examples` runs on a bare interpreter in
-  CI, so that failed too — the second time that same line has needed updating.
+  CI, so that failed too. The second time that same line has needed updating.
 
 ---
 
@@ -279,16 +279,16 @@ Two guards fired as designed while this landed:
   provably an inner join, because a null-rejecting `WHERE` on the null-supplied
   side discards every row the outer join preserved. Every serious planner spots
   that and rewrites it, which both removes the barrier and re-enables pushdown.
-  ChenDB executes the outer join and then filters — correct, and slower than it
+  ChenDB executes the outer join and then filters, correct, and slower than it
   needs to be for a query people write often.
 - **No `CROSS JOIN` keyword**, still. `FROM a, b` is the same thing and the parser
   says so.
 - **No `USING` and no `NATURAL JOIN`.** Both are sugar over `ON`, and both need
-  the binder to merge two columns into one output column — which the flat
+  the binder to merge two columns into one output column, which the flat
   `RowLayout` has no way to express, since it maps every input column to a
   distinct position.
 - **`FULL JOIN` always materialises the build side.** So does the nested loop.
-  Neither can stream, which is true of `LEFT` on the build side too — a preserved
+  Neither can stream, which is true of `LEFT` on the build side too. A preserved
   side cannot be emitted until its input is known to be exhausted.
 - **The cardinality estimate is still crude.** The floor is right and the cross
   product is gone, but `join_selectivity` has no notion of a foreign key, so a

@@ -599,7 +599,7 @@ def test_nesting_just_inside_the_limit_still_works():
 def test_analyze_returns_partial_results_for_incomplete_sql():
     outcome = analyze_sql("SELECT name FROM")
     assert not outcome.ok
-    assert len(outcome.tokens) == 4  # SELECT name FROM EOF — all scanned fine
+    assert len(outcome.tokens) == 4  # SELECT name FROM EOF, all scanned fine
     assert outcome.statements == ()
     assert outcome.lexed_ok
     assert outcome.error is not None

@@ -1,4 +1,4 @@
-# Milestone 12 — CI, and the guard for what slipped
+# Milestone 12: CI, and the guard for what slipped
 
 Eleven milestones with no `.github/` directory. The cost of that is not
 hypothetical; it is two specific bugs that this project already shipped:
@@ -9,7 +9,7 @@ hypothetical; it is two specific bugs that this project already shipped:
 | Milestone 10 | **A demo button shipped SQL the parser refused.** `DELETE FROM … WHERE id = 1`, in a workspace where `DELETE` was not implemented. It sat there for a milestone. |
 
 Both have the same shape: a check that exists and is not run. Neither is a hard
-problem — the format check is one command, and the demo button was four lines
+problem. The format check is one command, and the demo button was four lines
 from being tested. What was missing is anything that runs them when a human
 does not.
 
@@ -79,10 +79,10 @@ what it claims about itself:
 
 `runs` has three values, and the third is the one that makes the guard honest:
 
-- `"ok"` — a button runs it and it must succeed.
-- `"error"` — a button runs it and it is **meant** to fail. "Break it half-way"
+- `"ok"`: a button runs it and it must succeed.
+- `"error"`: a button runs it and it is **meant** to fail. "Break it half-way"
   has no point if the last row succeeds, so "it errored" is the assertion.
-- `"skip"` — never run by a button. The editor's examples illustrate syntax
+- `"skip"`: never run by a button. The editor's examples illustrate syntax
   against whatever tables the user happens to have, and two of them are
   deliberately invalid. `parses` is still checked for all of them, so
   "not implemented yet" going quietly out of date is caught too.
@@ -90,7 +90,7 @@ what it claims about itself:
 ### Reading TypeScript from a Python test
 
 The catalogue has to live in the frontend, because that is where the app reads
-it from — a copy in the test suite is the failure mode this is meant to end,
+it from. A copy in the test suite is the failure mode this is meant to end,
 not repeat. So the test asks Node to evaluate the module and print JSON:
 
 ```python
@@ -98,7 +98,7 @@ subprocess.run(["node", "scripts/emit_demo_sql.ts"], ...)
 ```
 
 Node 22.6+ strips TypeScript types natively, so this needs no bundler, no
-transpiler and **no new dependency** — which matters, because a guard that is
+transpiler and **no new dependency**, which matters, because a guard that is
 expensive to run is one that gets turned off. Two consequences worth knowing:
 
 - Type-only imports are erased without being resolved, so `import type { … }
@@ -110,7 +110,7 @@ Nothing is generated to disk and nothing is committed. A generated fixture
 would be one more thing that can be stale, which is precisely the bug class
 this guard exists for.
 
-If `node` is missing the guard skips — except in CI, where `CHENDB_REQUIRE_NODE`
+If `node` is missing the guard skips, except in CI, where `CHENDB_REQUIRE_NODE`
 turns the skip into a failure. **A guard that goes quiet is worse than no
 guard**, because it looks like a pass.
 
@@ -124,7 +124,7 @@ Four columns, a `NOT NULL` that is not the key, and a `BOOLEAN`. That shape is
 deliberate: any statement written by hand rather than built from
 `demoRows.ts` would almost certainly assume two or three columns and fail
 immediately. A two-column fixture would let an arity bug through, so a separate
-test asserts the fixture still has the properties the others rely on — otherwise
+test asserts the fixture still has the properties the others rely on, otherwise
 the guard could pass by being easy.
 
 ### It was checked against the bugs it exists for
@@ -146,7 +146,7 @@ A guard nobody has watched fail is a guard nobody knows works.
 
 Worth being clear about, because a green tick is a claim.
 
-CI would not have caught the four bugs Milestone 11 turned up — the write-write
+CI would not have caught the four bugs Milestone 11 turned up. The write-write
 conflict, the never-committed session transaction, the quadratic WAL, the
 catalog counting versions as rows. Every one of them needed a *test that did
 not exist*, and automation only runs the tests you have. What CI catches is
@@ -196,7 +196,7 @@ Prints every statement the explorer's buttons will produce.
 - **No matrix.** One Python and one Node version. The engine claims 3.13+ and
   only 3.13 is tested.
 - **No caching of the venv**, only of pip's downloads, so the Python job
-  reinstalls every run — a few seconds, and not worth the staleness risk yet.
+  reinstalls every run. A few seconds, and not worth the staleness risk yet.
 - **Nothing runs the recovery tests under load or repetition.** They fork real
   processes and `SIGKILL` them; a flake there would be a real bug and would
   currently look like noise.

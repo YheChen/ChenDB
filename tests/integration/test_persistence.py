@@ -1,8 +1,8 @@
 """The headline property, now across many tables: data written before a restart
 is there after it, and so is every schema.
 
-Milestone 1 proved rows survive. Milestone 4 has to prove the *catalog* does —
-that a reopened database can rediscover which tables exist, where their heaps
+Milestone 1 proved rows survive. Milestone 4 has to prove the *catalog* does.
+That a reopened database can rediscover which tables exist, where their heaps
 start, and what shape their rows are, with nothing held in memory.
 """
 
@@ -197,7 +197,7 @@ def test_a_table_whose_heap_grew_reopens_at_the_right_page(db_path: Path):
     """The catalog row must follow the heap when it extends.
 
     If ``last_page`` were stale, a reopened database would append into the middle
-    of the chain — silently, and only for tables big enough to have spilled.
+    of the chain, silently, and only for tables big enough to have spilled.
     """
     schema = Schema.of(
         Column("id", DataType.INTEGER, nullable=False),
@@ -266,7 +266,7 @@ def test_the_catalog_cache_avoids_rescanning(db_path: Path, users_schema: Schema
 
         # Every one of the twenty was a hit. Asserting on the *lifetime* hit
         # rate instead made this a test of how many lookups `create_table`
-        # happens to do — and building the implied primary-key index added
+        # happens to do: and building the implied primary-key index added
         # some, which dragged a ratio that was never the point below 0.9.
         assert db.catalog.stats.cache_hits == hits_after_miss + 20
 

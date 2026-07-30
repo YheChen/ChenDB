@@ -1,6 +1,6 @@
 """Expression evaluation and SQL's three-valued logic.
 
-The truth tables here are not a stylistic choice — they are what SQL requires,
+The truth tables here are not a stylistic choice. They are what SQL requires,
 and getting them wrong produces silently wrong answers rather than errors. That
 makes them worth pinning down exhaustively.
 """
@@ -56,7 +56,7 @@ def value_of(sql: str, row=ROW):
     ],
 )
 def test_every_operator_propagates_null_as_unknown(sql: str):
-    # NULL means *unknown*. Comparing against an unknown is unknown — never
+    # NULL means *unknown*. Comparing against an unknown is unknown: never
     # true, and importantly never false.
     assert value_of(sql) is None
 
@@ -141,7 +141,7 @@ def test_a_non_boolean_predicate_is_an_error_not_a_rejection():
     exactly right: Python's truthiness must not leak into SQL, or ``WHERE name``
     would quietly keep every row with a non-empty name. It stopped one step
     short. Not passing and being rejected are the same thing to a ``Filter``, so
-    ``WHERE v`` over an INTEGER column returned zero rows and no complaint — the
+    ``WHERE v`` over an INTEGER column returned zero rows and no complaint. The
     test was pointed straight at the bug and agreed with it.
 
     Milestone 17 found it by asking SQLite, which answers ``3``. The rule the
@@ -155,7 +155,7 @@ def test_a_non_boolean_predicate_is_an_error_not_a_rejection():
 
 def test_a_non_boolean_predicate_names_the_clause_it_came_from():
     # "WHERE must be a boolean" is worth more than "a predicate must be", and
-    # the three call sites — WHERE, HAVING and a join condition — each pass
+    # the three call sites (WHERE, HAVING and a join condition) each pass
     # their own name.
     with pytest.raises(EvaluationError, match="HAVING must be a boolean, got number"):
         is_true(1, clause="HAVING")

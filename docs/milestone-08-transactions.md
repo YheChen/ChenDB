@@ -1,4 +1,4 @@
-# Milestone 8 — transactions
+# Milestone 8: transactions
 
 Before this milestone, a statement that failed half-way left the half behind.
 
@@ -35,8 +35,8 @@ engine/transaction/
 ```
 
 Plus a single hook in the pager, three SQL statements, four HTTP endpoints, and
-a workspace. The engine's other subsystems — the heap, every index, the catalog,
-the buffer pool — were **not modified**, and the next section is why.
+a workspace. The engine's other subsystems (the heap, every index, the catalog,
+the buffer pool) were **not modified**, and the next section is why.
 
 ---
 
@@ -70,7 +70,7 @@ Two things, both real:
 
 **Granularity.** The unit is a page, so two transactions changing different rows
 on the same page conflict at the page level. With one writer that costs nothing,
-which is the only reason this is affordable — Milestone 10's MVCC is where
+which is the only reason this is affordable, Milestone 10's MVCC is where
 row-level versioning has to arrive.
 
 **Log size.** A logical record for one insert is a few dozen bytes; a physical
@@ -105,7 +105,7 @@ and subsequent ones write only the delta.
 
 ### The bound
 
-`MAX_UNDO_BYTES` caps the log at 64 MiB — about 16,000 pages at 4 KiB. Past that
+`MAX_UNDO_BYTES` caps the log at 64 MiB, about 16,000 pages at 4 KiB. Past that
 the transaction stops capturing and can no longer be rolled back, which is
 reported rather than discovered. A real system spills undo to disk; that needs
 somewhere durable to put it, which is Milestone 9.
@@ -124,7 +124,7 @@ db.commit()                             # committed when it finishes
 
 So the multi-row `INSERT` at the top of this page is atomic without anybody
 typing `BEGIN`. This is autocommit, and it is why the transaction timeline in the
-visualizer is mostly full of transactions the user never asked for — a fact the
+visualizer is mostly full of transactions the user never asked for. A fact the
 UI labels explicitly, because a timeline that hid it would look like the user had
 been running `BEGIN` constantly.
 
@@ -136,7 +136,7 @@ passes `atomic=False`.
 
 `BEGIN` inside an implicit transaction **adopts** it rather than nesting, so a
 script reading `BEGIN; …; COMMIT;` behaves the way it looks. Real nesting needs
-savepoints, which ChenDB does not have — and pretending to nest without them
+savepoints, which ChenDB does not have, and pretending to nest without them
 would mean an inner "rollback" that silently rolled back the outer transaction
 too.
 
@@ -154,7 +154,7 @@ INSERT INTO users VALUES (9, 'grace');  -- joins it
 ROLLBACK;                               -- the client ends it
 ```
 
-Without that rule, `BEGIN;` alone would be a silent no-op — the user types it,
+Without that rule, `BEGIN;` alone would be a silent no-op. The user types it,
 sees success, and has no transaction. PostgreSQL behaves the same way with the
 same text in one simple-query message.
 
@@ -173,13 +173,13 @@ ERROR:  current transaction is aborted, commands ignored until end of
 
 That is PostgreSQL's rule and PostgreSQL's wording, and it exists because the
 alternative is worse. `execute_script` unwinds a transaction *it* opened, but a
-transaction the client opened in an earlier request belongs to the client — so
+transaction the client opened in an earlier request belongs to the client, so
 without a failed state, an error would leave the partial work in place and a
 later `COMMIT` would keep it. **Half a transaction, committed, is the one outcome
 this milestone exists to prevent.**
 
 `COMMIT` on a failed transaction rolls back instead, and says so. Again
-PostgreSQL's behaviour — `COMMIT` in an aborted block prints `ROLLBACK` — and the
+PostgreSQL's behaviour (`COMMIT` in an aborted block prints `ROLLBACK`) and the
 safe direction: the caller never gets half a transaction, and never gets stuck
 in one either.
 
@@ -199,7 +199,7 @@ def _write_at(self, page_id, raw, reason="", *, capture=True):
 
 The current image is passed as a **callable, not bytes**. Reading a page to
 snapshot it is wasted work whenever the page is already captured, and thanks to
-first-write-wins that is the overwhelming majority of writes — 20,251 of the
+first-write-wins that is the overwhelming majority of writes, 20,251 of the
 20,352 above.
 
 Measured, against a 41 ns loop floor:
@@ -215,7 +215,7 @@ anything**, because it sits on the path of every write in the engine.
 
 ### Two places `capture=True` would be wrong
 
-**A freshly allocated page** has no "before" — it is not in the file yet, and
+**A freshly allocated page** has no "before". It is not in the file yet, and
 trying to read it raises `CorruptDatabaseError: short read`. Allocation passes
 `capture=False`, and instead extends the file at allocation time so the page
 exists before the meta page claims it does.
@@ -240,7 +240,7 @@ self._statistics.invalidate()    # row counts from rows that are gone
 
 The catalog one is the sharp edge. Without `invalidate()`, a rolled-back
 `CREATE TABLE` leaves the engine cheerfully serving a table whose heap page has
-been overwritten — every query against it reading whatever was there before.
+been overwritten. Every query against it reading whatever was there before.
 
 Rollback costs about a microsecond per page:
 
@@ -250,7 +250,7 @@ Rollback costs about a microsecond per page:
   rollback of 5,000 rows:  25 pages    27.1 us
 ```
 
-Nearly all of that is fixed overhead — the marginal cost is ~1 µs per page,
+Nearly all of that is fixed overhead. The marginal cost is ~1 µs per page,
 which is one memory copy plus one write through the buffer pool.
 
 ---
@@ -278,7 +278,7 @@ that down in both directions rather than leaving it to the prose.
 ### Why pinning was rejected
 
 The obvious fix is to pin dirty uncommitted pages so the pool cannot steal them
-— a no-steal policy. It was considered and rejected, because *it does not buy
+, a no-steal policy. It was considered and rejected, because *it does not buy
 crash atomicity either*.
 
 No-steal keeps uncommitted pages out of the file, but a crash **during the commit
@@ -287,8 +287,8 @@ distinguishes that from a complete one. Making commit atomic needs a commit
 *record*: one small durable write that says "everything before this counts". That
 is a write-ahead log, and it is Milestone 9.
 
-Pinning would have cost pool exhaustion on large transactions — a transaction
-touching more pages than the pool has frames could not proceed — in exchange for
+Pinning would have cost pool exhaustion on large transactions (a transaction
+touching more pages than the pool has frames could not proceed) in exchange for
 nothing.
 
 ### A real bug this found
@@ -299,7 +299,7 @@ Milestone 8 one.
 `allocate_page` used to bump `meta.page_count` and let the pool write both pages
 whenever it felt like it. With 128 frames that is invisible. With 4 frames, the
 meta page can be evicted *before* the pages it references, leaving a file
-physically shorter than its own page count claims — and the length check
+physically shorter than its own page count claims, and the length check
 correctly refuses to open it.
 
 Milestones 1–6 had the right ordering for free, because they wrote every page
@@ -312,7 +312,7 @@ self._extend_file_to(self._meta.page_count)   # ftruncate, one syscall
 ```
 
 A crash between the `ftruncate` and the page's flush leaves a zero-filled page,
-which fails its checksum when read — detected, not silently returned as
+which fails its checksum when read, detected, not silently returned as
 plausible garbage. That is the same contract every other torn page has here, and
 `test_a_page_the_crash_never_flushed_is_detected_not_returned` asserts it.
 
@@ -322,7 +322,7 @@ plausible garbage. That is the same contract every other torn page has here, and
 
 `TransactionManager` holds exactly one. The database-level write lock already
 serialises callers, so there is nothing for a concurrency-control scheme to
-arbitrate — inventing a lock manager for a single writer would be structure with
+arbitrate, inventing a lock manager for a single writer would be structure with
 no user. Milestone 10 is where a second writer appears and this stops being true.
 
 There is no `PREPARED` state either: no two-phase commit, because there is
@@ -334,20 +334,20 @@ nothing to coordinate with.
 
 **PostgreSQL** does not undo at all. An aborted transaction's tuples stay in the
 heap with an `xmax` that marks them invisible, and `VACUUM` reclaims them later.
-That works because PostgreSQL is MVCC from the ground up — the "undo" is a
+That works because PostgreSQL is MVCC from the ground up, the "undo" is a
 visibility rule, not a write. It is the reason a rollback in PostgreSQL is
 nearly free and a rollback here is proportional to pages touched, and also the
 reason PostgreSQL needs a vacuum process and this does not.
 
-**SQLite** journals the same thing ChenDB does — whole pages, before they change
-— but writes them to a separate rollback-journal file and `fsync`s it first. That
+**SQLite** journals the same thing ChenDB does (whole pages, before they change
+) but writes them to a separate rollback-journal file and `fsync`s it first. That
 one difference is the whole difference: SQLite's journal survives the process, so
 SQLite recovers a crashed transaction on the next open. ChenDB's undo log is in
 memory, so it does not. Milestone 9 closes exactly that gap.
 
 **MySQL/InnoDB** keeps a logical-ish undo log in a rollback segment inside the
 tablespace, durable and reused for MVCC read views. Both of the things ChenDB
-lacks here — durability and multiversion reads — are the same structure in
+lacks here (durability and multiversion reads) are the same structure in
 InnoDB.
 
 ---
@@ -369,7 +369,7 @@ InnoDB.
 Three things it is built to make visible:
 
 **The undo log is pages, not rows.** The summary reads "2 writes cost 1
-before-image — a page is captured once, however many times it changes", computed
+before-image. A page is captured once, however many times it changes", computed
 from the two counters rather than asserted.
 
 **Most transactions are implicit.** Every row in the timeline is labelled. This
@@ -378,13 +378,13 @@ the label.
 
 **A failure is the demonstration working.** "Break it half-way" runs a real
 multi-row `INSERT` whose last row violates `NOT NULL`; the first rows genuinely
-are written — the undo log grows while you watch — and then taken back. The
+are written (the undo log grows while you watch) and then taken back. The
 rejection renders as a compact `rejected: …` line, not a red "something went
 wrong" banner, because the banner would read as the explorer breaking.
 
 The button is **disabled with an explanation** if the table has no `NOT NULL`
 column to violate. `PRIMARY KEY` here is metadata, not a unique index, so the
-more familiar duplicate-key version of this demo would silently succeed — and a
+more familiar duplicate-key version of this demo would silently succeed, and a
 demonstration that silently succeeds is worse than one that is not offered.
 
 ---
@@ -410,7 +410,7 @@ python -m pytest tests/recovery -v
   state change; with a WAL it becomes one small durable write, and a crash can
   tell a complete transaction from a partial one.
 - **Steal stops being a liability.** With a log on disk, the pool may evict an
-  uncommitted page freely — recovery undoes it. The policy does not change; the
+  uncommitted page freely, recovery undoes it. The policy does not change; the
   log is what makes it safe.
 - **`_extend_file_to` becomes redundant.** A WAL that records the allocation can
   repair a short file on recovery, rather than the pager having to prevent one.

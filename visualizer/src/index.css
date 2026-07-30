@@ -3,8 +3,8 @@
 /*
  * A developer tool, not a marketing page: dense, monospace-leaning, high
  * contrast, and legible in both themes. The palette is deliberately small so
- * that colour always means something — a page type, a slot state, an event
- * category — rather than being decoration.
+ * that colour always means something, a page type, a slot state, an event
+ * category, rather than being decoration.
  */
 
 @custom-variant dark (&:where(.dark, .dark *));

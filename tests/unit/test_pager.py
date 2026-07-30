@@ -210,7 +210,7 @@ def test_stats_count_logical_reads_separately_from_syscalls(db_path: Path):
 
         assert pager.stats.page_reads == reads_before + 2, "both were asked for"
         assert pager.stats.physical_reads == physical_before, (
-            "the page was already resident — neither read touched the file"
+            "the page was already resident, neither read touched the file"
         )
         assert pager.stats.bytes_read == pager.stats.physical_reads * PAGE_SIZE
         assert pager.stats.allocations == 1

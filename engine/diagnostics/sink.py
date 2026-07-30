@@ -6,7 +6,7 @@ code serves a unit test, a CLI, a log file and the visualizer's WebSocket.
 
 Retention is bounded by construction: :class:`RingBufferSink` holds at most
 ``capacity`` records and counts what it dropped.  An unbounded trace buffer is
-a memory leak with extra steps — a scan of a large table at ``VERBOSE`` can
+a memory leak with extra steps. A scan of a large table at ``VERBOSE`` can
 emit millions of events.
 """
 

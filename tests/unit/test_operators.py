@@ -408,7 +408,7 @@ def test_the_null_controller_costs_nothing(db: Database):
     from engine.executor.controller import NULL_CONTROLLER
 
     # It must be safe to call unconditionally from every operator, and must not
-    # be cancellable — a shared singleton that could be cancelled would poison
+    # be cancellable: a shared singleton that could be cancelled would poison
     # every other query.
     NULL_CONTROLLER.checkpoint(StepKind.ROW_EMITTED, operator_id="x")
     NULL_CONTROLLER.cancel()

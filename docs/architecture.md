@@ -31,7 +31,7 @@ Dependencies point in exactly one direction. Four rules make that concrete, and
 2. Nothing under `engine/` except `engine/server/` may import *anything*
    outside the standard library.
 3. `engine/server/` imports `engine`; never the reverse.
-4. Diagnostic events define no `to_json`, `model_dump` or equivalent —
+4. Diagnostic events define no `to_json`, `model_dump` or equivalent,
    serialization lives only in `engine/server/mappers.py`.
 
 The payoff is concrete: `import engine` works in an interpreter with zero
@@ -42,13 +42,13 @@ framework anywhere in sight.
 
 ```
 engine/
-├── database.py            Database — the public facade
+├── database.py            Database: the public facade
 ├── errors.py              one exception tree for the whole engine
 │
 ├── storage/
 │   ├── constants.py       page size, page types, sentinels
 │   ├── page.py            slotted page: records in a fixed-size block
-│   ├── meta.py            page 0 — root of every persistent structure
+│   ├── meta.py            page 0: root of every persistent structure
 │   ├── pager.py           page id → file offset; allocation; checksums; fsync
 │   ├── buffer.py          the page cache: frames, write-back, LRU
 │   ├── heap.py            a chain of pages holding one table
@@ -66,16 +66,16 @@ engine/
 │   └── tracer.py          the emit path, with fast-path flags
 │
 ├── index/
-│   ├── key.py             order-preserving key encoding — memcmp means <
+│   ├── key.py             order-preserving key encoding: memcmp means <
 │   ├── node.py            one slotted page read as a B+ tree node
 │   └── bplustree.py       search, insert, split, range scan, delete
 │
 ├── catalog/
 │   ├── system.py          the system tables' own schemas, compiled in
-│   └── catalog.py         Catalog — tables and indexes, with a cache
+│   └── catalog.py         Catalog: tables and indexes, with a cache
 │
 ├── transaction/
-│   ├── undo.py            UndoLog — page id → before-image, first write wins
+│   ├── undo.py            UndoLog: page id → before-image, first write wins
 │   └── manager.py         begin / commit / rollback, and the write hook
 │
 ├── wal/
@@ -111,7 +111,7 @@ with this id" and the pager only ever answers with bytes.
 
 Milestone 8's transactions are the same trick from the other direction. Every
 write in the engine funnels through one method on the pager, so a single hook
-there captures a before-image of any page about to change — and because the
+there captures a before-image of any page about to change, and because the
 undo log works in **pages rather than rows**, it never learns what a heap
 record, a B+ tree node or a catalog row is. `CREATE TABLE` became atomic with
 no change to `engine/catalog/`, and every index operation became undoable with
@@ -164,14 +164,14 @@ Milestone 11 slid back into the pattern, and reused more than it added. An
                         ┌────────────────────────────┘
                         ▼
               _locate_rows   drains the plan into a list FIRST
-                        │        (the Halloween problem — see the milestone doc)
+                        │        (the Halloween problem: see the milestone doc)
                         ▼
               Database.update_many / delete_many
 ```
 
 The mutation is not an operator, for the same reason ``INSERT`` never was: a
 statement with exactly one execution strategy does not need a plan node to say
-so. What *does* have more than one answer — which rows — goes through the
+so. What *does* have more than one answer (which rows) goes through the
 planner unchanged, which is why ``DELETE ... WHERE id = 5`` descends an index.
 
 ## An insert, end to end
@@ -244,7 +244,7 @@ cheap": the database files produced at `OFF`, `STORAGE` and `VERBOSE` are
 
 ## Concurrency and snapshot consistency
 
-`Database` is not thread-safe — one file handle, one seek position. FastAPI
+`Database` is not thread-safe, one file handle, one seek position. FastAPI
 runs synchronous endpoints in a worker threadpool, so concurrent requests are
 real. Each open database is therefore wrapped in a `ManagedDatabase` holding a
 lock.
@@ -260,7 +260,7 @@ with managed.use() as db:          # lock held
 return mappers.page_detail_to_api(detail)   # pure CPU, no lock
 ```
 
-Holding an engine lock across JSON encoding — let alone across a socket write —
+Holding an engine lock across JSON encoding (let alone across a socket write)
 would let one slow client stall every query. Copying instead means a response
 can never show a page list assembled from two different instants.
 
@@ -283,7 +283,7 @@ channel that can stall a query is worse than no diagnostics channel.
 ```
 visualizer/src/
 ├── lib/api.ts          one typed fetch wrapper; the only place fetch appears
-├── types/api.ts        GENERATED from the OpenAPI schema — do not hand-edit
+├── types/api.ts        GENERATED from the OpenAPI schema: do not hand-edit
 ├── hooks/
 │   ├── useEngine.ts    TanStack Query hooks; structured keys for invalidation
 │   ├── useEventStream.ts  WebSocket + bounded buffer + batched flush

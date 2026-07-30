@@ -17,26 +17,26 @@ the UI until the engine behind it exists.
 | 9 | WAL, checkpoints, ARIES-style recovery | WAL table, crash button, recovery report | **done** |
 | 10 | MVCC, locks, wait-for graph, deadlocks | Two consoles, snapshots, lock table | **done** |
 | 11 | `UPDATE ... SET`, `DELETE ... WHERE`, version chains | Update walkthroughs, live rows vs versions | **done** |
-| 12 | — (CI over everything above) | One catalogue of demo SQL, checked against the engine | **done** |
+| 12 | (CI over everything above) | One catalogue of demo SQL, checked against the engine | **done** |
 | 13 | Joins, `GROUP BY`, aggregates, `ORDER BY`, `LIMIT` | Join trees, grouped planner decisions | **done** |
-| 14 | — (a transport seam, so the app can carry the engine) | Same UI, no server required | **done** |
-| 15 | — (the engine, compiled to WebAssembly) | The whole explorer in a browser tab, no backend | **done** |
-| 16 | — (deployment and persistence) | Databases survive a refresh, kept in IndexedDB | **done** |
-| 17 | Enforced primary keys, and seven bug fixes a differential tester found | — (a test suite, not a panel) | **done** |
+| 14 | (a transport seam, so the app can carry the engine) | Same UI, no server required | **done** |
+| 15 | (the engine, compiled to WebAssembly) | The whole explorer in a browser tab, no backend | **done** |
+| 16 | (deployment and persistence) | Databases survive a refresh, kept in IndexedDB | **done** |
+| 17 | Enforced primary keys, and seven bug fixes a differential tester found | (a test suite, not a panel) | **done** |
 | 18 | `LEFT`/`RIGHT`/`FULL OUTER JOIN`, and a join search that respects them | An outer-join demo, and the flavour named in every plan | **done** |
 
-Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
+Engine version tracks the milestone: `0.N.0` means Milestone N is complete,
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
 So the tenth is `1.0.0`, the eleventh `1.1.0`, and `engine.MILESTONE` is
 `major * 10 + minor`.
 
 Not every milestone adds an engine feature. The twelfth added continuous
-integration, which is a guarantee about the other eleven — see
+integration, which is a guarantee about the other eleven, see
 `docs/milestone-12-ci.md` for why `MILESTONE_FEATURES` stopped at eleven
 entries.
 
 The seventeenth is the interesting case. It shipped a *test suite*, which is a
-statement about the engine like CI — but one of the seven bugs it found was that
+statement about the engine like CI, but one of the seven bugs it found was that
 `PRIMARY KEY` had never been enforced, and fixing that gave the engine something
 it could not do before. So it is a feature after all, and it is named rather
 than excused.
@@ -49,19 +49,19 @@ the newest is `docs/milestone-18-outer-joins.md`.
 | # | New page types | New meta fields |
 |---|---|---|
 | 1 | `META`, `HEAP`, `SCHEMA`, `FREE` | magic, version, page count, free list, heap/schema roots |
-| 4 | — (catalog uses `HEAP`; `SCHEMA` retired) | **v2**: `catalog_tables_*`, `catalog_columns_*`, `next_table_id` replace the three M1 root pointers |
+| 4 | (catalog uses `HEAP`; `SCHEMA` retired) | **v2**: `catalog_tables_*`, `catalog_columns_*`, `next_table_id` replace the three M1 root pointers |
 | 5 | `BTREE_INTERNAL`, `BTREE_LEAF` | **v3**: `catalog_indexes_*`; `next_table_id` becomes `next_object_id`, one id sequence for tables and indexes |
-| 6 | — | — (statistics are in memory, not persisted — see `docs/milestone-06-planner.md`) |
-| 7 | — | — (the pool is memory; the file format is untouched) |
-| 8 | — | — (the undo log is memory; it dies with the process, which is why a crash mid-transaction is not atomic) |
-| 9 | — | **v4**: `checkpoint_lsn` — the LSN of the log file's first byte. Page `lsn` starts being written; the field had been reserved since Milestone 1. |
+| 6 | — | (statistics are in memory, not persisted; see `docs/milestone-06-planner.md`) |
+| 7 | — | (the pool is memory; the file format is untouched) |
+| 8 | — | (the undo log is memory; it dies with the process, which is why a crash mid-transaction is not atomic) |
+| 9 | — | **v4**: `checkpoint_lsn`, the LSN of the log file's first byte. Page `lsn` starts being written; the field had been reserved since Milestone 1. |
 | 10 | — | **v5**: `next_xid`; every row gains an 8-byte tuple header with `xmin`/`xmax` |
-| 11 | — | — (an update writes a second version through the M10 header; nothing new on disk) |
-| 12 | — | — (nothing runs; everything is checked) |
-| 13 | — | — (joins are a planner and executor change; the file format is untouched) |
-| 16 | — | — (IndexedDB stores the same bytes; a page keeps the checksum it was written with) |
-| 17 | — | — (a `PRIMARY KEY` now builds a real B+ tree, but with the M5 page types and no new meta field) |
-| 18 | — | — (outer joins are a planner and executor change; the file format is untouched) |
+| 11 | — | (an update writes a second version through the M10 header; nothing new on disk) |
+| 12 | — | (nothing runs; everything is checked) |
+| 13 | — | (joins are a planner and executor change; the file format is untouched) |
+| 16 | — | (IndexedDB stores the same bytes; a page keeps the checksum it was written with) |
+| 17 | — | (a `PRIMARY KEY` now builds a real B+ tree, but with the M5 page types and no new meta field) |
+| 18 | — | (outer joins are a planner and executor change; the file format is untouched) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -74,7 +74,7 @@ Real problems this design has, with no milestone assigned:
 - **A free space map** so inserts can reuse space freed anywhere, not just on
   the tail page. Only affordable once pages are buffered (M7).
 - **Cached per-attribute offsets** so reaching column *k* is not O(k).
-- **Compact integer encoding** — SQLite stores an integer in the narrowest of
+- **Compact integer encoding**: SQLite stores an integer in the narrowest of
   1/2/3/4/6/8 bytes.
 - **`VACUUM`** to return trailing pages to the filesystem.
 - **Bushy plans and index nested-loop joins.** Milestone 13 does left-deep

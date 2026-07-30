@@ -9,7 +9,7 @@
  *   │ Undo log (page snapshots)    │ Timeline (every transaction)   │
  *   └──────────────────────────────┴────────────────────────────────┘
  *
- * The demonstrations exist because the interesting claim — *this is atomic* —
+ * The demonstrations exist because the interesting claim (*this is atomic*)
  * is only convincing if you watch it fail and leave nothing behind. "Break it
  * half-way" runs a multi-row INSERT whose last row duplicates a key: before
  * Milestone 8 the earlier rows would have stayed. Now the row count is
@@ -64,8 +64,8 @@ export function TransactionWorkspace({
     // exactly the moment it has something to show.
     <div className="flex min-h-0 w-full flex-col gap-2 overflow-y-auto">
       <Panel
-        // shrink-0: this panel's height changes as the transaction does — a
-        // failure adds a warning line — and without it the flex layout steals
+        // shrink-0: this panel's height changes as the transaction does (a
+        // failure adds a warning line) and without it the flex layout steals
         // the difference from the panel rather than from the split below.
         className="shrink-0"
         title="Transaction"
@@ -193,8 +193,8 @@ export function TransactionWorkspace({
       </Panel>
 
       {/* A floor, not just flex-1: the panels above grow when a demonstration
-          fails, and without a minimum they would squeeze the undo log — the
-          thing the failure was meant to show — down to nothing. */}
+          fails, and without a minimum they would squeeze the undo log (the
+          thing the failure was meant to show) down to nothing. */}
       <div className="min-h-[220px] flex-1">
         <SplitPane
           direction="horizontal"

@@ -1,24 +1,24 @@
-# Milestone 3 — Execution engine and operator debugger
+# Milestone 3: Execution engine and operator debugger
 
 **Status: complete.** Engine version 0.3.0.
 
 ## Goal
 
 Run the statements Milestone 2 learned to parse, using the volcano iterator
-model — then let someone step through a query one operation at a time and watch
+model, then let someone step through a query one operation at a time and watch
 a single row travel up the operator tree.
 
 ---
 
 ## What was built
 
-### Engine — `engine/executor/`
+### Engine: `engine/executor/`
 
 | Module | Responsibility |
 |---|---|
 | `binder.py` | resolve names against a schema; `ColumnRef` → `BoundColumnRef` |
 | `expression.py` | evaluate an expression against a row, with three-valued logic |
-| `operators.py` | `SeqScan`, `Filter`, `Project` — `open()` / `next()` / `close()` |
+| `operators.py` | `SeqScan`, `Filter`, `Project`, `open()` / `next()` / `close()` |
 | `controller.py` | pause, step and cancel a running query |
 | `engine.py` | statement → plan → `QueryResult` |
 
@@ -91,7 +91,7 @@ true. That is required SQL behaviour, and here you can watch it happen.
 SQL is not boolean logic. `NULL` means *unknown*.
 
 ```
-NULL = NULL   →  NULL        (not TRUE — this is why IS NULL exists)
+NULL = NULL   →  NULL        (not TRUE: this is why IS NULL exists)
 NULL = 1      →  NULL        (not FALSE)
 1 + NULL      →  NULL
 
@@ -133,7 +133,7 @@ because it *is* the volcano interface (Graefe 1994; PostgreSQL's
 `ExecProcNode`), because an operator can be asked for its statistics and state at
 any moment where a suspended generator frame cannot, and because pausing between
 calls is trivial whereas interrupting a generator mid-`yield` needs `throw()` and
-careful cleanup. The cost is a Python method call per row per operator — see
+careful cleanup. The cost is a Python method call per row per operator, see
 *Where this breaks down*.
 
 **Cancellation raises inside the engine thread**, at the next checkpoint, rather
@@ -176,14 +176,14 @@ refusal beats a plausible wrong answer.
 ## Step mode, honestly
 
 A stepped execution holds its database's lock for as long as it is alive. That is
-inherent — it is a query suspended mid-operation — and three things keep it from
+inherent (it is a query suspended mid-operation) and three things keep it from
 becoming a hang:
 
 - every step call has a timeout (`CHENDB_STEP_TIMEOUT`, default 10 s);
 - an execution untouched for `execution_idle_timeout_seconds` (default 300) is
   cancelled by `ExecutionStore.reap`, called on every store operation rather
   than from a background timer;
-- `cancel` deliberately needs no lock — it sets a flag and notifies a condition —
+- `cancel` deliberately needs no lock (it sets a flag and notifies a condition)
   so it always works, which is the only way to get the lock back.
 
 `tests/integration/test_query_api.py::test_cancelling_releases_the_database_lock`
@@ -191,7 +191,7 @@ asserts exactly that: after cancelling, a normal query must succeed immediately.
 
 Modes implemented: `step`, `continue`, `until_row`, `until_page_read`,
 `until_operator`. The spec also lists "run until next index operation",
-"run until lock wait" and "run until transaction boundary" — those arrive with
+"run until lock wait" and "run until transaction boundary". Those arrive with
 Milestones 5, 10 and 8, because the events they stop on do not exist yet. Adding
 each is one entry in `_STOPS_AT`.
 
@@ -205,7 +205,7 @@ each is one entry in `_STOPS_AT`.
 | `Filter` | O(n) predicate evaluations, no extra I/O | O(1) |
 | `Project` | O(n × projections) evaluations | O(1) |
 
-All three stream. A blocking operator — sort, hash aggregate, hash join — would
+All three stream. A blocking operator (sort, hash aggregate, hash join) would
 need O(n), and none exist yet.
 
 One `next()` on a filter can cost many on its child: a selective predicate over a
@@ -219,7 +219,7 @@ big table walks the whole table. That is exactly the cost an index removes, and
 **The volcano model's per-row overhead.** A Python method call per row per
 operator. PostgreSQL pays the same cost in C and mitigates it with JIT
 expression compilation. DuckDB and modern column stores abandon the model for
-*vectorised* execution — passing batches of ~2048 rows instead of one — which
+*vectorised* execution (passing batches of ~2048 rows instead of one) which
 amortises the call overhead over the batch and is the single biggest performance
 idea this design gives up. The interface would survive it: `next()` returning a
 batch instead of a row.
@@ -252,7 +252,7 @@ applied. Milestone 8.
 Three worth singling out.
 
 **`test_operator_events_show_next_going_down_and_rows_coming_up`** asserts the
-exact event order — opens leaf-first, `next()` root-to-leaf, `row_emitted`
+exact event order, opens leaf-first, `next()` root-to-leaf, `row_emitted`
 leaf-to-root. If the volcano protocol were ever implemented backwards, this
 fails.
 
@@ -266,7 +266,7 @@ the property the whole iterator model exists for.
 ### A bug the tests caught
 
 Cancelling during `plan.open()` escaped its handler, because `open()` sat outside
-the `try` block in `_execute_select` — so a query cancelled while its operators
+the `try` block in `_execute_select`, so a query cancelled while its operators
 were still opening propagated `QueryCancelledError` to the caller instead of
 returning a partial result. Moving `open()` inside the `try` fixed it;
 `test_cancelling_unwinds_the_operator_tree` found it.
@@ -293,7 +293,7 @@ returning a partial result. Moving `open()` inside the `try` fixed it;
 
 ---
 
-## Next: Milestone 4 — persistent catalog and schema explorer
+## Next: Milestone 4, persistent catalog and schema explorer
 
 **Engine.** Real system tables (`chendb_tables`, `chendb_columns`) stored as
 ordinary heap tuples, multiple tables per database, and a catalog lookup

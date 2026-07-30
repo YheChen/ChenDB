@@ -53,14 +53,14 @@ def drain_events(
     """Collect event payloads until enough have arrived or frames run out.
 
     ``of_type`` counts only events of that type toward ``until``. Needed because
-    the events an operation produces are not all the ones a test cares about —
-    an insert also emits catalog lookups and a heap scan of ``chendb_indexes``,
+    the events an operation produces are not all the ones a test cares about.
+    An insert also emits catalog lookups and a heap scan of ``chendb_indexes``,
     so counting raw frames would stop before the interesting ones arrive.
 
     **``until`` must be below the connection's queue capacity.** A burst of work
     happens entirely inside one request, so every event is offered before the
     event loop next runs and the queue drops all but the newest ``queue_size``.
-    Asking for more than that blocks on ``receive_json`` forever — which is
+    Asking for more than that blocks on ``receive_json`` forever, which is
     exactly what happened when Milestone 7's ``BufferPoolEvent`` pushed the
     per-insert event count past the ceiling.
     """
@@ -160,7 +160,7 @@ def test_a_client_that_never_reads_cannot_block_the_engine(client: TestClient):
     diagnostics path is allowed to apply backpressure to a storage operation.
 
     The drop *policy* is unit-tested in ``tests/unit/test_ws_backpressure.py``
-    instead — ``TestClient``'s transport buffers without limit, so the writer
+    instead, ``TestClient``'s transport buffers without limit, so the writer
     drains the connection queue as fast as it fills and the overflow branch is
     never reached here.
     """

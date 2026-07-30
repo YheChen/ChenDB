@@ -3,7 +3,7 @@
 The point of the session query parameter is that it turns one stateless API
 into two independent clients of one engine. These tests are that, end to end:
 ``?session=alice`` and ``?session=bob`` open separate transactions, see
-different data, and get in each other's way — which is what the explorer's
+different data, and get in each other's way, which is what the explorer's
 two-console view is showing.
 """
 
@@ -90,7 +90,7 @@ def test_one_session_does_not_see_the_others_uncommitted_rows(seeded: TestClient
 def test_a_reader_is_never_blocked(seeded: TestClient):
     """The claim MVCC exists to make, over HTTP.
 
-    Bob holds row locks. Alice reads anyway, immediately — no wait, no timeout.
+    Bob holds row locks. Alice reads anyway, immediately, no wait, no timeout.
     """
     seeded.post(f"{BASE}/transactions", params={"session": "bob"})
     run(seeded, "INSERT INTO users VALUES (100, 'held');", "bob")
@@ -224,7 +224,7 @@ def test_health_reports_mvcc(client: TestClient):
 
 
 def test_a_write_from_a_named_session_commits_itself(seeded: TestClient):
-    """No BEGIN, so the statement is its own transaction — for any session.
+    """No BEGIN, so the statement is its own transaction, for any session.
 
     Until Milestone 11 this left the session's implicit transaction open
     forever: the insert reported success, the row was invisible to everyone

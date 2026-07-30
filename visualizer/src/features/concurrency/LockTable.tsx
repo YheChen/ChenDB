@@ -8,7 +8,7 @@
  *
  * **Every row here is a writer.** Under MVCC a reader takes no lock at all, so
  * an empty table during a heavy read workload is the feature working rather
- * than the panel failing — which is why the counters spell out
+ * than the panel failing, which is why the counters spell out
  * "readers blocked: 0" instead of leaving it to be inferred.
  *
  * The graph is drawn as arrows rather than a node diagram. A cycle among two or

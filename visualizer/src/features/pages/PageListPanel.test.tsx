@@ -85,7 +85,7 @@ describe("PageListPanel", () => {
 
   it("names every page row for assistive technology", async () => {
     renderPanel();
-    // Each row is entirely visual — a badge, a fill bar, a count — so the
+    // Each row is entirely visual (a badge, a fill bar, a count) so the
     // accessible name has to be supplied explicitly.
     expect(
       await screen.findByRole("button", {

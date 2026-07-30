@@ -2,7 +2,7 @@
  * Query results, plus the cost of producing them.
  *
  * Milestone 1 has no SQL, so this is a full heap scan with an offset window.
- * The footer reports rows scanned, pages read and elapsed time — the same
+ * The footer reports rows scanned, pages read and elapsed time, the same
  * numbers a `SELECT` will report once the executor exists, and the numbers the
  * buffer pool and index milestones will visibly improve.
  */

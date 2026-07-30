@@ -10,7 +10,7 @@ import { cn, formatCount, formatDuration, formatValue } from "@/lib/format";
 import type { PlanModel, QueryResultModel } from "@/types/api";
 
 /**
- * How the chosen plan reads its tables — `seq scan`, `index scan`, or both.
+ * How the chosen plan reads its tables, `seq scan`, `index scan`, or both.
  *
  * Read off the plan rather than assumed. This badge was the literal string
  * "seq scan" from Milestone 3 until Milestone 16, so every index scan the

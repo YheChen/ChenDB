@@ -4,7 +4,7 @@
  * `seq scan` was a literal string from Milestone 3 until Milestone 16. Index
  * scans arrived in Milestone 5 and joins in Milestone 13, so from that point on
  * the badge was wrong for every query the planner did anything interesting
- * with — and it was wrong in the most persuasive way available, by naming a
+ * with, and it was wrong in the most persuasive way available, by naming a
  * real access path with total confidence.
  *
  * Nothing caught it because no test rendered this footer. These do.

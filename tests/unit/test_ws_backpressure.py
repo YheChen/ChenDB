@@ -10,8 +10,8 @@ its contract is narrow but load-bearing:
 * every discard is counted and surfaced, so the UI can show a gap rather than
   implying it saw everything.
 
-Driving this through an HTTP test client cannot exercise the overflow branch —
-its transport buffers without limit — so the policy is tested directly here.
+Driving this through an HTTP test client cannot exercise the overflow branch (
+its transport buffers without limit) so the policy is tested directly here.
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ def test_offer_from_another_thread_reaches_the_loop():
         thread = threading.Thread(target=producer)
         thread.start()
         ready.set()
-        # drain() returns as soon as it has at least one event, by design — it
+        # drain() returns as soon as it has at least one event, by design: it
         # must not wait for a batch to fill. So keep draining until all three
         # have arrived rather than assuming they land in one call.
         while len(results) < 3:

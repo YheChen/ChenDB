@@ -2,10 +2,10 @@
 
 Two properties matter and everything here tests one of them:
 
-* **correctness** — a page read back is the page that was written, whether it
+* **correctness**: a page read back is the page that was written, whether it
   came from a frame, from the disk, or from a frame that was evicted and read
   again. The pool must be invisible except in the timings.
-* **the policy actually working** — a hit is served without touching the disk,
+* **the policy actually working**: a hit is served without touching the disk,
   a repeated write reaches the disk once, and eviction picks the least recently
   used page rather than an arbitrary one.
 
@@ -262,7 +262,7 @@ def test_a_working_set_that_fits_hits_almost_always(disk: FakeDisk):
 
 
 def test_invalidating_drops_a_page_without_writing_it(disk: FakeDisk):
-    # For a page about to be overwritten wholesale — a fresh allocation, or one
+    # For a page about to be overwritten wholesale: a fresh allocation, or one
     # returned to the free list. Writing back superseded bytes is pure waste.
     pool = make_pool(disk)
     pool.store(1, content(1))

@@ -1,4 +1,4 @@
-"""The write-ahead log — what makes a commit survive the power going out.
+"""The write-ahead log, what makes a commit survive the power going out.
 
     engine/wal/
       record.py    one entry: type, LSN, page id, before- and after-images

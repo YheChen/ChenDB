@@ -87,7 +87,7 @@ def test_ninth_column_null_flips_a_bit_in_the_second_byte():
 
 
 def test_negative_zero_survives():
-    """``-0.0`` is finite, so it round-trips — and it is worth pinning.
+    """``-0.0`` is finite, so it round-trips, and it is worth pinning.
 
     It equals ``0.0`` and has a different bit pattern, which is exactly the sort
     of value a codec can lose without any test noticing.
@@ -101,7 +101,7 @@ def test_negative_zero_survives():
 def test_nan_and_infinity_are_refused():
     """This test used to assert that NaN and the infinities round-trip.
 
-    They did, and the codec was happy to store them — but nothing above the
+    They did, and the codec was happy to store them, but nothing above the
     codec could cope, because IEEE comparison is a partial order:
     ``ORDER BY f`` came back genuinely unsorted, ``MIN``/``MAX`` depended on
     insertion order, and a B+ tree index (which orders NaN above ``+inf`` by its

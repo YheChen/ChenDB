@@ -7,8 +7,8 @@
      0        4     12         20    28     32        36       40      44
 
 The LSN **is the record's byte offset in the log stream**, not a separate
-counter. That is what PostgreSQL does — an LSN there is literally a position in
-the WAL — and it makes two otherwise-fiddly things free:
+counter. That is what PostgreSQL does (an LSN there is literally a position in
+the WAL) and it makes two otherwise-fiddly things free:
 
 * "the log is durable up to LSN *n*" means "the first *n* bytes are on disk",
   which is a comparison rather than a lookup;
@@ -18,14 +18,14 @@ the WAL — and it makes two otherwise-fiddly things free:
 
 Whole pages, not deltas
 -----------------------
-An ``UPDATE`` record carries the entire page after the change, and — the first
-time a transaction touches a page — the entire page before it. That is the same
+An ``UPDATE`` record carries the entire page after the change, and (the first
+time a transaction touches a page) the entire page before it. That is the same
 choice Milestone 8's undo log made, for the same reason: the log never has to
 know what a heap row, a B+ tree node or a catalog tuple *is*.
 
 It is also this milestone's real cost, and it is not small. A hot page written a
 thousand times logs a thousand 4 KiB images. Real systems log *physiologically*
-— "insert this tuple into page 7" — which is a few dozen bytes, at the price of
+ ("insert this tuple into page 7") which is a few dozen bytes, at the price of
 a redo routine per operation that has to be exactly the inverse of the operation
 itself. PostgreSQL splits the difference: a full-page image the first time a
 page changes after a checkpoint, protecting against torn writes, and deltas
@@ -60,7 +60,7 @@ class RecordType(IntEnum):
 
     There is no ``BEGIN``. Analysis learns a transaction exists from its first
     ``UPDATE``, so a begin record would be one more write per transaction
-    carrying information already implied — PostgreSQL leaves it out for the
+    carrying information already implied, PostgreSQL leaves it out for the
     same reason.
     """
 
@@ -75,7 +75,7 @@ class RecordType(IntEnum):
 
     ABORT = 3
     """This transaction was rolled back, and the restores are already in the log
-    as ordinary ``UPDATE`` records — because rollback writes pages through the
+    as ordinary ``UPDATE`` records, because rollback writes pages through the
     same path everything else does. So recovery treats an aborted transaction
     exactly like a committed one: replay what is there and stop."""
 
@@ -96,7 +96,7 @@ _CHECKSUM_COVERAGE_START: Final = 4
 
 #: A record belonging to no transaction: engine bookkeeping that happens outside
 #: one, such as the meta page written when a database is created. Recovery
-#: replays these unconditionally — there is nobody to roll them back.
+#: replays these unconditionally, there is nobody to roll them back.
 NO_TRANSACTION: Final = 0
 
 #: Sanity bound on a decoded length, so a corrupt header cannot make the scanner
@@ -115,8 +115,8 @@ class LogRecord:
 
     ARIES calls this the backward chain and uses it to walk a loser's updates in
     reverse without touching the rest of the log. ChenDB's recovery scans anyway
-    — these logs are small enough that a second pass costs less than maintaining
-    an index would — so this is here for the visualizer, which draws the chain,
+ (these logs are small enough that a second pass costs less than maintaining
+    an index would) so this is here for the visualizer, which draws the chain,
     and because leaving it out would misrepresent what an ARIES record is.
     """
     transaction_id: int
@@ -131,7 +131,7 @@ class LogRecord:
 
     @property
     def end_lsn(self) -> int:
-        """One past this record — the LSN the next record will be given."""
+        """One past this record. The LSN the next record will be given."""
         return self.lsn + self.size
 
     @property
@@ -181,7 +181,7 @@ def decode_record(raw: bytes, offset: int, base_lsn: int = 0) -> LogRecord | Non
     everything before it as the log.
 
     A record that fails its checksum in the *middle* of a log would be real
-    corruption rather than a torn tail — and the two are indistinguishable
+    corruption rather than a torn tail, and the two are indistinguishable
     without more machinery than this earns, so both stop the scan and the
     truncation is reported rather than hidden.
 

@@ -45,7 +45,7 @@ def pool(client: TestClient) -> dict:
 
 
 #: Enough rows that the table does not fit in the pool. 512-byte pages hold
-#: about a dozen of these rows, so 4,000 rows is ~330 pages against 128 frames —
+#: about a dozen of these rows, so 4,000 rows is ~330 pages against 128 frames,
 #: which means a scan genuinely evicts, and the miss path is exercised.
 SEEDED_ROWS = 4_000
 
@@ -143,7 +143,7 @@ def test_write_back_absorbs_repeated_writes(seeded: TestClient):
 
 def test_a_flush_leaves_nothing_dirty(client: TestClient):
     # Every INSERT through the API ends in a sync, which flushes the pool. So
-    # the dirty count is normally zero here — and that is the durability
+    # the dirty count is normally zero here: and that is the durability
     # contract holding, not the pool failing to buffer. `writes_absorbed` is
     # where the buffering shows up.
     run(client, SETUP)
@@ -174,7 +174,7 @@ def test_reading_the_pool_view_does_not_change_the_engine(seeded: TestClient):
 
 def test_misses_and_evictions_reach_the_timeline(seeded: TestClient):
     # The table is larger than the pool, so a scan misses and evicts all the way
-    # through — sequential flooding, which LRU handles worst of all.
+    # through: sequential flooding, which LRU handles worst of all.
     seeded.put(f"{BASE}/trace", json={"level": "STORAGE"})
     seeded.delete(f"{BASE}/events")
     run(seeded, "SELECT id FROM users")

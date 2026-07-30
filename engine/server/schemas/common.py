@@ -24,7 +24,7 @@ class RequestModel(BaseModel):
     """Base for request bodies.
 
     ``extra="forbid"`` turns a client typo into a 422 instead of a silently
-    dropped field — worth it for a tool whose whole job is showing what really
+    dropped field, worth it for a tool whose whole job is showing what really
     happened.
     """
 

@@ -5,7 +5,7 @@
  *
  * * the undo log shows *pages*, newest first, and marks the one a rollback
  *   would restore first;
- * * the timeline distinguishes implicit from explicit transactions — the single
+ * * the timeline distinguishes implicit from explicit transactions, the single
  *   most surprising thing about how the engine behaves after Milestone 8, and
  *   invisible without the label.
  */

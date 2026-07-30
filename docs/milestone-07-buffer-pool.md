@@ -1,8 +1,8 @@
-# Milestone 7 — the buffer pool
+# Milestone 7: the buffer pool
 
 Milestones 1–6 gave the pager no memory. Every read was a `pread` plus a CRC32
 plus a walk of the slot directory; every write was a `write`. This milestone
-puts a cache between the engine and the file — and the interesting part is that
+puts a cache between the engine and the file, and the interesting part is that
 **the win had almost nothing to do with I/O**.
 
 ```
@@ -28,7 +28,7 @@ engine/storage/buffer.py    BufferPool: frames, write-back, LRU, a snapshot
 | **Page** | `validate()` split into O(1) header checks and the O(slots) walk |
 | **Cost model** | `PAGE_HIT_COST` / `PAGE_MISS_COST` replace `PAGE_COST` / `RANDOM_PAGE_COST`, plus hit estimation |
 | **Diagnostics** | `BufferPoolEvent`; `PageReadEvent.source` finally non-constant |
-| **API** | `GET /databases/{db}/buffer-pool` — the frame grid and the counters |
+| **API** | `GET /databases/{db}/buffer-pool`, the frame grid and the counters |
 | **Visualizer** | Buffer pool workspace: counters, workloads, live frame grid |
 
 ---
@@ -36,7 +36,7 @@ engine/storage/buffer.py    BufferPool: frames, write-back, LRU, a snapshot
 ## The finding: it was never the syscall
 
 The first working version routed reads through the pool and changed almost
-nothing — an index scan over 14,000 rows went from 307 ms to 283 ms, an 8%
+nothing. An index scan over 14,000 rows went from 307 ms to 283 ms, an 8%
 improvement for a cache that was serving nearly every read from memory. That
 made no sense until the read path was measured a piece at a time:
 
@@ -45,12 +45,12 @@ made no sense until the read path was measured a piece at a time:
  CRC32 over 4 KiB                103 ns
  build a Page object             249 ns
  pool.fetch (a 4 KiB memcpy)     228 ns
- validate() — walks every slot 13 290 ns   ← 130x the checksum
+ validate(): walks every slot 13 290 ns   ← 130x the checksum
 ```
 
 `Page.validate()` walks the slot directory doing one `struct.unpack_from` per
 slot. A full 4 KiB page holds about a hundred rows, so **every logical read cost
-thirteen microseconds of pure bookkeeping** — dwarfing the syscall the pool had
+thirteen microseconds of pure bookkeeping**, dwarfing the syscall the pool had
 just eliminated.
 
 Two changes followed, and together they are what made the milestone worth
@@ -61,7 +61,7 @@ shipping:
    recomputes the checksum. Re-checking proves nothing.
 2. **`validate()` is off the read path entirely.** It is now split: the O(1)
    header checks (`validate_header`) run on every disk read, and the slot walk is
-   explicit — called by the page inspector, by `BPlusTree.verify`, and by tests.
+   explicit, called by the page inspector, by `BPlusTree.verify`, and by tests.
 
 PostgreSQL draws exactly this line: it verifies the checksum and a few header
 fields on read, and never walks the line pointer array to prove it is
@@ -71,7 +71,7 @@ bug, not media corruption, and a per-read scan is a poor way to find one.
 The index scan then went **307 ms → 86 ms**.
 
 The cost of that decision is real and worth naming: in-memory corruption of a
-frame goes undetected. It is the same bet PostgreSQL makes — `data_checksums`
+frame goes undetected. It is the same bet PostgreSQL makes, `data_checksums`
 protects the storage path, not RAM, and ECC memory is the answer to the other.
 
 ---
@@ -81,14 +81,14 @@ protects the storage path, not RAM, and ECC memory is the answer to the other.
 A textbook buffer pool hands out a *pointer into the frame* and requires callers
 to **pin** it: two callers must see each other's writes, and a frame must not be
 reused while someone holds it. Getting the second wrong lets eviction hand a
-frame to a new page while another caller is still writing into it — silent
+frame to a new page while another caller is still writing into it, silent
 corruption.
 
 ChenDB copies **out of** the frame on read and **into** it on write. A caller's
 `Page` is an independent object, so eviction can never invalidate one: if a page
 is evicted while a caller holds a copy, the caller's later `write_page` simply
 re-admits it. Correct by construction, and **no caller in the engine had to
-change** — the heap, the B+ tree and the inspector all kept working untouched.
+change**. The heap, the B+ tree and the inspector all kept working untouched.
 
 That is affordable because the copy is 228 ns against the 1,822 ns miss it
 avoids. It is not equivalent to the shared design:
@@ -97,7 +97,7 @@ avoids. It is not equivalent to the shared design:
   before the pool existed. The database-level write lock prevents that, not the
   pool.
 - a shared-frame pool needs pinning, and becomes the right design the moment
-  there are concurrent readers — Milestone 10.
+  there are concurrent readers, Milestone 10.
 
 Pin counts that are always zero would be *ceremony*: a number in the UI that
 never prevents anything. `BufferPoolEvent` therefore has no `pin_count`, despite
@@ -121,7 +121,7 @@ relied on since Milestone 1 is unchanged: after `sync()` returns, everything
 acknowledged is durable.
 
 Between syncs, more data now lives only in memory. **The crash window is wider**
-— a process killed after twenty unsynced inserts used to lose whatever the OS
+. A process killed after twenty unsynced inserts used to lose whatever the OS
 had not flushed, and now loses whatever the pool has not evicted, which is likely
 all of it. The recovery tests already asserted only that *synced* rows survive,
 so they passed unchanged; that is the honest cost of write-back, and closing it
@@ -132,14 +132,14 @@ is what Milestone 9's write-ahead log is for.
 ## Eviction: exact LRU, and why nobody ships it
 
 Residency is an `OrderedDict`, so eviction is `popitem(last=False)` and touching
-a page is `move_to_end` — both O(1), no scan.
+a page is `move_to_end`, both O(1), no scan.
 
 Real systems do not do this. True LRU performs a **write to shared state on every
 read**, which under concurrency means a lock on the hottest path in the engine.
 PostgreSQL uses a clock sweep: each frame has a usage counter, a read only
 increments it, and the evictor walks a circular buffer decrementing until it
 finds a zero. Approximate LRU, no lock on read. That is a concurrency
-optimisation, and ChenDB has one writer — so exact LRU costs nothing here and is
+optimisation, and ChenDB has one writer, so exact LRU costs nothing here and is
 easier to reason about.
 
 The other reason to avoid plain LRU is **sequential flooding**, and it is stark:
@@ -173,12 +173,12 @@ while looking fine. Two changes fixed it.
 
 **`RANDOM_PAGE_COST` is gone.** Milestone 6 predicted it would start to matter;
 it did not. With the pool the axis that decides cost is **hit against miss**, not
-sequential against random — there is no seek on an SSD, and the OS page cache was
+sequential against random. There is no seek on an SSD, and the OS page cache was
 already flattening the difference. `PAGE_HIT_COST = 0.36` and
 `PAGE_MISS_COST = 1.0` replaced it, both measured.
 
 **The planner now estimates hits.** `distinct_pages_touched` is the Cárdenas
-occupancy formula — with rows spread over *P* pages, *N* random fetches land on
+occupancy formula, with rows spread over *P* pages, *N* random fetches land on
 `P × (1 − (1 − 1/P)^N)` distinct pages. Everything else is a hit. Without it the
 pool is invisible to the planner: every fetch charged as a miss, and a wide index
 scan costed three times what it actually costs. PostgreSQL uses the
@@ -205,7 +205,7 @@ whole point:
 
 `bucket < 200` was a sequential scan in Milestone 6 and is an index scan now,
 because the pool made the heap fetches four times cheaper. The planner is right
-in all five benchmark rows both before and after — because the constants were
+in all five benchmark rows both before and after, because the constants were
 re-measured rather than assumed.
 
 The optimism in the estimate is deliberate and worth naming: it assumes a page
@@ -219,10 +219,10 @@ access pattern, which is what `effective_cache_size` approximates in PostgreSQL.
 
 `PagerStats` now counts both, and the distinction is new:
 
-- `page_reads` / `page_writes` — **logical**: how many times the engine asked.
+- `page_reads` / `page_writes`, **logical**: how many times the engine asked.
   Unchanged in meaning, so a test asserting "this operation reads pages" still
   measures what it always did.
-- `physical_reads` / `physical_writes` — syscalls.
+- `physical_reads` / `physical_writes`, syscalls.
 
 The gap is the pool working. `cache_hit_rate` is that gap as a fraction.
 
@@ -236,7 +236,7 @@ milestone would need no consumer to change, and it did not.
 
 A **Buffer pool** workspace, gated on `features.buffer_pool`.
 
-The frame grid draws every frame — including the free ones, so the grid keeps a
+The frame grid draws every frame, including the free ones, so the grid keeps a
 fixed shape and a page appearing reads as a change rather than a reflow. Frames
 are in *frame* order, not recency order, because a frame is a physical slot and
 watching one slot's contents get replaced is the thing worth seeing. Recency is
@@ -252,7 +252,7 @@ Above it, the counters, including how much I/O never happened:
 
 And three workload buttons, because a cache's behaviour is only legible when you
 can *cause* it. "Scan twice" on a table that fits shows the second pass hitting
-everything; on a table that does not, the hit rate barely moves — which is far
+everything; on a table that does not, the hit rate barely moves, which is far
 more convincing to watch than to read.
 
 Every button runs real SQL through the ordinary query endpoint. Nothing is
@@ -276,7 +276,7 @@ python benchmarks/index_vs_scan.py
 
 - **Write-back and transactions interact.** A rollback has to undo changes that
   may exist only in a dirty frame, never having reached the disk. That is
-  easier, not harder — but the undo log has to be ordered against the flush.
+  easier, not harder, but the undo log has to be ordered against the flush.
 - **`sync` is the commit point today.** Milestone 8 makes commit a transaction
   boundary rather than a file operation, and Milestone 9's WAL is what lets a
   commit be durable without flushing every dirty page.

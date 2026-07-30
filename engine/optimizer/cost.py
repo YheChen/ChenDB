@@ -1,7 +1,7 @@
 """The cost model: deciding which plan is cheaper before running either.
 
-Milestone 5 built two access paths and chose between them by rule — "use an
-index whenever one covers a comparison" — which is wrong above about 14%
+Milestone 5 built two access paths and chose between them by rule ("use an
+index whenever one covers a comparison") which is wrong above about 14%
 selectivity, measurably and on purpose.  This module is what makes the choice
 by arithmetic instead.
 
@@ -10,7 +10,7 @@ by arithmetic instead.
               statistics                            compare candidates
 
 Two halves, and they fail differently.  **Selectivity** estimation is where the
-error usually comes from — it depends on the data and on assumptions about it.
+error usually comes from. It depends on the data and on assumptions about it.
 **Costing** is nearly mechanical once the row count is known.  A planner that
 picks a terrible plan has almost always mis-estimated the rows, not mis-added
 the costs; PostgreSQL's ``EXPLAIN ANALYZE`` puts estimated and actual side by
@@ -22,13 +22,13 @@ The constants below are **measured for this engine**, not copied from
 PostgreSQL, and the difference is the interesting part.
 
 PostgreSQL's defaults say a page read costs 1.0 and processing a tuple costs
-0.01 — CPU is a hundred times cheaper than I/O.  That is right for compiled
+0.01, CPU is a hundred times cheaper than I/O.  That is right for compiled
 code against a spinning disk.  It is badly wrong here, for two reasons:
 
 * every "page read" hits the OS page cache and costs a ``pread`` of 4 KiB plus
-  a **CRC32 over the whole page** — real work, but only microseconds;
+  a **CRC32 over the whole page**, real work, but only microseconds;
 * every row costs an interpreted Python ``decode_record`` plus predicate
-  evaluation — which turns out to be the *dominant* term.
+  evaluation, which turns out to be the *dominant* term.
 
 Measured on ``benchmarks/index_vs_scan.py`` (20,000 rows, 4 KiB pages), a
 sequential scan spends ~3 µs per row and ~2 µs per page.  So ``CPU_TUPLE_COST``
@@ -49,7 +49,7 @@ index scan, 14 000 rows       16 328    307.5 ms          18.8
 sequential scan + filter       4 303     81.3 ms          18.9
 =========================  =========  ===========  =============
 
-Roughly 18.9 µs per cost unit, near-constant from 25 to 16,328 — a 650x range —
+Roughly 18.9 µs per cost unit, near-constant from 25 to 16,328 (a 650x range)
 and the same for both access paths, which is the part that matters: a model
 that is self-consistent but mis-weights one path against the other picks the
 wrong plan while looking well calibrated.
@@ -108,12 +108,12 @@ PAGE_MISS_COST: Final = 1.0
 #:
 #: Milestone 6 had ``RANDOM_PAGE_COST`` here, on the assumption that Milestone 7
 #: would make locality matter. It did not. With the pool the axis that decides
-#: cost is **hit against miss**, not sequential against random — there is no
+#: cost is **hit against miss**, not sequential against random, there is no
 #: seek on an SSD, and the OS page cache was already flattening the difference.
 #: Estimating hits is what replaced it; see :func:`distinct_pages_touched`.
 PAGE_HIT_COST: Final = 0.36
 
-#: Decoding one record into Python values. Measured at 778 ns — *more than a
+#: Decoding one record into Python values. Measured at 778 ns, *more than a
 #: third of a page miss*, which is the fact that makes this engine's cost model
 #: look nothing like PostgreSQL's, where a tuple is 1/100th of a page read.
 CPU_TUPLE_COST: Final = 0.43
@@ -131,8 +131,8 @@ CPU_INDEX_COST: Final = 0.005
 
 #: Used when there is nothing better. PostgreSQL's equivalents are
 #: ``DEFAULT_EQ_SEL`` (0.005) and ``DEFAULT_INEQ_SEL`` (0.3333); the same values
-#: are used here because the reasoning behind them — an equality is usually
-#: selective, an inequality usually is not — is not engine-specific.
+#: are used here because the reasoning behind them, an equality is usually
+#: selective, an inequality usually is not, is not engine-specific.
 DEFAULT_EQ_SELECTIVITY: Final = 0.005
 DEFAULT_INEQ_SELECTIVITY: Final = 1.0 / 3.0
 
@@ -145,8 +145,8 @@ MIN_SELECTIVITY: Final = 1e-6
 class Cost:
     """An estimate, split so the plan view can show where it came from.
 
-    ``io`` and ``cpu`` are kept apart because they answer different questions —
-    "would a buffer pool help?" against "would a faster predicate help?" — and
+    ``io`` and ``cpu`` are kept apart because they answer different questions (
+    "would a buffer pool help?" against "would a faster predicate help?") and
     a single total hides both.
     """
 
@@ -179,7 +179,7 @@ def seq_scan_cost(stats: TableStatistics) -> Cost:
     """Read every page once, decode every row.
 
     Every read is charged as a **miss**: a scan touches each page exactly once,
-    so the pool can never serve one — and worse, it evicts everything that was
+    so the pool can never serve one, and worse, it evicts everything that was
     in there. That is sequential flooding, and it is why PostgreSQL confines
     large scans to a small ring buffer. ChenDB does not, so a scan is honestly
     costed as all-misses and honestly *behaves* that way.
@@ -200,7 +200,7 @@ def distinct_pages_touched(fetches: float, page_count: int) -> float:
     The classic occupancy result: with rows spread evenly over *P* pages, the
     expected number of distinct pages hit by *N* independent fetches is
     ``P * (1 - (1 - 1/P)**N)``. Cárdenas published it in 1975 and every
-    optimiser since has needed some version of it — PostgreSQL uses the
+    optimiser since has needed some version of it, PostgreSQL uses the
     Mackert-Lohman refinement, which also accounts for the cache being finite.
 
     It is what turns "the index will fetch 14,000 rows" into "…from about 233
@@ -229,7 +229,7 @@ def index_scan_cost(
     whatever the query; the fetches are one page read *per matching row*, and
     the same page over and over when several matches share it. With no buffer
     pool there is no deduplication, which is why the crossover sits as low as it
-    does — and why Milestone 7 will move it.
+    does, and why Milestone 7 will move it.
     """
     matching = max(matching_rows, 0.0)
     leaves = matching / entries_per_leaf if entries_per_leaf > 0 else 0.0
@@ -268,8 +268,8 @@ def project_cost(input_rows: float, *, expressions: int) -> Cost:
 #: a bucket, and hold the row. Measured at 67 ns.
 CPU_HASH_BUILD_COST: Final = 0.037
 
-#: Looking one key up: hash and index, with nothing retained. Measured at 45 ns
-#: — **two thirds of a build**, and that asymmetry is not a detail. It is the
+#: Looking one key up: hash and index, with nothing retained. Measured at 45 ns,
+#: **two thirds of a build**, and that asymmetry is not a detail. It is the
 #: only thing in the cost model that says which side of a hash join should be
 #: the build side, and getting that backwards is the difference between a hash
 #: table of ten rows and one of ten million.
@@ -295,14 +295,14 @@ DEFAULT_JOIN_SELECTIVITY: Final = DEFAULT_EQ_SELECTIVITY
 def nested_loop_join_cost(outer_rows: float, inner_rows: float, *, matches: float) -> Cost:
     """Compare every outer row against every inner row.
 
-    ``O(n·m)`` comparisons and no memory. It wins on exactly one shape — a tiny
-    outer side — and loses spectacularly on everything else, which is precisely
+    ``O(n·m)`` comparisons and no memory. It wins on exactly one shape (a tiny
+    outer side) and loses spectacularly on everything else, which is precisely
     what makes it worth keeping as a candidate: the cost model has to *say* so,
     and a planner with one join algorithm has nothing to be right about.
 
     The inner side is drained into memory once, so what is charged here is
-    comparisons and not re-scans. Re-reading the inner child per outer row —
-    the textbook naive form — would make this ``O(n·m)`` *scans* rather than
+    comparisons and not re-scans. Re-reading the inner child per outer row (
+    the textbook naive form) would make this ``O(n·m)`` *scans* rather than
     ``O(n·m)`` comparisons, and the difference is several orders of magnitude.
     So this cost is the *optimistic* one, and the algorithm still loses.
     """
@@ -314,7 +314,7 @@ def hash_join_cost(build_rows: float, probe_rows: float, *, matches: float) -> C
     """Build a hash table on one side, probe it with the other.
 
     ``O(n + m)`` instead of ``O(n·m)``, paid for in memory proportional to the
-    build side — so the planner builds on the *smaller* one. It arrives at that
+    build side, so the planner builds on the *smaller* one. It arrives at that
     by arithmetic rather than by a rule: a build entry costs half again what a
     probe does, so putting the bigger side on the build is simply more
     expensive. That is the whole reason the model needs a row-count estimate for
@@ -335,7 +335,7 @@ def sort_cost(input_rows: float, *, keys: int = 1) -> Cost:
     """``n log n`` comparisons, in memory.
 
     Charged even when the input is one row, because the operator still has to
-    *drain its child completely* before it can emit anything — a sort is the
+    *drain its child completely* before it can emit anything. A sort is the
     first thing in this engine that is not a pipeline, and the plan view shows
     it as the place where "time to first row" stops being small.
 
@@ -381,8 +381,8 @@ def join_selectivity(
         selectivity = 1 / max(distinct(a.x), distinct(b.y))
 
     The reasoning is worth stating because the assumption inside it is what
-    breaks. If every value of the *smaller* domain appears in the larger one —
-    a foreign key, which is the common case — then each row of the larger side
+    breaks. If every value of the *smaller* domain appears in the larger one (
+    a foreign key, which is the common case) then each row of the larger side
     matches exactly one row of the smaller, and the result has as many rows as
     the larger side. Take the maximum of the two distinct counts and that falls
     out.
@@ -460,7 +460,7 @@ def _column_stats(
 
     By ``table_position``, **not** ``column_index``. Since Milestone 13 a bound
     index addresses the *joined* row, so ``sales.amount`` in
-    ``customers JOIN sales`` is index 5 — and asking a three-column table for
+    ``customers JOIN sales`` is index 5, and asking a three-column table for
     its column 5 gets nothing. The statistics then fall back to a default, the
     filter's row estimate collapses, and the planner concludes a nested loop is
     nearly free. It did, for about ten minutes.
@@ -510,8 +510,8 @@ def _range_fraction(info: ColumnStatistics, value: Any, *, below: bool) -> float
 
     Uniformity is the assumption a histogram exists to remove: on a column whose
     values cluster at one end, this is wrong by however skewed the data is. It
-    is still far better than a fixed guess, because it gets the *shape* right —
-    a bound outside the observed range estimates ~0 or ~1, which is correct and
+    is still far better than a fixed guess, because it gets the *shape* right.
+    A bound outside the observed range estimates ~0 or ~1, which is correct and
     is the case a fixed guess handles worst.
     """
     if not info.has_range or not isinstance(value, (int, float)):

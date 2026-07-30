@@ -227,7 +227,7 @@ def test_the_error_lists_what_would_have_been_accepted(client: TestClient):
 
 def test_unsupported_sql_is_distinguished_from_a_syntax_error(client: TestClient):
     # Was `LEFT JOIN` until Milestone 18 implemented it. `DISTINCT` is the
-    # replacement and is genuinely still refused — the point of the test is the
+    # replacement and is genuinely still refused: the point of the test is the
     # *distinction* between the two error kinds, so the example has to be one.
     body = parse(client, "SELECT DISTINCT name FROM users")
     assert body["error"]["kind"] == "UnsupportedSqlError"
@@ -316,7 +316,7 @@ def test_a_parse_error_is_reported_as_an_event(client: TestClient):
 def test_parsing_still_reads_no_pages(client: TestClient):
     """Parsing stayed purely syntactic when Milestone 4 added binding.
 
-    Binding — which does read the catalog — happens at execution time, not parse
+    Binding (which does read the catalog) happens at execution time, not parse
     time, so /parse remains free of I/O. That is why the SQL workspace can parse
     on every keystroke.
     """
@@ -324,7 +324,7 @@ def test_parsing_still_reads_no_pages(client: TestClient):
     def page_reads() -> int:
         return client.get(f"{API_PREFIX}/databases/demo").json()["stats"]["page_reads"]
 
-    # The measurement itself reads pages now — /databases lists the catalog — so
+    # The measurement itself reads pages now (/databases lists the catalog) so
     # calibrate against two back-to-back probes rather than assuming zero.
     baseline = page_reads()
     probe_cost = page_reads() - baseline

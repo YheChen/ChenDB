@@ -1,7 +1,7 @@
 """Query execution API models.
 
-Like the AST, the operator tree crosses the wire **flat** — a node list plus a
-root id — for the same reasons: recursive Pydantic makes awkward OpenAPI, and the
+Like the AST, the operator tree crosses the wire **flat** (a node list plus a
+root id) for the same reasons: recursive Pydantic makes awkward OpenAPI, and the
 visualizer needs random access by ``operator_id`` to highlight whichever operator
 is currently active.
 """
@@ -52,7 +52,7 @@ class OperatorNodeModel(ApiModel):
     Estimated and actual sit side by side because the gap between them is the
     single most useful thing a plan view can show. A plan that is slow is almost
     always a plan whose row estimate was wrong, and no amount of staring at the
-    chosen operators reveals that — only the comparison does.
+    chosen operators reveals that, only the comparison does.
     """
 
     operator_id: str

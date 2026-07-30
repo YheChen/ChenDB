@@ -40,9 +40,9 @@ META_PAGE_ID = 0
 
 #: Bumped whenever the layout of any on-disk structure changes.
 #:
-#: 1 — Milestone 1: one table per file, a JSON schema page.
-#: 2 — Milestone 4: system tables, many tables per file.
-#: 3 — Milestone 5: a third system table for indexes, and a single object-id
+#: 1, Milestone 1: one table per file, a JSON schema page.
+#: 2, Milestone 4: system tables, many tables per file.
+#: 3, Milestone 5: a third system table for indexes, and a single object-id
 #:     counter shared by tables and indexes.
 FORMAT_VERSION = 5
 

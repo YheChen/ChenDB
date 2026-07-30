@@ -53,7 +53,7 @@ def access_path(plan) -> str:
 
 
 def main() -> int:
-    print("ChenDB Milestone 5 — B+ tree indexes")
+    print("ChenDB Milestone 5, B+ tree indexes")
 
     # -- 1. why a separate key encoding -----------------------------------
     rule("1. Little-endian records cannot be compared as bytes")
@@ -86,7 +86,7 @@ def main() -> int:
     ):
         print(f"     {label:<7} {key.hex(' ')}")
     print("   NULL sorts below every value, which is why `WHERE age < 18` has to")
-    print("   anchor its lower bound above the NULL tag — no comparison is ever")
+    print("   anchor its lower bound above the NULL tag. No comparison is ever")
     print("   true for NULL.")
 
     with tempfile.TemporaryDirectory() as workspace:
@@ -143,7 +143,7 @@ def main() -> int:
                 chain += 1
                 guard += 1
                 page_id = BTreeNode(db.read_page(page_id)).next_leaf_id
-            print(f"   the chain reaches {chain} leaves — one descent, then sideways.")
+            print(f"   the chain reaches {chain} leaves, one descent, then sideways.")
 
             splits = [
                 item.event
@@ -212,7 +212,7 @@ def main() -> int:
                 f"\n   after DELETE, the index entry is gone too: "
                 f"{db.lookup('users_email', 'late@example.com')}"
             )
-            print("   The row had to be *read* first — an index entry is keyed on the")
+            print("   The row had to be *read* first. An index entry is keyed on the")
             print("   value, so removing it needs to know what the value was. This is")
             print("   why PostgreSQL leaves dead entries for VACUUM instead.")
 
@@ -259,7 +259,7 @@ def main() -> int:
                     f"(a full scan would read {heap_pages})"
                 )
             print("\n   The wide predicate matches nearly everything, so the index")
-            print("   does one random heap read per row — through pages a sequential")
+            print("   does one random heap read per row, through pages a sequential")
             print("   scan would have read once each. Milestone 5 chooses by rule and")
             print("   cannot tell; Milestone 6's cost model is what fixes it.")
             print("\n   benchmarks/index_vs_scan.py measures the crossover.")

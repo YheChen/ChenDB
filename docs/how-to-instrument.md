@@ -60,7 +60,7 @@ if self._tracer.storage:
 `emit` re-checks the level, so the guard is not needed for correctness. It is
 needed for speed: Python evaluates arguments before the call, so an unguarded
 emit builds the event even at `OFF`. Use `tracer.summary`, `.operator`,
-`.storage`, `.verbose` — plain booleans recomputed when the level changes.
+`.storage`, `.verbose`, plain booleans recomputed when the level changes.
 
 Emit *after* the work succeeds, so an event never describes something that did
 not happen.
@@ -70,7 +70,7 @@ not happen.
 Add to `tests/integration/test_tracing.py`'s workload, which already asserts
 that the database files produced at `OFF`, `STORAGE` and `VERBOSE` are
 byte-identical. If a new event makes that test fail, the instrumentation has a
-side effect — find it.
+side effect, find it.
 
 Then assert the event actually fires:
 
@@ -94,5 +94,5 @@ frontend reads.
   the consumer aggregate.
 - Do not emit inside a tight inner loop without a `VERBOSE` guard.
 - Do not hold an engine lock while a sink runs. Sinks are called on the
-  emitting thread — `RingBufferSink` is O(1) under its own lock, and
+  emitting thread, `RingBufferSink` is O(1) under its own lock, and
   `CallbackSink` for a WebSocket only does `call_soon_threadsafe`.

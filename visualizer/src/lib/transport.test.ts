@@ -3,7 +3,7 @@
  *
  * An abstraction with one implementation is a claim, not a fact. These tests
  * swap in a transport that never touches `fetch` or `WebSocket` and drive the
- * real `api` object and the real event-stream hook through it — which is
+ * real `api` object and the real event-stream hook through it, which is
  * exactly what the WASM build will do, minus a Python interpreter.
  *
  * If a future change reaches around `getTransport()` and calls `fetch`

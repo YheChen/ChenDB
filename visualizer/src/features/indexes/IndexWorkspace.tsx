@@ -14,8 +14,8 @@
  * the same bytes appear as a hexdump. There is no separate model of the tree in
  * the browser to drift out of sync with the one on disk.
  *
- * A traced lookup highlights the path the engine took — root to leaf, the same
- * descent :meth:`BPlusTree.search` performs — which is the clearest way to show
+ * A traced lookup highlights the path the engine took, root to leaf, the same
+ * descent :meth:`BPlusTree.search` performs, which is the clearest way to show
  * why three page reads beat scanning four thousand pages.
  */
 
@@ -49,7 +49,7 @@ export function IndexWorkspace({
   const indexes = useIndexes(databaseId);
 
   // Select the first index automatically, and drop a selection whose index has
-  // gone away — otherwise the tree panel shows a stale 404.
+  // gone away, otherwise the tree panel shows a stale 404.
   useEffect(() => {
     if (!indexes.data) return;
     const names = indexes.data.indexes.map((index) => index.name);

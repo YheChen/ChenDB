@@ -4,8 +4,8 @@ Every test that mutates the tree finishes by calling :meth:`BPlusTree.verify`,
 which asserts the *whole* structure: sorted within each node, every separator
 bounding its subtree, all leaves at one depth, and the sibling chain visiting
 every entry in order.  That matters because a B+ tree can be subtly broken and
-still answer most queries — a split that promotes the wrong key loses only the
-rows that happen to fall in the gap — so sampled lookups are not enough evidence.
+still answer most queries (a split that promotes the wrong key loses only the
+rows that happen to fall in the gap) so sampled lookups are not enough evidence.
 
 Pages are deliberately tiny (256 bytes, the format's minimum) so a handful of
 keys forces a split.  At the 4 KiB default it would take hundreds of rows to
@@ -349,7 +349,7 @@ def test_delete_key_removes_every_duplicate(tree: BPlusTree):
 
 
 def test_emptying_the_tree_leaves_it_usable(tree: BPlusTree):
-    # Nothing merges, so the pages stay. The tree must still be correct — and
+    # Nothing merges, so the pages stay. The tree must still be correct: and
     # reusable, which is the compensation for never shrinking.
     fill(tree, range(300))
     for position, value in enumerate(range(300)):
@@ -543,6 +543,6 @@ def test_a_point_lookup_reads_far_fewer_pages_than_the_tree_holds(tree: BPlusTre
     visited = tree.stats.nodes_visited - before
     assert visited <= tree.height + 1
     assert visited * 10 < pages, (
-        f"a lookup touched {visited} of {pages} pages — that ratio is the "
+        f"a lookup touched {visited} of {pages} pages. That ratio is the "
         f"entire argument for building an index"
     )

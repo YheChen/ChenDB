@@ -189,7 +189,7 @@ def test_corruption_is_localised_to_the_damaged_page(tmp_path: Path):
     """A bad page must not make the rest of the table unreadable.
 
     Verified through the inspector, which reads pages independently. The scan
-    path still raises on the damaged page — recovering *past* it needs the WAL.
+    path still raises on the damaged page, recovering *past* it needs the WAL.
     """
     path = tmp_path / "localised.chendb"
     make_database(path, rows=60)
@@ -227,7 +227,7 @@ db.insert_many("t", [(i, f"committed-{{i}}") for i in range(20)])
 db.sync()
 
 # An open transaction, deliberately never committed. With a four-frame pool and
-# this many rows, the pool is forced to steal — some of these pages reach the
+# this many rows, the pool is forced to steal: some of these pages reach the
 # disk despite belonging to a transaction that will never commit.
 db.begin()
 db.insert_many("t", [(1000 + i, f"uncommitted-{{i}}") for i in range(200)])
@@ -309,7 +309,7 @@ def crash_after_checkpoint(path: Path) -> None:
 
 
 def rows_after_recovery(path: Path) -> tuple[list[tuple], object]:
-    """Open the database — which recovers it — and read every row."""
+    """Open the database (which recovers it) and read every row."""
     with Database.open(path, page_size=PAGE_SIZE) as db:
         return [row for _, row in db.scan("t")], db.pager.recovery
 
@@ -319,7 +319,7 @@ def test_a_crash_mid_transaction_leaves_a_file_that_opens(tmp_path: Path):
 
     This is the one that found a real bug, back in Milestone 8. The buffer pool
     is free to evict the meta page before the pages it references, so a crash
-    could leave a file *shorter* than its own page count — which the length
+    could leave a file *shorter* than its own page count, which the length
     check correctly refuses to open.
     """
     path = tmp_path / "crashed-txn.chendb"
@@ -363,8 +363,8 @@ def test_an_uncommitted_transaction_is_rolled_back_by_recovery(tmp_path: Path):
     """**The milestone, in one assertion.**
 
     Until Milestone 9 this test asserted the opposite, and said so: an
-    uncommitted transaction that outgrew the buffer pool had pages *stolen* —
-    written to disk before it committed — and with the undo log dying alongside
+    uncommitted transaction that outgrew the buffer pool had pages *stolen* (
+    written to disk before it committed) and with the undo log dying alongside
     the process, those rows were simply there afterwards.
 
     They are not there now. The stolen pages were logged before they were
@@ -376,7 +376,7 @@ def test_an_uncommitted_transaction_is_rolled_back_by_recovery(tmp_path: Path):
 
     rows, report = rows_after_recovery(path)
     assert [row for row in rows if row[0] >= 1000] == [], (
-        "the uncommitted rows must be gone — this is what the log is for"
+        "the uncommitted rows must be gone. This is what the log is for"
     )
     assert len(rows) == 20, "and the committed ones must all still be here"
     assert report.pages_undone > 0, "pages really were stolen, and really were undone"
@@ -385,7 +385,7 @@ def test_an_uncommitted_transaction_is_rolled_back_by_recovery(tmp_path: Path):
 def test_a_committed_transaction_survives_without_a_sync(tmp_path: Path):
     """No-force, asserted.
 
-    The child commits and is killed immediately — no ``sync()``, no ``close()``.
+    The child commits and is killed immediately, no ``sync()``, no ``close()``.
     Every dirty page is still in the buffer pool when the process dies. The only
     thing on the disk is the log, and it is enough.
     """
@@ -394,7 +394,7 @@ def test_a_committed_transaction_survives_without_a_sync(tmp_path: Path):
 
     rows, report = rows_after_recovery(path)
     assert len(rows) == 220, "the commit record is what makes these durable"
-    assert report.pages_undone == 0, "nothing to undo — the transaction finished"
+    assert report.pages_undone == 0, "nothing to undo. The transaction finished"
     assert report.losers == ()
 
 
@@ -419,7 +419,7 @@ def test_recovery_is_idempotent(tmp_path: Path):
 
 def test_a_torn_log_tail_is_ignored_rather_than_fatal(tmp_path: Path):
     """A half-written record at the end of a log is the normal state after a
-    crash — the process died part-way through a write. It must not be read as
+    crash, the process died part-way through a write. It must not be read as
     corruption.
     """
     path = tmp_path / "torn-log.chendb"
@@ -453,7 +453,7 @@ def test_a_checkpoint_empties_the_log(tmp_path: Path):
 def test_work_after_a_checkpoint_still_survives_a_crash(tmp_path: Path):
     """The LSN base has to keep the stream monotonic across a truncation.
 
-    A checkpoint resets the log *file* to zero bytes, but not the LSN *stream* —
+    A checkpoint resets the log *file* to zero bytes, but not the LSN *stream*,
     ``checkpoint_lsn`` in the meta page carries the difference. Get that wrong
     and records written after a checkpoint carry LSNs below the ones already
     stamped on pages, so redo compares them and skips work it needed to do. The
@@ -472,7 +472,7 @@ def test_a_database_created_and_killed_immediately_is_recoverable(tmp_path: Path
 
     A brand-new database's very first log record is the meta page, at LSN 0.
     Kill the process before that page reaches the disk and there is nothing to
-    read — and if "no page there" answered 0 rather than -1, redo would compare
+    read, and if "no page there" answered 0 rather than -1, redo would compare
     0 >= 0, decide the page was already current, and skip the only page that
     makes the file a database.
     """

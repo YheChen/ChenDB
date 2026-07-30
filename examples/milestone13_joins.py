@@ -166,7 +166,7 @@ def main() -> int:
 
         print("  Look again at the plan above: `city = 'london'` is BELOW the")
         print("  join, not above it. It shrinks the input to every join over it,")
-        print("  and it can never be worse there — which is exactly what makes")
+        print("  and it can never be worse there, which is exactly what makes")
         print("  it a rewrite rather than a costed alternative.")
         print()
         print("  It is also what makes an index reachable at all: a predicate")
@@ -192,7 +192,7 @@ def main() -> int:
         print()
         print("  Every input row is read before the first output row exists,")
         print("  because a group is not complete until the input is. So is a")
-        print("  sort. That is why LIMIT 3 over this saves nothing at all —")
+        print("  sort. That is why LIMIT 3 over this saves nothing at all, ")
         print("  and the plan shows it, because the child's cost does not fall.")
 
         started = time.perf_counter_ns()

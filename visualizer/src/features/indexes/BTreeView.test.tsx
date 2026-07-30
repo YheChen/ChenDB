@@ -26,7 +26,7 @@ function node(overrides: Partial<TreeNodeModel> & { page_id: number }): TreeNode
   };
 }
 
-/** Root over three chained leaves — the shape the module docstring draws. */
+/** Root over three chained leaves, the shape the module docstring draws. */
 const TREE: TreeSnapshotModel = {
   root_page_id: 1,
   height: 2,

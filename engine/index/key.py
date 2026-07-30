@@ -22,7 +22,7 @@ every positive number under an unsigned comparison.
 
 Two ways out
 ------------
-**(a) Decode both sides and compare Python values.**  Less code — no encoding
+**(a) Decode both sides and compare Python values.**  Less code, no encoding
 module at all.  But every comparison costs two ``struct.unpack`` calls plus a
 Python-level ``<``.  A descent through a depth-3 tree with 200 entries per node
 does ~24 comparisons, so a point lookup pays ~50 unpacks.
@@ -51,7 +51,7 @@ Type     Payload
 ======== ======================================================================
 INTEGER  8 bytes big-endian of ``value + 2**63``.  Adding the bias flips the
          sign bit, mapping ``INT64_MIN → 0x0000…``, ``-1 → 0x7fff…``,
-         ``0 → 0x8000…``, ``INT64_MAX → 0xffff…`` — a monotonic map from signed
+         ``0 → 0x8000…``, ``INT64_MAX → 0xffff…``: a monotonic map from signed
          to unsigned, so unsigned byte order *is* signed value order.
 FLOAT    8 bytes big-endian of the IEEE-754 bit pattern, then: if the sign bit
          is set, flip every bit; otherwise flip only the sign bit.  IEEE-754 was
@@ -65,7 +65,7 @@ TEXT     Raw UTF-8, no length prefix.  UTF-8's defining property is that byte
 ======== ======================================================================
 
 Ordering is *binary*, not linguistic: ``"Z" < "a"`` because ``0x5a < 0x61``.
-Real collation (``ORDER BY name COLLATE "en_US"``) is a much larger problem —
+Real collation (``ORDER BY name COLLATE "en_US"``) is a much larger problem,
 PostgreSQL delegates it to the operating system's ICU or libc, and a glibc
 upgrade that changed collation famously silently corrupted people's indexes.
 Binary ordering has the compensating virtue of never changing.
@@ -74,7 +74,7 @@ Why single-column keys
 ----------------------
 A composite key would concatenate two encodings, and concatenation breaks the
 prefix property: ``"ab" ‖ "c"`` and ``"a" ‖ "bc"`` produce identical bytes.
-Fixing it needs an escape-and-terminate layer — replace ``0x00`` with
+Fixing it needs an escape-and-terminate layer, replace ``0x00`` with
 ``0x00 0xff`` and terminate with ``0x00 0x00``, which is exactly what
 FoundationDB's tuple layer does.  Milestone 5 indexes one column, so that layer
 is not needed and is not written.  The single place it *would* be needed is
@@ -175,7 +175,7 @@ def encode_key(value: Any, data_type: DataType) -> bytes:
 def decode_key(key: bytes, data_type: DataType) -> Any:
     """Recover the Python value from an encoded key.
 
-    Needed by the visualizer — a tree of hex blobs teaches nothing — and by
+    Needed by the visualizer (a tree of hex blobs teaches nothing) and by
     range scans that report their bounds.  Never on the hot comparison path.
     """
     if not key:
@@ -255,7 +255,7 @@ def _float_to_sortable(value: float) -> int:
     equal in Python.  That is a genuine wart: an index would treat them as two
     keys.  PostgreSQL normalises ``-0.0`` to ``0.0`` on input to dodge it, and
     so does this function.  ``NaN`` has the sign bit clear in its usual
-    encoding, so it sorts above every real number — matching PostgreSQL, which
+    encoding, so it sorts above every real number, matching PostgreSQL, which
     documents ``NaN`` as greater than all other float values.
     """
     if value == 0.0:

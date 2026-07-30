@@ -2,7 +2,7 @@
 
 These are the *wire* types.  They exist only in ``engine/server`` and are built
 from engine dataclasses by :mod:`engine.server.mappers`.  Keeping them separate
-means the on-disk format and the on-the-wire format can evolve independently —
+means the on-disk format and the on-the-wire format can evolve independently,
 adding a field to a page header does not silently change the API, and renaming
 an API field does not touch storage code.
 

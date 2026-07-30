@@ -1,8 +1,8 @@
 """Disk-backed B+ tree indexes.
 
-    key.py        order-preserving key encoding — the crux; read this first
+    key.py        order-preserving key encoding, the crux; read this first
     node.py       one page interpreted as a tree node
-    bplustree.py  BPlusTree — search, insert, split, range scan, delete
+    bplustree.py  BPlusTree, search, insert, split, range scan, delete
 
     from engine import Database
 

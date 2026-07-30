@@ -1,4 +1,4 @@
-"""``python -m engine.server`` — start the visualization server."""
+"""``python -m engine.server``, start the visualization server."""
 
 from __future__ import annotations
 

@@ -18,7 +18,7 @@
  * of them.
  *
  * The scripted walkthroughs exist because the interesting states are two or
- * three steps deep and easy to get wrong by hand — and getting them wrong looks
+ * three steps deep and easy to get wrong by hand, and getting them wrong looks
  * exactly like the engine misbehaving.
  */
 

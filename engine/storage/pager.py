@@ -2,7 +2,7 @@
 
 Responsibilities
 ----------------
-1. Map page ids to file offsets — ``offset = page_id * page_size``.  Fixed-size
+1. Map page ids to file offsets, ``offset = page_id * page_size``.  Fixed-size
    pages are what make this arithmetic possible, and that single property is
    why essentially every disk-based database uses them.
 2. Own the page allocator: extend the file, or recycle a page from the free list.
@@ -14,7 +14,7 @@ Caching
 Milestones 1-6 had none: every read was a ``pread`` plus a CRC32, and every
 write was a ``write``.  Milestone 7 puts a
 :class:`~engine.storage.buffer.BufferPool` between this class and the file, and
-it was an *insertion* rather than a rewrite — the pager kept the same public
+it was an *insertion* rather than a rewrite. The pager kept the same public
 methods, and no caller changed.
 
 The pager remains the only thing that touches the file. The pool reaches storage
@@ -25,10 +25,10 @@ Logical against physical
 ------------------------
 ``PagerStats`` counts both, and the distinction became meaningful in Milestone 7:
 
-* ``page_reads`` / ``page_writes`` — **logical**: how many times the engine
+* ``page_reads`` / ``page_writes``, **logical**: how many times the engine
   asked for a page. Unchanged in meaning, so a test asserting "this operation
   reads pages" still measures what it always did.
-* ``physical_reads`` / ``physical_writes`` — **syscalls**. The gap between the
+* ``physical_reads`` / ``physical_writes``, **syscalls**. The gap between the
   two is the pool working, and ``hit_rate`` is that gap as a fraction.
 
 Durability model
@@ -36,7 +36,7 @@ Durability model
 ``write_page`` no longer reaches the operating system at all: it marks a frame
 dirty, and the bytes go out on eviction or on :meth:`sync`.  ``sync`` flushes
 every dirty frame *before* it ``fsync``s, so the contract a caller sees is
-unchanged — after ``sync()`` returns, everything acknowledged is durable.
+unchanged, after ``sync()`` returns, everything acknowledged is durable.
 
 Between syncs, more data now lives only in memory than before, so **the crash
 window is wider**. A process killed after twenty inserts and no sync used to
@@ -49,10 +49,10 @@ Complexity
 =====================  ===============================================
 Operation              Cost
 =====================  ===============================================
-``read_page``          O(1) — a pool hit, or one seek + one read
-``write_page``         O(1) — into a frame; the disk write is deferred
-``allocate_page``      O(1) — free-list pop or file extension
-``free_page``          O(1) — free-list push
+``read_page``          O(1) (a pool hit, or one seek + one read
+``write_page``         O(1)) into a frame; the disk write is deferred
+``allocate_page``      O(1) (free-list pop or file extension
+``free_page``          O(1)) free-list push
 ``sync``               O(dirty frames) writes, then one ``fsync``
 =====================  ===============================================
 
@@ -104,7 +104,7 @@ class PagerStats:
     Cheap to maintain (integer increments) and always on, because they are the
     headline numbers a query plan is judged by.
 
-    ``page_reads`` and ``page_writes`` are **logical** — how many times the
+    ``page_reads`` and ``page_writes`` are **logical**, how many times the
     engine asked. ``physical_reads`` and ``physical_writes`` are syscalls. Before
     Milestone 7 they were the same number; the gap between them now is the
     buffer pool earning its memory.
@@ -155,7 +155,7 @@ class WriteIntent:
     Returned by the ``on_before_write`` hook, and the only thing the pager knows
     about transactions. Two fields, both of which the log needs and neither of
     which the pager could work out on its own: which transaction to file the
-    record under, and — for the *first* write to a page in that transaction —
+    record under, and (for the *first* write to a page in that transaction)
     the bytes to put it back to.
     """
 
@@ -203,7 +203,7 @@ class Pager:
         rather than a silent reinterpretation of the bytes.
 
         ``wal=False`` opens the file without a log, which means no durability
-        guarantee beyond :meth:`sync` — the Milestone 8 behaviour. It exists for
+        guarantee beyond :meth:`sync`, the Milestone 8 behaviour. It exists for
         the benchmark that prices the log and for the page inspector, which
         should be able to look at a damaged file without recovering it first.
         """
@@ -269,8 +269,8 @@ class Pager:
                 self._open_wal()
                 self._recover()
             # After recovery, not before. A crash can leave a file shorter than
-            # its meta page claims — the pool evicted the meta page before the
-            # pages it references — and with a log that is repairable rather
+            # its meta page claims (the pool evicted the meta page before the
+            # pages it references) and with a log that is repairable rather
             # than fatal: redo has an after-image for every page that was ever
             # allocated, because allocating one always wrote it. Checking first
             # would reject a database the very next line could fix.
@@ -371,7 +371,7 @@ class Pager:
 
         Runs before anything else reads a page. The pool is cleared afterwards
         because recovery writes through it and the catalog has not been built
-        yet — starting a fresh session on frames populated by a recovery pass
+        yet, starting a fresh session on frames populated by a recovery pass
         would work, but leaves the pool's counters describing work the user did
         not do.
         """
@@ -403,7 +403,7 @@ class Pager:
         """The LSN a page carries on disk, or ``-1`` if there is no page there.
 
         ``-1`` and not ``0``, and the difference is a bug that took a test
-        against a dictionary to find. **Zero is a real LSN** — it is the first
+        against a dictionary to find. **Zero is a real LSN**. It is the first
         record ever written, which for a brand-new database is the meta page. A
         crash before that page reached the disk leaves nothing to read, and
         answering ``0`` would have redo compare ``0 >= 0``, decide the page was
@@ -432,7 +432,7 @@ class Pager:
 
         Straight to the file, not through the pool: recovery may touch more
         pages than the pool has frames, and admitting each one would evict the
-        last for no benefit — nothing is going to read them again in this pass.
+        last for no benefit. Nothing is going to read them again in this pass.
         The file is also being *extended* here, past what the meta page in
         memory currently claims, so the pool's bounds checks do not apply yet.
         """
@@ -473,10 +473,10 @@ class Pager:
         restarts at the new LSN, but the file still holds the old records at the
         old one. The next open reads them at the wrong position, the LSN in each
         header fails to match where it was found, and the log correctly reads as
-        empty — which it is, in the sense that matters: step 1 already put every
+        empty, which it is, in the sense that matters: step 1 already put every
         page those records describe onto the disk.
 
-        Callers should not need this — :meth:`close` does it, and a real system
+        Callers should not need this, :meth:`close` does it, and a real system
         runs it on a timer or a log-size threshold. It is public because "run a
         checkpoint and watch the log collapse to nothing" is the clearest
         demonstration of what a checkpoint is for.
@@ -520,7 +520,7 @@ class Pager:
         one the power cut off half way, however carefully the pages were
         ordered.
 
-        The dirty pages are deliberately *not* flushed — no-force, in ARIES
+        The dirty pages are deliberately *not* flushed, no-force, in ARIES
         terms. They may still be sitting in the buffer pool when this returns,
         and that is safe because the log has enough to reconstruct them.
         Milestone 1's rule that ``sync`` is what makes data durable stops being
@@ -582,8 +582,8 @@ class Pager:
         Needed after a rollback: the meta page is a *decoded dataclass* held in
         this object, so restoring its bytes underneath does not change
         ``page_count``, ``free_list_head`` or ``next_object_id``. Everything
-        else in the engine reads pages, so everything else recovers for free —
-        this is the one piece of engine state that is not on a page it reads.
+        else in the engine reads pages, so everything else recovers for free.
+        This is the one piece of engine state that is not on a page it reads.
         """
         raw = self._pool.fetch(META_PAGE_ID)
         self._meta = MetaPage.from_bytes(bytes(raw), verify_checksum=self._verify_checksums)
@@ -597,7 +597,7 @@ class Pager:
 
         The check is one-sided, and Milestone 8 is why. A rolled-back
         transaction restores the meta page's ``page_count``, but the file was
-        already extended and cannot be un-extended safely — so a rolled-back
+        already extended and cannot be un-extended safely, so a rolled-back
         allocation leaves trailing pages nothing references. That is also
         exactly the state a crash between extending the file and updating the
         meta page leaves, and it is harmless: the pages are unreachable and the
@@ -673,10 +673,10 @@ class Pager:
         """Fetch a page's bytes; the flag says whether the pool served them.
 
         Callers need the flag because a page that came out of a frame has
-        **already been verified** — see :meth:`read_page`.
+        **already been verified**: see :meth:`read_page`.
 
         Emits ``PageReadEvent`` for *every* logical read, not only the ones that
-        reach the disk — the ``source`` field is what distinguishes them, and it
+        reach the disk. The ``source`` field is what distinguishes them, and it
         has been in the schema since Milestone 1 waiting for this. Emitting only
         on a miss would also break step mode's "run until the next page read",
         which would start skipping cached reads.
@@ -708,8 +708,8 @@ class Pager:
     ) -> None:
         """Hand a page to the pool. The disk write happens later, if at all.
 
-        **Every page change in the engine passes through here** — heap rows,
-        B+ tree nodes, both catalog tables, the meta page — which is what makes
+        **Every page change in the engine passes through here** (heap rows,
+        B+ tree nodes, both catalog tables, the meta page) which is what makes
         this the one place a transaction needs to hook. Milestone 8 installs
         ``on_before_write`` and gets undo for the whole engine at once, with no
         subsystem knowing transactions exist.
@@ -718,7 +718,7 @@ class Pager:
         themselves, earlier: :meth:`allocate_page` and :meth:`free_page` drop the
         page from the pool before writing it, so by the time this runs the old
         bytes are gone. A brand-new page passes ``capture=False`` because it has
-        no "before" at all — undoing its allocation is what restoring the meta
+        no "before" at all, undoing its allocation is what restoring the meta
         page does.
         """
         if len(raw) != self._page_size:
@@ -754,7 +754,7 @@ class Pager:
 
         The order matters and is not the obvious one. The page has to *carry*
         the LSN of the record that describes it, and the record has to *contain*
-        the page — so neither can be built first. The way out is that an LSN is
+        the page, so neither can be built first. The way out is that an LSN is
         a byte offset, which the log can predict before anything is written:
 
             lsn = log.next_lsn        what the record will be
@@ -800,7 +800,7 @@ class Pager:
         **This is the rule the whole milestone rests on.** A page may not reach
         the database file before the log record describing it is at least in the
         OS's hands. Violate it and a crash can leave a change on the pages that
-        the log has no record of — which recovery cannot undo, because it cannot
+        the log has no record of, which recovery cannot undo, because it cannot
         see it.
 
         The pool steals: it evicts dirty pages belonging to transactions that
@@ -833,13 +833,13 @@ class Pager:
 
         **A page served from the pool is not re-verified.** Its checksum was
         checked when it was admitted, or its bytes came from ``Page.to_bytes``,
-        which recomputes the checksum — so a frame's contents are valid by
+        which recomputes the checksum, so a frame's contents are valid by
         construction and re-checking them proves nothing.
 
         That is not a micro-optimisation. Verification is a CRC32 over the whole
         page *plus* ``validate()``, which walks every slot; on a 4 KiB page
         holding a hundred rows that is a hundred ``struct`` unpacks. Paying it
-        per logical read made the buffer pool almost worthless — it removed the
+        per logical read made the buffer pool almost worthless. It removed the
         syscall and left the expensive half in place. Real systems verify at
         admission for exactly this reason.
 
@@ -884,7 +884,7 @@ class Pager:
 
         Capture is deliberately off: the hook exists to save the *previous*
         contents of a page about to change, and a rollback is not a change to be
-        undone — it is the undoing. Capturing here would have the transaction
+        undone, it is the undoing. Capturing here would have the transaction
         save the very page it is restoring.
         """
         self._ensure_open()
@@ -924,8 +924,8 @@ class Pager:
             # this reason.
 
         page = Page.create(page_id, page_type, self._page_size)
-        # A recycled page has a meaningful before-image — it is on the free
-        # list, and rolling back has to put it back there — so capture it
+        # A recycled page has a meaningful before-image (it is on the free
+        # list, and rolling back has to put it back there) so capture it
         # *before* invalidate() discards it. A brand-new page has no before at
         # all: it is past the old page_count and not yet in the file, so undoing
         # its allocation is entirely a matter of restoring the meta page.
@@ -936,7 +936,7 @@ class Pager:
                 "recycled from the free list",
             )
         # Whatever was cached under this id is superseded wholesale. Dropping it
-        # avoids writing bytes that are already dead — a recycled page would
+        # avoids writing bytes that are already dead: a recycled page would
         # otherwise be flushed once with its old contents.
         self._pool.invalidate(page_id)
         self._write_at(page_id, page.to_bytes(), reason="allocated", capture=False)
@@ -957,7 +957,7 @@ class Pager:
         """Return ``page_id`` to the free list.
 
         The page is zeroed and re-typed as ``FREE``, then pushed onto the head
-        of the chain. The file never shrinks — reclaiming trailing pages would
+        of the chain. The file never shrinks, reclaiming trailing pages would
         require proving nothing points at them, which is what ``VACUUM FULL``
         does in PostgreSQL and what ``VACUUM`` does in SQLite.
         """
@@ -1012,7 +1012,7 @@ class Pager:
     def sync(self) -> None:
         """Flush Python buffers and ``fsync`` the file.
 
-        This is the expensive operation in any database — typically hundreds of
+        This is the expensive operation in any database, typically hundreds of
         microseconds on an SSD and milliseconds on spinning rust. Everything
         the WAL does is in service of calling it less often while keeping the
         same guarantee.
@@ -1050,7 +1050,7 @@ class Pager:
         has already pushed to the OS. Reopening the file then goes through
         recovery exactly as it would after a power cut.
 
-        The staged log buffer is dropped too, which is the honest part — records
+        The staged log buffer is dropped too, which is the honest part, records
         that never reached the OS died with the process in a real crash, and
         pretending otherwise would make the demonstration easier than reality.
 
@@ -1071,7 +1071,7 @@ class Pager:
     def close(self) -> None:
         """Checkpoint and close. Idempotent.
 
-        A clean shutdown ends with a checkpoint, which leaves an empty log — so
+        A clean shutdown ends with a checkpoint, which leaves an empty log, so
         the next open finds nothing to recover and says so. That is what makes
         ``RecoveryReport.ran`` mean "the last process did not shut down
         cleanly" rather than "there were records lying around".

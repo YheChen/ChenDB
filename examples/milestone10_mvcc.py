@@ -8,8 +8,8 @@ isolation levels actually differ by, what a delete leaves behind and what
 cleans it up, what two writers do when they collide, what happens when the
 collision is circular, and where the whole thing stops.
 
-Everything is two named sessions on one database handle — ``alice`` and ``bob``
-— because that is how the explorer's two consoles work and because a
+Everything is two named sessions on one database handle (``alice`` and ``bob``
+) because that is how the explorer's two consoles work and because a
 demonstration of concurrency with one participant is not one.
 """
 
@@ -163,7 +163,7 @@ def main() -> int:
             print(f"  visible rows      {db.count('t')}")
             print(f"  versions on disk  {db.version_count('t')}")
             print("\n  The slot is still live and the row still decodes. Only its")
-            print("  xmax says it is gone — because a transaction whose snapshot")
+            print("  xmax says it is gone, because a transaction whose snapshot")
             print("  predates the delete still has to be able to read it.")
 
             with db.in_session("alice"):

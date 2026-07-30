@@ -71,13 +71,13 @@ It is the technique used by essentially every hand-written production parser,
 including SQLite, Clang, TypeScript and Go, because errors can be reported at
 the exact point of failure with the rule name for context. Table-driven
 LALR parsers (PostgreSQL's ``gram.y``, via Bison) handle larger grammars and
-resolve ambiguity mechanically, but produce famously unhelpful messages —
+resolve ambiguity mechanically, but produce famously unhelpful messages,
 "syntax error at or near" is the limit of what a shift-reduce conflict can tell
 you.
 
 Complexity: O(n) in tokens. Each token is consumed once; there is no
 backtracking, only one token of lookahead. Depth is bounded by expression
-nesting, so a pathological ``((((...))))`` could exhaust the Python stack —
+nesting, so a pathological ``((((...))))`` could exhaust the Python stack,
 :data:`MAX_EXPRESSION_DEPTH` turns that into a clean error instead of a crash.
 """
 
@@ -325,7 +325,7 @@ class Parser:
         """Parse every statement in the input.
 
         A trailing semicolon is optional, and consecutive semicolons are
-        tolerated — both are what people actually type.
+        tolerated, both are what people actually type.
         """
         started = time.perf_counter_ns()
         statements: list[Statement] = []
@@ -783,7 +783,7 @@ class Parser:
         )
 
     def _from_clause(self) -> tuple[TableRef, tuple[JoinClause, ...]]:
-        """``a``, ``a, b``, or ``a JOIN b ON …`` — the same thing three ways.
+        """``a``, ``a, b``, or ``a JOIN b ON …``, the same thing three ways.
 
         A comma-separated ``FROM`` is an inner join with its predicate in the
         ``WHERE`` clause, and the planner treats it identically. Supporting both
@@ -828,8 +828,8 @@ class Parser:
     def _join_kind(self) -> JoinKind | None:
         """The join flavour about to be parsed, or ``None`` if this is not one.
 
-        ``OUTER`` is noise everywhere it is allowed — ``LEFT JOIN`` and ``LEFT
-        OUTER JOIN`` are the same thing in the standard — so it is accepted and
+        ``OUTER`` is noise everywhere it is allowed (``LEFT JOIN`` and ``LEFT
+        OUTER JOIN`` are the same thing in the standard) so it is accepted and
         discarded rather than recorded. What is *not* noise is which side the
         keyword names: that is the whole difference between an inner join and an
         outer one, and everything from here to the executor carries it.
@@ -866,7 +866,7 @@ class Parser:
             star = self._node(Star, star_token.span, table=None)
             return self._node(SelectItem, star_token.span, expression=star, alias=None)
 
-        # `u.*` — every column of one table in a join. One token of lookahead is
+        # `u.*`: every column of one table in a join. One token of lookahead is
         # not enough to see it coming, so the qualified reference is parsed and
         # the star recognised after the dot.
         if self._check(TokenType.IDENTIFIER) and self._peek_is_qualified_star():
@@ -889,7 +889,7 @@ class Parser:
             alias = self._identifier_name(alias_token)
             span = span.union(alias_token.span)
         elif self._check(TokenType.IDENTIFIER):
-            # `SELECT age years` — the alias without AS. Accepted because
+            # `SELECT age years`: the alias without AS. Accepted because
             # every dialect does, though AS is clearer.
             alias_token = self._advance()
             alias = self._identifier_name(alias_token)
@@ -901,7 +901,7 @@ class Parser:
         """Two tokens ahead: is this ``ident . *``?
 
         The only place the parser looks past one token, and it is bounded and
-        local — the alternative is a backtracking attempt at an expression,
+        local. The alternative is a backtracking attempt at an expression,
         which would cost the "no backtracking" property the whole design rests
         on for a syntax used in one position.
         """
@@ -921,8 +921,8 @@ class Parser:
             alias = self._identifier_name(alias_token)
             span = span.union(alias_token.span)
         elif self._check(TokenType.IDENTIFIER):
-            # `FROM users u`. Only an identifier can follow a table name here —
-            # every clause that could come next starts with a keyword — so this
+            # `FROM users u`. Only an identifier can follow a table name here (
+            # every clause that could come next starts with a keyword) so this
             # needs no lookahead.
             alias_token = self._advance()
             alias = self._identifier_name(alias_token)

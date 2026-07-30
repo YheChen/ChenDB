@@ -2,7 +2,7 @@
 
     binder.py       resolve names against a schema; ColumnRef -> BoundColumnRef
     expression.py   evaluate an expression against a row, with 3-valued logic
-    operators.py    SeqScan, Filter, Project — open()/next()/close()
+    operators.py    SeqScan, Filter, Project, open()/next()/close()
     controller.py   pause, step and cancel a running query
     engine.py       statement -> plan -> QueryResult
 

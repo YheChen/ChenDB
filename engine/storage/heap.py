@@ -2,7 +2,7 @@
 
 A heap is the default physical representation of a table.  Rows live wherever
 they fit, in no particular order, and are addressed by
-:class:`RecordId` — a ``(page_id, slot_id)`` pair.  PostgreSQL calls the same
+:class:`RecordId`, a ``(page_id, slot_id)`` pair.  PostgreSQL calls the same
 thing a ``ctid``; SQLite has no heap at all, because every table there *is* a
 B+ tree keyed by rowid.
 
@@ -32,7 +32,7 @@ real cost: space freed by deletes in earlier pages is never reused, so a
 delete-heavy workload grows the file without bound.
 
 Real systems keep a *free space map*: PostgreSQL maintains an FSM fork per
-table — itself a tree of per-page free-space bytes — so an insert can find a
+table (itself a tree of per-page free-space bytes) so an insert can find a
 page with room in O(log pages). Milestone 7's buffer pool makes consulting such
 a map cheap enough to be worth it.
 
@@ -41,11 +41,11 @@ Complexity
 =========================  =========================================
 Operation                  Cost
 =========================  =========================================
-``insert``                 O(1) — one page read, one or two writes
-``get(rid)``               O(1) — one page read
-``delete(rid)``            O(1) — one read, one write
+``insert``                 O(1) (one page read, one or two writes
+``get(rid)``               O(1)) one page read
+``delete(rid)``            O(1), one read, one write
 ``scan``                   O(pages) reads, O(rows) work
-``count``                  O(pages) — no cached row count in M1
+``count``                  O(pages). No cached row count in M1
 =========================  =========================================
 
 Every one of those page reads is a syscall until Milestone 7.
@@ -80,7 +80,7 @@ class RecordId:
     Stable across page compaction (the slot directory absorbs the move) but
     **not** across a row moving to a different page. Milestone 5's index will
     store these as leaf payloads, which is why an update that relocates a row
-    has to touch every index — PostgreSQL's HOT optimisation exists to dodge
+    has to touch every index, PostgreSQL's HOT optimisation exists to dodge
     exactly that cost.
     """
 
@@ -338,7 +338,7 @@ class HeapFile:
             page_id = self._pager.read_page(page_id).next_page_id
 
     def count(self) -> int:
-        """Live record count. O(pages) — no cached count exists yet."""
+        """Live record count. O(pages). No cached count exists yet."""
         return sum(
             self._pager.read_page(page_id).live_record_count for page_id in self.page_ids()
         )

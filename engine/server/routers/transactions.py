@@ -19,7 +19,7 @@ honest verb for "do this once".
 Statelessness, and why that is fine here
 ----------------------------------------
 HTTP has no session, so an explicit transaction opened by one request stays open
-across requests until some later request ends it — the state lives on the
+across requests until some later request ends it. The state lives on the
 database handle, not the connection. That is genuinely a footgun for a
 multi-client server, and the reason it is acceptable here is the reason the
 whole workspace design is acceptable: this API serves *one* explorer looking at
@@ -87,7 +87,7 @@ def begin_transaction(
 def commit_transaction(
     managed: DatabaseDep, session: SessionParam = DEFAULT_SESSION
 ) -> TransactionResultResponse:
-    """Commit, unless a statement already failed — then this rolls back.
+    """Commit, unless a statement already failed, then this rolls back.
 
     PostgreSQL's behaviour, and the reason ``action`` reports the *outcome*
     rather than echoing the request: a caller that asked to commit and got a

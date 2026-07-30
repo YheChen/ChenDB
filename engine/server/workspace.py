@@ -14,7 +14,7 @@ therefore wrapped in a :class:`ManagedDatabase` guarding it with a lock.
 
 Diagnostics endpoints follow one rule: **take the lock, copy an immutable
 snapshot, release the lock, then serialize.**  Holding an engine lock across
-JSON encoding — let alone across a socket write — would let a slow client stall
+JSON encoding (let alone across a socket write) would let a slow client stall
 every query. Copying frozen dataclasses instead means a response can never show
 one buffer frame holding two pages, or a page list from two different instants.
 """
@@ -303,7 +303,7 @@ class Workspace:
         deletes anything: committed work survives because its commit record is
         already on the disk, and everything else is what recovery decides.
 
-        This is destructive by design and exists for one reason — the explorer's
+        This is destructive by design and exists for one reason. The explorer's
         recovery view should show recovery *happening*, and there is no honest
         way to do that with a clean shutdown.
         """

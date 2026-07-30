@@ -5,7 +5,7 @@
  *
  * Both views are selectable, and selecting anything highlights the source range
  * it came from. The AST tree is rendered from the flat node list the API
- * returns, reassembled by `children` ids — random access by node_id is what
+ * returns, reassembled by `children` ids, random access by node_id is what
  * makes "find the innermost node containing the cursor" cheap.
  */
 

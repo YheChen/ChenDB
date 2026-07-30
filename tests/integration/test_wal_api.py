@@ -73,7 +73,7 @@ def test_the_log_reports_its_records(seeded: TestClient):
 
 def test_page_images_are_not_shipped(seeded: TestClient):
     """A record carries up to two whole pages. Sending them would be megabytes
-    of base64 that no panel renders — the sizes are what the reader looks at.
+    of base64 that no panel renders, the sizes are what the reader looks at.
     """
     for record in wal(seeded)["records"]:
         assert "before_image" not in record

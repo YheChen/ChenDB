@@ -1,4 +1,4 @@
-# Milestone 15 — the whole engine, in a browser tab
+# Milestone 15: the whole engine, in a browser tab
 
 No server. No backend. Open a link and a Python interpreter downloads, the
 engine's own `.py` files are written into an in-memory filesystem, and the same
@@ -28,7 +28,7 @@ writes. Anyone who can reach a public URL can `CREATE TABLE` and insert until
 the partition fills.
 
 Hosting publicly therefore means building per-visitor workspaces, a reaper, a
-quota and a rate limiter *first* — a milestone of load-bearing work that teaches
+quota and a rate limiter *first*. A milestone of load-bearing work that teaches
 nothing about databases and, done wrong, is on someone's home network.
 
 In a tab, that entire problem does not exist. Every visitor gets a private
@@ -40,8 +40,8 @@ up when a laptop does not.
 ## What made it possible
 
 The constraint enforced since Milestone 1: **the engine imports nothing but the
-standard library.** `struct`, `zlib`, `os`, `time`, `math`, `re`, `threading` —
-that is the whole list, and CI checks it every run by importing the engine on a
+standard library.** `struct`, `zlib`, `os`, `time`, `math`, `re`, `threading`.
+That is the whole list, and CI checks it every run by importing the engine on a
 bare interpreter with nothing installed.
 
 A package with a compiled C extension usually has no wasm build. A stdlib-only
@@ -54,17 +54,17 @@ for itself here.
 
 | | |
 |---|---|
-| `pyodide.asm.wasm` | 9.2 MB — CPython 3.14, compiled |
+| `pyodide.asm.wasm` | 9.2 MB (CPython 3.14, compiled |
 | `python_stdlib.zip` | 2.4 MB |
-| 14 wheels | 2.4 MB — FastAPI, Pydantic and their closure |
-| `chendb-engine.json` | 1.0 MB — 90 `.py` files |
+| 14 wheels | 2.4 MB) FastAPI, Pydantic and their closure |
+| `chendb-engine.json` | 1.0 MB, 90 `.py` files |
 | the app itself | 2.7 MB |
 
 About 23 MB, roughly 8 MB over the wire compressed, cached afterwards.
 
 Every one of those is **self-hosted**. The wheels are resolved as a dependency
-closure out of `pyodide-lock.json` — the same file Pyodide itself resolves
-against — and vendored at build time, so the demo does not go down when
+closure out of `pyodide-lock.json` (the same file Pyodide itself resolves
+against) and vendored at build time, so the demo does not go down when
 somebody else's CDN does, and the wheel set cannot drift from the interpreter
 it was compiled for.
 
@@ -80,7 +80,7 @@ Twelve megabytes has to be cached hard for a cold load to be bearable, and
 `immutable` is only honest if the name changes when the bytes do. With fixed
 names, a browser holding the previous `pyodide.asm.wasm` would keep running the
 old interpreter after an upgrade, and a stale `chendb-engine.json` would run
-last release's engine against this release's UI — a bug with no plausible
+last release's engine against this release's UI. A bug with no plausible
 symptom and no way to reproduce.
 
 One small revalidated request buys correct caching on everything else.
@@ -95,7 +95,7 @@ Worth recording, because each was invisible until the thing actually ran.
 browser at the top of the file, so a bundler sees `node:fs`, `node:vm` and five
 others, externalises them with a warning, and emits bare specifiers the browser
 cannot resolve. The branches are dead in a browser; the imports are not. Fixed
-by not bundling it at all — a `@vite-ignore` dynamic import of the copy we
+by not bundling it at all. A `@vite-ignore` dynamic import of the copy we
 serve.
 
 **A relative base broke the dynamic import.** `--base ./` is what lets one
@@ -107,7 +107,7 @@ Resolving against `document.baseURI` is right in both cases.
 **JavaScript `null` is not Python `None`.** It arrives as a `JsNull` object,
 which fails `is not None` and has no `.encode`. The first request died with
 `AttributeError: 'JsNull' object has no attribute 'encode'`. Asking
-`isinstance(body, str)` — what the value *is*, rather than what it is not —
+`isinstance(body, str)` (what the value *is*, rather than what it is not)
 works however the caller spells "no body".
 
 And one from Milestone 14's spike, which is why that spike happened first:
@@ -122,7 +122,7 @@ Two capability flags, false only here. The mechanism is the one every unbuilt
 feature has used since Milestone 1: `/health` reports what exists, and the UI
 hides the rest instead of letting a button fail.
 
-**`execution_stepping`** — `StepController` pauses an execution on a thread and
+**`execution_stepping`**: `StepController` pauses an execution on a thread and
 resumes it from a later request. A tab has no thread to park it on. The panel
 says so:
 
@@ -130,7 +130,7 @@ says so:
 > build runs the engine inside the browser tab, which has none. Plans and costs
 > below are real; only the stepping is missing.
 
-**`durable_fsync`** — the crash button genuinely works. Abandoning the pager
+**`durable_fsync`**: the crash button genuinely works. Abandoning the pager
 loses the buffer pool, reopening replays the log, and the rows come back:
 `recovered 15 record(s): 0 redone, 13 already current, 0 undone; 2 finished, 0
 interrupted`. What an in-memory filesystem cannot demonstrate is a *power cut*,
@@ -159,7 +159,7 @@ event timeline  103 received, live
 ```
 
 The event stream has no WebSocket in it. A sink subscribed directly to the
-engine's `FanoutSink` hands each record to JavaScript as it is produced — which
+engine's `FanoutSink` hands each record to JavaScript as it is produced, which
 is why Milestone 14 moved reconnection and backoff into the HTTP transport,
 where they are facts about HTTP rather than about the engine.
 
@@ -176,12 +176,12 @@ npm run preview:wasm # both, locally
 `VITE_CHENDB_WASM` selects the entry path and swaps `publicDir`. The WASM
 assets live in `wasm-public/` rather than `public/` because Vite copies
 `publicDir` into *every* build, and the HTTP build has no use for 15 MB of
-interpreter — a mistake made once here, caught by the dev bundle jumping from
+interpreter. A mistake made once here, caught by the dev bundle jumping from
 2.9 MB to 19 MB.
 
 CI builds both, then reads `wasm-manifest.json`, checks every asset it names
 exists and is non-empty, **and that the engine version in it matches the repo**
-— a stale bundle is the one failure that would look like the engine
+. A stale bundle is the one failure that would look like the engine
 misbehaving rather than the build being wrong.
 
 ### Where it is deployed
@@ -197,7 +197,7 @@ megabytes on a `.wasm`; and it serves a project site from `/<repo>/` where
 Vercel serves a root.
 
 The header thing is also the only route to `SharedArrayBuffer`, which needs
-`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` — and
+`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`, and
 `SharedArrayBuffer` is what would give Pyodide real threads, and therefore step
 mode. Not built, but it is the difference between "later" and "never".
 
@@ -216,7 +216,7 @@ mode. Not built, but it is the difference between "later" and "never".
   needs are now possible; every cross-origin resource would have to be
   CORP-tagged, and everything here is same-origin, so this is a real option
   rather than a wish. It, which also means a row-lock
-  wait in the MVCC workspace freezes the tab until it times out — the same
+  wait in the MVCC workspace freezes the tab until it times out. The same
   outcome the HTTP build has for a different reason, documented in
   `docs/milestone-11-dml.md`.
 - **The T14 half is not built.** Real `fsync`, the recovery suite forking and

@@ -16,7 +16,7 @@ table rather than a change to the file format.
         └─ scan chendb_columns for that table_id       → rebuild the Schema
 
 Both lookups are full scans of the catalog. That is O(tables) and O(columns), so
-a database with thousands of tables would notice — which is exactly why real
+a database with thousands of tables would notice, which is exactly why real
 systems index their catalogs (PostgreSQL has ``pg_class_relname_nsp_index``) and
 cache the results aggressively. ChenDB caches in memory per open database, so the
 scans happen once; Milestone 5 makes a real index possible.
@@ -24,7 +24,7 @@ scans happen once; Milestone 5 makes a real index possible.
 Cache coherence is the risk a cache always brings. It is handled by having
 exactly one writer: every mutation goes through this class, which updates the
 cache in the same call that writes the rows. Nothing else may write the system
-tables — enforced by :func:`~engine.catalog.system.is_system_table` rejecting
+tables, enforced by :func:`~engine.catalog.system.is_system_table` rejecting
 them at the SQL layer.
 """
 
@@ -264,7 +264,7 @@ class Catalog:
         """Synthesise a system table's descriptor.
 
         Their schemas are compiled in and their page pointers live in the meta
-        page, so there is no row to read — and therefore no way for a row and a
+        page, so there is no row to read, and therefore no way for a row and a
         bootstrap pointer to disagree.
         """
         meta = self._pager.meta
@@ -517,7 +517,7 @@ class Catalog:
         """A callback that writes a table's new page range back to the catalog.
 
         A heap extends itself when a page fills, and the catalog row recording
-        ``last_page`` must follow — otherwise a reopened database would start its
+        ``last_page`` must follow, otherwise a reopened database would start its
         appends in the middle of the chain. Set on the heap after construction
         because the callback needs the ``TableInfo`` the heap is being built for.
         """
@@ -534,7 +534,7 @@ class Catalog:
 
         Delete-then-insert rather than update-in-place: the heap has no update
         operation, because a row that grows may not fit where it was. The row is
-        fixed-width here, so an in-place update would work — but adding one to the
+        fixed-width here, so an in-place update would work, but adding one to the
         heap for the catalog's sole benefit would be a special case that the
         general update in a later milestone has to unpick.
         """
@@ -611,7 +611,7 @@ class Catalog:
 
         Cached whole rather than per name: ``chendb_indexes`` holds one row per
         index and a database has few, so one scan answers every question about
-        them — including the planner's "any index on this column?", which a
+        them, including the planner's "any index on this column?", which a
         by-name cache could not answer without scanning anyway.
         """
         if self._index_cache is not None:
@@ -663,7 +663,7 @@ class Catalog:
         A ``UNIQUE`` index over a column that already has duplicates fails here,
         after some entries are in the tree.  Without transactions there is no way
         to unwind that cleanly, so the partially built tree is dropped from the
-        catalog cache and its pages are simply abandoned — the same leak
+        catalog cache and its pages are simply abandoned. The same leak
         Milestone 9's WAL exists to close.
         """
         self._require_bootstrap()
@@ -706,7 +706,7 @@ class Catalog:
             # Every version, including ones no current snapshot can see. An
             # index that skipped them would be wrong for a reader whose snapshot
             # *can*, and the index scan re-checks visibility against the payload
-            # it fetches anyway. PostgreSQL's indexes work the same way — an
+            # it fetches anyway. PostgreSQL's indexes work the same way: an
             # index entry says "a version of this key lives here", not "a
             # visible one does", which is why an index-only scan needs the
             # visibility map.
@@ -773,7 +773,7 @@ class Catalog:
         same reason: the tree relocates its own root and the catalog is the only
         thing that remembers where it was. Miss this and the index still answers
         correctly until the database is closed, then comes back rooted at a page
-        that is now an interior node — a bug that would only ever show up after a
+        that is now an interior node. A bug that would only ever show up after a
         restart.
         """
 
@@ -833,8 +833,8 @@ class Catalog:
     def invalidate(self) -> None:
         """Drop every cached thing, so the next read comes from the pages.
 
-        For tests that mutate the catalog behind its back, and — since
-        Milestone 8 — after a rollback, where the pages have changed underneath
+        For tests that mutate the catalog behind its back, and (since
+        Milestone 8) after a rollback, where the pages have changed underneath
         every cached object at once.
 
         The three system heaps go too. They look immutable but are not: a

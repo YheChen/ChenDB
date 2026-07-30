@@ -28,7 +28,7 @@ function node(
   };
 }
 
-/** A plan with no planner metadata — the shape a pre-Milestone-6 plan had. */
+/** A plan with no planner metadata, the shape a pre-Milestone-6 plan had. */
 function plan(root_id: string, nodes: OperatorNodeModel[]): PlanModel {
   return {
     root_id,
@@ -298,7 +298,7 @@ describe("AlternativesPanel", () => {
     expect(screen.getByText("No alternatives")).toBeInTheDocument();
   });
 
-  it("keeps one decision unlabelled — the label would be noise", () => {
+  it("keeps one decision unlabelled. The label would be noise", () => {
     render(<AlternativesPanel plan={COSTED} />);
     expect(screen.queryByText("how to read users")).not.toBeInTheDocument();
   });

@@ -29,8 +29,8 @@
  * ## What it does and does not catch
  *
  * The **milestone rule is general**: user-facing text may not name a numbered
- * milestone at all. It was once looser — a reference in the *past* tense was
- * allowed, and `demoSql.ts` had one on purpose — but a milestone number means
+ * milestone at all. It was once looser, a reference in the *past* tense was
+ * allowed, and `demoSql.ts` had one on purpose, but a milestone number means
  * nothing to somebody using the explorer, and the loose version left the door
  * open to the exact phrasings that went stale. The version badge in `TopBar`
  * says "milestone" without a number and is deliberately still allowed.
@@ -177,7 +177,7 @@ describe("user-facing text", () => {
   });
 
   it("never claims a shipped subsystem is missing", () => {
-    // Not a general rule — see the header. Each of these was true once.
+    // Not a general rule, see the header. Each of these was true once.
     const hits = scan([
       {
         pattern: /\bno buffer pool\b/i,

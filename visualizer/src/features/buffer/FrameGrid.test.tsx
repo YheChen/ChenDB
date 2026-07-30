@@ -4,7 +4,7 @@
  * The grid's whole job is to make the cache legible, so the tests assert the
  * three things that carry meaning: free frames are drawn (so the grid keeps a
  * fixed shape), dirty frames are distinguishable, and the frame eviction will
- * take next is marked — because "which one goes next" is the question the
+ * take next is marked, because "which one goes next" is the question the
  * policy exists to answer.
  */
 
@@ -83,7 +83,7 @@ describe("FrameGrid", () => {
   });
 
   it("marks the frame eviction will take next", () => {
-    // The highest recency rank among resident frames — page 8 here.
+    // The highest recency rank among resident frames, page 8 here.
     render(<FrameGrid pool={pool()} />);
     expect(
       screen.getByRole("listitem", { name: /page 8.*evicted next/ }),

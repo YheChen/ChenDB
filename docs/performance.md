@@ -33,7 +33,7 @@ python benchmarks/trace_overhead.py
 The benchmark inserts 2000 rows and scans them at each trace level, and
 separately measures the guarded and unguarded emit patterns.
 
-Measured on Python 3.14, Apple silicon, APFS on NVMe — 2000 rows, two full
+Measured on Python 3.14, Apple silicon, APFS on NVMe, 2000 rows, two full
 scans, 100 point reads, 40 deletes:
 
 | Level | Time | vs `OFF` | Events | Marginal cost |
@@ -44,8 +44,8 @@ scans, 100 point reads, 40 deletes:
 | `STORAGE` | 0.0549 s | 1.22× | 6 395 | 1.55 µs/event |
 | `VERBOSE` | 0.0546 s | 1.21× | 6 495 | 1.48 µs/event |
 
-`OPERATOR` measuring marginally *faster* than `OFF` is noise, not a finding —
-it emits the same six events as `SUMMARY`, and the difference is under 1%.
+`OPERATOR` measuring marginally *faster* than `OFF` is noise, not a finding.
+It emits the same six events as `SUMMARY`, and the difference is under 1%.
 Operator events start existing in Milestone 3.
 
 And the guard, with tracing off, over 200 000 call sites:
@@ -61,9 +61,9 @@ entire reason every emit in the engine is written behind a flag, and why the
 flags are plain cached booleans rather than an enum comparison.
 
 Retention is capped at `CHENDB_TRACE_CAPACITY` (default 20 000) per database.
-Beyond that the oldest events are dropped and counted — never silently.
+Beyond that the oldest events are dropped and counted, never silently.
 
-## Indexes — Milestone 5
+## Indexes: Milestone 5
 
 `benchmarks/index_vs_scan.py`, 20,000 rows, 4 KiB pages.
 
@@ -81,7 +81,7 @@ Beyond that the oldest events are dropped and counted — never silently.
 A point lookup is **328× faster**; a predicate matching 70% of the table is
 **3.8× slower**. Both come from the same fact: a sequential scan reads every page
 exactly once whatever the predicate, and an index scan reads one heap page per
-matching row — the *same* page repeatedly when matches share it, because there is
+matching row. The *same* page repeatedly when matches share it, because there is
 no buffer pool until Milestone 7.
 
 The crossover is between 5% and 20% selectivity. Milestone 5's planner chooses by
@@ -96,13 +96,13 @@ Two more numbers worth having:
 | Full ordered scan of the index | 35.8 ms for 20,000 entries, no sort |
 
 The build cost is row-by-row insertion, O(n log n). Sorting first and packing
-leaves in one pass — what a real system does — would be O(n) after the sort and
+leaves in one pass (what a real system does) would be O(n) after the sort and
 would leave no wasted space. The ordered scan is free ordering that nothing
 exploits yet: there is no `ORDER BY`.
 
 ---
 
-## The cost model — Milestone 6
+## The cost model: Milestone 6
 
 The constants in `engine/optimizer/cost.py` are **measured for this engine**,
 not copied from PostgreSQL, and the difference is the point. PostgreSQL's
@@ -111,11 +111,11 @@ seventh, because a page read hits the OS cache while a row costs interpreted
 Python.
 
 ```python
-PAGE_COST          = 1.0    # pread + CRC32 over the page — the unit
+PAGE_COST          = 1.0    # pread + CRC32 over the page. The unit
 RANDOM_PAGE_COST   = 1.0    # no buffer pool yet, so locality is nearly free
 CPU_TUPLE_COST     = 0.15   # decode one record
 CPU_PREDICATE_COST = 0.05   # evaluate a predicate on an already-decoded row
-CPU_INDEX_COST     = 0.005  # compare one key inside a node — a memcmp
+CPU_INDEX_COST     = 0.005  # compare one key inside a node, a memcmp
 ```
 
 The fit, from `benchmarks/index_vs_scan.py`:
@@ -129,7 +129,7 @@ The fit, from `benchmarks/index_vs_scan.py`:
 | sequential scan + filter | 4 303 | 81.3 ms | 18.9 |
 
 Near-constant over a 650× range **and the same for both access paths**. The
-second part is what matters — a model that is internally consistent but
+second part is what matters. A model that is internally consistent but
 mis-weights one path against the other picks the wrong plan while looking
 calibrated. That was a real bug here: charging a full `CPU_TUPLE_COST` for
 predicate evaluation double-counted the decode and over-costed a filtered
@@ -144,8 +144,8 @@ The payoff, against the Milestone 5 numbers above:
 ```
 
 `ANALYZE` costs one full scan: 3.2 s over 20,000 rows at 4 KiB pages, building
-an exact distinct-value set per column. A real system samples — PostgreSQL reads
-about 30,000 rows however large the table is — because a full scan to refresh an
+an exact distinct-value set per column. A real system samples (PostgreSQL reads
+about 30,000 rows however large the table is) because a full scan to refresh an
 *estimate* is absurd past a certain size.
 
 Milestone 7's buffer pool makes `RANDOM_PAGE_COST` mean something and will move
@@ -154,7 +154,7 @@ being flat, the model needs recalibrating before the planner can be trusted.
 
 ---
 
-## The buffer pool — Milestone 7
+## The buffer pool: Milestone 7
 
 Measured on the read path, 4 KiB pages:
 
@@ -163,12 +163,12 @@ Measured on the read path, 4 KiB pages:
  CRC32 over the page             103 ns
  build a Page object             249 ns
  pool.fetch (a 4 KiB memcpy)     228 ns
- validate() — walks every slot 13 290 ns   ← 130x the checksum
+ validate(): walks every slot 13 290 ns   ← 130x the checksum
 ```
 
 `Page.validate()` was the entire cost of a page read, and it is bookkeeping:
-one `struct.unpack_from` per slot, about a hundred on a full page. Splitting it —
-O(1) header checks on the read path, the slot walk explicit — plus skipping
+one `struct.unpack_from` per slot, about a hundred on a full page. Splitting it (
+O(1) header checks on the read path, the slot walk explicit) plus skipping
 verification for a page already resident is what made the pool worth having:
 
 ```
@@ -215,7 +215,7 @@ sequential scan in Milestone 6 and is an index scan now.
 
 ---
 
-## Transactions — Milestone 8
+## Transactions: Milestone 8
 
 The undo log sits on the path of **every page write in the engine**, so the
 question is what it costs when it is doing nothing. Measured against a 41 ns
@@ -248,7 +248,7 @@ first-write-wins that is the minority of writes by a wide margin.
 A page is captured the first time it changes and never again, so the log grows
 with *distinct pages touched*. A logical undo log would have held 20,000
 records; this one held 91 snapshots. That ratio is the entire reason whole-page
-snapshots are affordable — see `docs/milestone-08-transactions.md`.
+snapshots are affordable, see `docs/milestone-08-transactions.md`.
 
 ### Rollback
 
@@ -259,16 +259,16 @@ snapshots are affordable — see `docs/milestone-08-transactions.md`.
 | 5,000 | 25 | 27.1 µs |
 | 20,000 | 91 | 111 µs |
 
-Nearly all of the small numbers is fixed overhead — reloading the meta page and
+Nearly all of the small numbers is fixed overhead, reloading the meta page and
 invalidating the catalog and statistics caches. The marginal cost is about 1 µs
 per page: one memory copy plus one write through the buffer pool.
 
-Compare PostgreSQL, where a rollback is O(1) because nothing is undone at all —
+Compare PostgreSQL, where a rollback is O(1) because nothing is undone at all,
 aborted tuples stay in the heap, invisible, until `VACUUM`. That is MVCC paying
 for itself, and it is the trade ChenDB makes in the other direction until
 Milestone 10.
 
-## The write-ahead log — Milestone 9
+## The write-ahead log: Milestone 9
 
 ### What logging costs a write
 
@@ -278,7 +278,7 @@ Milestone 10.
 | insert, logged | 18.7 µs (+30%) |
 
 Every page write now also encodes a record, checksums it, and stamps an LSN into
-the page — and that last one means a second CRC32 pass over the whole page,
+the page, and that last one means a second CRC32 pass over the whole page,
 because the LSN lives inside the range the page checksum covers.
 
 ### What a commit costs
@@ -290,8 +290,8 @@ because the LSN lives inside the range the page checksum covers.
 | **the fsync** | **59.5 µs** | |
 
 That ceiling has **nothing to do with how much work each transaction did**. It is
-the disk, once per commit. Real systems amortise it with **group commit** —
-several concurrent committers sharing one flush — which is meaningless with one
+the disk, once per commit. Real systems amortise it with **group commit** (
+several concurrent committers sharing one flush) which is meaningless with one
 writer and is the obvious first optimisation once Milestone 10 brings a second.
 
 `set_sync_policy(sync_on_commit=False)` exists so this table can be measured, not
@@ -311,7 +311,7 @@ The first working version logged a whole page image per write:
 | insert cost | 25.8 µs | 18.7 µs |
 
 Writing the same page twice in a row produces two records of which only the
-second matters — redo replays them in order and the first is immediately
+second matters, redo replays them in order and the first is immediately
 overwritten. So an append whose predecessor is a **still-staged** update to the
 same page by the same transaction replaces it rather than following it. 98% of
 records in a bulk insert go that way.
@@ -320,7 +320,7 @@ Safe only while staged: once flushed, a page carrying that LSN may already be on
 the disk, and the write-ahead rule guarantees the two windows cannot overlap.
 
 What it does not fix is amplification across flush boundaries. Fixing that means
-logging **deltas** rather than pages, which is what real systems do — see
+logging **deltas** rather than pages, which is what real systems do, see
 `docs/milestone-09-wal.md`.
 
 ### Recovery
@@ -333,7 +333,7 @@ logging **deltas** rather than pages, which is what real systems do — see
 Linear in log size, which is what checkpoint frequency is for. A checkpoint on a
 2.5 MiB log takes 0.2 ms and takes it to zero.
 
-## MVCC — Milestone 10
+## MVCC: Milestone 10
 
 ### Per row, on disk
 
@@ -360,7 +360,7 @@ unpacking rather than a walk of every column.
 | after vacuum | 1,496 ns |
 
 A reader pays for every dead version it walks past. That is the price of never
-blocking a writer, and `OperatorStats.rows_skipped` counts it — a number that
+blocking a writer, and `OperatorStats.rows_skipped` counts it. A number that
 grows and never falls is an overdue vacuum, seen from the plan view.
 
 ### Locking
@@ -373,7 +373,7 @@ grows and never falls is an overdue vacuum, seen from the plan view.
 The second is on the hot path: a transaction updating the same row twice must
 not wait for itself.
 
-## UPDATE and DELETE — Milestone 11
+## UPDATE and DELETE: Milestone 11
 
 2,000 rows, one statement, 4 KiB pages. `pay` is the only column changed and
 only one of the two indexes covers it.
@@ -386,7 +386,7 @@ only one of the two indexes covers it.
 
 Two things fall out of this table.
 
-**Each index costs an update about 65 µs and a delete about 35 µs** — and the
+**Each index costs an update about 65 µs and a delete about 35 µs**: and the
 update pays roughly double because it does a B+ tree *delete and insert* per
 index where the delete does only the delete. That is the true price of the fact
 that an MVCC update moves the row: the entry has to be taken out and put back
@@ -403,7 +403,7 @@ read to fetch the version being replaced".
 ### One quadratic, found by this milestone
 
 `WriteAheadLog.next_lsn` is read once per append and used to compute
-`sum(len(chunk) for chunk in self._buffer)` — O(n) per append, therefore O(n²)
+`sum(len(chunk) for chunk in self._buffer)`: O(n) per append, therefore O(n²)
 across a transaction.
 
 | | 2,000-row `UPDATE`, two indexes |
@@ -413,7 +413,7 @@ across a transaction.
 
 Keeping a running byte total is four lines. The bug had been in place since
 Milestone 9 and never fired, because nothing before this staged thousands of
-records inside one transaction — `insert_many` coalesces consecutive writes to
+records inside one transaction, `insert_many` coalesces consecutive writes to
 the same page, and an update alternates between two pages so it cannot.
 
 `test_the_staged_total_is_tracked_rather_than_recomputed` pins the invariant.
@@ -431,12 +431,12 @@ and had said so, confidently, for two milestones.
 | LSN stamp per page write | a second CRC32 over the page | the LSN is inside the checksum's range, and without it recovery cannot tell an applied change from an unapplied one |
 | One `fsync` per commit | ~60 µs | the only thing that distinguishes a finished transaction from an interrupted one after a power cut |
 | 8-byte tuple header per row | 24% of a small row | a reader that never waits for a writer needs to know which version it is looking at |
-| Materialising an UPDATE/DELETE's matched rows | memory proportional to rows matched | without it the scan reaches versions the statement just wrote — the Halloween problem |
+| Materialising an UPDATE/DELETE's matched rows | memory proportional to rows matched | without it the scan reaches versions the statement just wrote, the Halloween problem |
 | Rewriting every index on an update | ~65 µs per index per row | the row's address changed, and no index knows that until it is told |
 | Visibility check per row scanned | ~330 ns | a dead version has to be walked past, and walking past it is cheaper than blocking |
 | Null bitmap always present | 1 byte per row per 8 columns | branch-free decoding |
 
-The checksum is the expensive one — it touches the whole page. PostgreSQL makes
+The checksum is the expensive one, it touches the whole page. PostgreSQL makes
 it optional (`data_checksums`) for exactly this reason. ChenDB keeps it on
 because a teaching database that silently returns corrupt rows teaches the
 wrong lesson; `Pager(verify_checksums=False)` exists for benchmarking and for
@@ -451,7 +451,7 @@ the inspector.
   reported.
 - **The hexdump is capped** at 8 KiB rendered, with the remainder noted.
 - **Queries are invalidated precisely.** An insert invalidates records, pages
-  and the database summary — not the database *list*.
+  and the database summary, not the database *list*.
 
 ## Where the remaining time goes
 
@@ -472,6 +472,6 @@ findings changes here, and the per-row constant has grown by about a quarter
 because every row now carries a version.
 
 Making this materially faster is not a matter of a better algorithm. It is
-vectorised execution, or a compiled inner loop, or not being in Python — and
+vectorised execution, or a compiled inner loop, or not being in Python, and
 each of those trades the thing this project is for, which is that every line of
 it can be read.

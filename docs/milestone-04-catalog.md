@@ -1,11 +1,11 @@
-# Milestone 4 — Persistent catalog and schema explorer
+# Milestone 4: Persistent catalog and schema explorer
 
 **Status: complete.** Engine version 0.4.0. **File format version 2.**
 
 ## Goal
 
 Replace Milestone 1's single JSON schema page with a real catalog stored as
-ordinary heap tuples — so a database can hold many tables, and adding one is an
+ordinary heap tuples, so a database can hold many tables, and adding one is an
 `INSERT` rather than a change to the file format.
 
 ---
@@ -40,7 +40,7 @@ them from `pg_class.h` at build time; SQLite hardcodes the shape of
 ```
 
 The meta page holds only the two pointers needed to *start* reading. Everything
-else — including where every user table's heap begins — is a row.
+else (including where every user table's heap begins) is a row.
 
 ### One deliberate difference from PostgreSQL
 
@@ -92,7 +92,7 @@ db.heap_for("users")                           # was db.heap
 ```
 
 `/table` became `/tables` and `/records` became `/tables/{table}/records`.
-`TableDescriptor` — the Milestone 1 JSON placeholder — is gone; `TableInfo` from
+`TableDescriptor` (the Milestone 1 JSON placeholder) is gone; `TableInfo` from
 the catalog replaces it.
 
 This is churn, and it is the right kind: the old signatures were only possible
@@ -103,25 +103,25 @@ This is churn, and it is the right kind: the old signatures were only possible
 ## Decisions worth naming
 
 **Column `position` is stored explicitly.** A heap scan returns *physical* order,
-which is not column order — and after a delete lets a slot be reused, the two
+which is not column order, and after a delete lets a slot be reused, the two
 genuinely diverge. `position` is what makes the rebuild correct rather than
 lucky, and `_load_schema` rejects non-contiguous positions as corruption.
 
 **Lookups are cached in memory, per open database.** A miss costs a full scan of
-`chendb_tables` *plus* one of `chendb_columns` — O(tables + columns). Real systems
+`chendb_tables` *plus* one of `chendb_columns`, O(tables + columns). Real systems
 index their catalogs (`pg_class_relname_nsp_index`); ChenDB caches instead, and
 Milestone 5 makes a real index possible. `CatalogLookupEvent.from_cache` makes
 the hit rate visible, and the catalog panel shows it.
 
 **Cache coherence by single writer.** Every mutation goes through `Catalog`,
 which updates the cache in the same call that writes the rows. Nothing else may
-write the system tables — `is_system_table` rejects `chendb_*` at both the SQL
+write the system tables, `is_system_table` rejects `chendb_*` at both the SQL
 and catalog layers, matched on the *prefix* so a future system table is protected
 the moment it is named.
 
 **`last_page` follows the heap.** When a table's heap extends, the
 `chendb_tables` row is rewritten. If it went stale, a reopened database would
-append into the *middle* of the chain — silently, and only for tables big enough
+append into the *middle* of the chain, silently, and only for tables big enough
 to have spilled. Two tests guard it.
 
 **Rewriting that row is delete-then-insert.** The heap has no update operation,
@@ -135,7 +135,7 @@ exact count would cost a write on every insert, which is why PostgreSQL's
 `reltuples` is an *estimate* maintained by `ANALYZE`.
 
 **Table ids start at 100.** Ids 1 and 2 are the system tables; the gap leaves
-room for future system tables — indexes in Milestone 5, sequences, constraints —
+room for future system tables (indexes in Milestone 5, sequences, constraints)
 without renumbering anything already on disk.
 
 ---
@@ -158,7 +158,7 @@ scale, and both are exactly what a catalog index fixes.
 
 ## Tests
 
-33 new catalog tests plus a rewritten persistence suite — **619 Python** (from
+33 new catalog tests plus a rewritten persistence suite, **619 Python** (from
 605), 62 frontend.
 
 | File | Covers |
@@ -169,13 +169,13 @@ scale, and both are exactly what a catalog index fixes.
 
 Four worth naming:
 
-- **`test_column_order_comes_from_position_not_physical_order`** — 20 columns
+- **`test_column_order_comes_from_position_not_physical_order`**: 20 columns
   spanning pages, so physical order genuinely differs from column order.
-- **`test_extending_a_heap_updates_its_catalog_row`** — the silent-corruption
+- **`test_extending_a_heap_updates_its_catalog_row`**: the silent-corruption
   case above.
-- **`test_many_tables_spill_the_catalog_across_pages`** — 40 tables, so the
+- **`test_many_tables_spill_the_catalog_across_pages`**: 40 tables, so the
   catalog's *own* heaps have to chain correctly.
-- **`test_a_lookup_miss_costs_scans_and_a_hit_costs_none`** — proves the cache
+- **`test_a_lookup_miss_costs_scans_and_a_hit_costs_none`**: proves the cache
   does what it claims.
 
 ---
@@ -201,17 +201,17 @@ Four worth naming:
 
 | Limitation | Resolved by |
 |---|---|
-| Catalog lookups are full scans (cached, but cold is O(n)) | M5 — a catalog index |
+| Catalog lookups are full scans (cached, but cold is O(n)) | M5, a catalog index |
 | No `DROP TABLE`, so a heap is never reclaimed | unscheduled; needs the free list plus catalog deletes |
 | No `ALTER TABLE` | unscheduled |
-| Creating a table is not atomic — a crash mid-way can orphan a heap | M9 — the WAL |
+| Creating a table is not atomic (a crash mid-way can orphan a heap | M9) the WAL |
 | Row counts are O(pages) per request | unscheduled; needs `ANALYZE`-style estimates |
 | No joins, so a query still reads one table | needs blocking operators |
 | No schemas/namespaces | unscheduled |
 
 ---
 
-## Next: Milestone 5 — B+ tree indexes and tree visualizer
+## Next: Milestone 5, B+ tree indexes and tree visualizer
 
 **Engine.** A disk-backed B+ tree: point lookup, insert, node split, range scan,
 linked leaves. `CREATE INDEX` starts parsing. Index metadata joins the catalog as

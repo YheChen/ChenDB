@@ -117,7 +117,7 @@ export function ExplorerPage() {
   useEffect(() => write(TABLE_KEY, selectedTable), [selectedTable]);
 
   // Select the first table automatically, and drop a selection whose table has
-  // gone away — otherwise the detail panel shows a stale 404.
+  // gone away, otherwise the detail panel shows a stale 404.
   useEffect(() => {
     if (!catalog.data) return;
     const names = catalog.data.tables.map((table) => table.name);
@@ -129,7 +129,7 @@ export function ExplorerPage() {
 
   // Default to the meta page: it is the most instructive page in the file, and
   // an empty inspector on arrival teaches nothing. Keyed on the database only,
-  // so switching workspaces — or arriving from a click on a B+ tree node —
+  // so switching workspaces (or arriving from a click on a B+ tree node)
   // keeps whatever page is selected.
   useEffect(() => setSelectedPageId(databaseId ? 0 : null), [databaseId]);
 
