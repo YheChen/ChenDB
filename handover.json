@@ -324,11 +324,6 @@
       "why": "The parser refuses LEFT/RIGHT/FULL by name, and it is the most likely thing a visitor tries that does not work. Real engine work: NULL extension, and an outer join constrains the order the planner may join in, so _search_join_order can no longer reorder freely."
     },
     {
-      "item": "Differential testing against SQLite",
-      "status": "not started",
-      "why": "The highest-value CORRECTNESS work left. 1,237 tests were all written by whoever wrote the engine, so they test what its author thought of. Milestone 11 turned up four real bugs by accident, Milestone 12's CI failed on a real staleness on its first run, and six UI strings were wrong for a dozen milestones. A fuzzer comparing random schemas and queries against SQLite would find the semantic corners nobody writes a test for: NULL ordering, integer division, comparison across types."
-    },
-    {
       "item": "T14 as the dev server",
       "status": "waiting on hardware",
       "why": "tailscale up, bind the server, systemd unit. A tailnet IS the auth \u2014 the API has none, so it must never be public. Buys real fsync, the recovery suite forking and SIGKILLing processes, and benchmarks off the laptop."
