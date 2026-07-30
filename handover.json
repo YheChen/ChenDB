@@ -15,9 +15,10 @@
     "pr": "One PR per milestone, opened with `gh pr create`. STANDING AUTHORIZATION from the user: merge each milestone yourself as soon as it is done \u2014 do not ask. Use `gh pr merge N --merge --delete-branch`.",
     "commit_trailer": "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>",
     "pr_body_trailer": "\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)",
-    "versioning": "engine.__version__ and pyproject version track the milestone: 0.N.0 means Milestone N complete. Bump both, plus MILESTONE in engine/server/app.py.",
-    "verified_means": "python -m pytest passes; npm --prefix visualizer test passes; npx tsc -b --noEmit clean; npm run build clean; ruff check clean; AND the change was seen working in the browser via the preview tools (not just asserted in tests).",
-    "honesty_rule": "Features that do not exist are ABSENT from the API and HIDDEN in the UI \u2014 never stubbed, never greyed out. engine/server/app.py:FEATURES drives which visualizer workspace tabs render."
+    "versioning": "engine.__version__ and pyproject version track the milestone: MILESTONE = major * 10 + minor, so 1.6.0 is Milestone 16. Bump BOTH, and nothing else \u2014 engine/server/app.py imports MILESTONE from engine rather than holding its own copy, which is exactly why it stopped drifting. Then: run `make types` in the SAME commit (FastAPI puts the version in the OpenAPI document, and CI diffs the committed copy), update the exact number in tests/integration/test_api.py, and if the milestone added no engine capability add it to MILESTONES_WITHOUT_ENGINE_FEATURES with a reason.",
+    "verified_means": "`make ci` green (lint + ruff format + typecheck + both suites + every example), AND the change seen working in the browser through the preview \u2014 not inferred from a passing test. For the WASM build that means a real browser, because three of Milestone 15's bugs were invisible until it actually ran. Current counts: 1,239 Python tests, 159 frontend tests.",
+    "honesty_rule": "Features that do not exist are ABSENT from the API and HIDDEN in the UI \u2014 never stubbed, never greyed out. engine/server/app.py:FEATURES drives which visualizer workspace tabs render.",
+    "handover": "handover.json goes through a branch and a PR like everything else. Two commits in one session went straight to master; that was a deviation, not the convention. Refresh it as work lands, and ALWAYS before the context window fills \u2014 see the standing instruction to update it and then say it is safe to /compact."
   },
   "commands": {
     "install": "python3 -m venv .venv && .venv/bin/pip install -e '.[server,dev]' && npm --prefix visualizer install",
@@ -45,7 +46,13 @@
     "example_m10": ".venv/bin/python examples/milestone10_mvcc.py",
     "ci": "make ci \u2014 lint, typecheck, both test suites and every example, in CI's order. Run before pushing.",
     "demo_sql": "make demo-sql \u2014 every SQL statement the visualizer's buttons produce, as JSON. Needs node >= 22.6.",
-    "example_m11": ".venv/bin/python examples/milestone11_dml.py"
+    "example_m11": ".venv/bin/python examples/milestone11_dml.py",
+    "wasm": "make wasm \u2014 build the browser-only build and serve it (engine included, no server).",
+    "bundle_engine": "npm --prefix visualizer run bundle:engine \u2014 regenerate wasm-public/ (engine JSON, Pyodide runtime, 14 wheels).",
+    "build_wasm": "npm --prefix visualizer run build:wasm \u2014 the deployed artifact. Writes visualizer/dist (~23 MB).",
+    "examples": "make examples \u2014 run every narrated walkthrough, as CI does.",
+    "example_m13": ".venv/bin/python examples/milestone13_joins.py",
+    "deploy": "Vercel, from vercel.json at the REPO ROOT. Framework preset Other; Root Directory must stay at the repo root because bundle-engine.mjs reads ../engine."
   },
   "status": {
     "milestone_1": {
@@ -57,7 +64,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-16 are merged; master is 1.6.0 and CI is green. Nothing is in progress. The Vercel deployment is LIVE and the browser demo now keeps its databases in IndexedDB. Next by value: differential testing against SQLite (correctness), then outer joins (the most likely thing a visitor tries that does not work).",
+    "next": "Milestones 1-16 are merged; master is 1.6.0 and CI is green. Nothing is in progress, no branch is open. The Vercel deployment is live and the browser demo keeps its databases in IndexedDB, so the demo is a real portfolio piece rather than a toy. RECOMMENDED NEXT: differential testing against SQLite \u2014 see backlog[0] for why the case keeps getting stronger.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
