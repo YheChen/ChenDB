@@ -47,6 +47,7 @@ from engine.parser.ast import (
     FunctionCall,
     InsertStatement,
     IsNullTest,
+    JoinKind,
     Literal,
     SelectItem,
     SelectStatement,
@@ -147,6 +148,9 @@ class BoundJoin:
     binding_name: str
     condition: Expression
     """Bound against the whole scope, so both sides are already flat indices."""
+    kind: JoinKind = JoinKind.INNER
+    """``INNER`` unless the join preserves unmatched rows. The planner's licence
+    to reorder comes from this being ``INNER``, so it has to travel."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1030,7 +1034,13 @@ def bind_select(statement: SelectStatement, catalog: CatalogLike) -> BoundSelect
         condition = bind_expression(clause.on, scope)
         _reject_aggregates(condition, "a JOIN condition")
         _require_predicate(condition, "a JOIN condition")
-        joins.append(BoundJoin(binding_name=entry.binding_name, condition=condition))
+        joins.append(
+            BoundJoin(
+                binding_name=entry.binding_name,
+                condition=condition,
+                kind=clause.kind,
+            )
+        )
 
     where = bind_expression(statement.where, scope) if statement.where else None
     if where is not None:

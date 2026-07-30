@@ -36,7 +36,8 @@ whole appeal: the grammar below can be read straight off the method names.
 
     from_clause    := table_ref { ',' table_ref | join }
     table_ref      := ident [ [ AS ] ident ]
-    join           := [ INNER ] JOIN table_ref ON expr
+    join           := [ INNER | ( LEFT | RIGHT | FULL ) [ OUTER ] ]
+                      JOIN table_ref ON expr
     sort_item      := expr [ ASC | DESC ]
 
     update         := UPDATE ident SET assignment { ',' assignment }
@@ -827,21 +828,21 @@ class Parser:
     def _join_kind(self) -> JoinKind | None:
         """The join flavour about to be parsed, or ``None`` if this is not one.
 
-        Only inner joins are implemented. An outer join is not an inner join
-        with extra rows: it fixes which side may be the outer relation, so the
-        planner can no longer reorder freely, and the executor has to
-        NULL-extend. Both are real work, and refusing by name beats a syntax
-        error that says nothing.
+        ``OUTER`` is noise everywhere it is allowed — ``LEFT JOIN`` and ``LEFT
+        OUTER JOIN`` are the same thing in the standard — so it is accepted and
+        discarded rather than recorded. What is *not* noise is which side the
+        keyword names: that is the whole difference between an inner join and an
+        outer one, and everything from here to the executor carries it.
         """
         if self._match_keyword(Keyword.INNER):
             return JoinKind.INNER
-        if self._check_keyword(Keyword.LEFT, Keyword.RIGHT, Keyword.FULL):
-            side = self._current.keyword
+        if (
+            token := self._match_keyword(Keyword.LEFT, Keyword.RIGHT, Keyword.FULL)
+        ) is not None:
+            self._match_keyword(Keyword.OUTER)
+            side = token.keyword
             assert side is not None
-            self._unsupported(
-                f"{side.value} JOIN is not implemented; an outer join constrains "
-                f"the order the planner may join in, and ChenDB reorders freely"
-            )
+            return JoinKind(side.value)
         if self._check_keyword(Keyword.CROSS):
             self._unsupported("CROSS JOIN is not implemented; write 'FROM a, b'")
         if self._check_keyword(Keyword.JOIN):

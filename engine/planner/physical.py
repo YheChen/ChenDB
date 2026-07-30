@@ -78,6 +78,7 @@ from engine.parser.ast import (
     Expression,
     FunctionCall,
     IsNullTest,
+    JoinKind,
     Literal,
     UnaryOp,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "PhysicalFilter",
     "PhysicalHashJoin",
     "PhysicalIndexScan",
+    "PhysicalJoin",
     "PhysicalLimit",
     "PhysicalNestedLoopJoin",
     "PhysicalNode",
@@ -237,61 +239,105 @@ class PhysicalProject(PhysicalNode):
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalNestedLoopJoin(PhysicalNode):
+class PhysicalJoin(PhysicalNode):
+    """What both join algorithms carry, including which side survives no match.
+
+    ``preserve_left`` and ``preserve_right`` are about the *physical* inputs, not
+    about the ``LEFT`` or ``RIGHT`` a user wrote. The two differ: the planner is
+    free to put either logical side in either position — build side selection is
+    the whole reason it wants to — so ``a LEFT JOIN b`` planned with ``b`` as the
+    physical left is ``preserve_right=True``.
+
+    That is what makes the flags the right representation. An outer join's inputs
+    *may* be swapped, provided the flags swap with them: the output row is
+    identical either way, because :class:`~engine.executor.binder.RowLayout` fixes
+    every column's position by the written order of the ``FROM``. So the cost model
+    keeps its freedom to choose a build side, and only the *order relative to other
+    joins* is constrained.
+    """
+
+    predicate: Expression
+    left: PhysicalNode
+    right: PhysicalNode
+    right_slices: tuple[tuple[int, int], ...] = ()
+    """``(offset, width)`` per table on the right, copied into the left's row."""
+    preserve_left: bool = False
+    """Emit a left row with no partner, NULL-extended."""
+    preserve_right: bool = False
+    """Emit a right row with no partner, NULL-extended."""
+
+    @property
+    def children(self) -> tuple[PhysicalNode, ...]:
+        return (self.left, self.right)
+
+    @property
+    def outer_label(self) -> str:
+        """``LEFT``/``RIGHT``/``FULL`` as the *plan* runs it, or empty.
+
+        Shown in ``EXPLAIN``, and the reason it is here rather than derived from
+        the AST: an outer join whose inputs the planner swapped is genuinely a
+        right join at this node, and a plan display that said ``LEFT`` because the
+        query did would be describing something that is not happening.
+        """
+        if self.preserve_left and self.preserve_right:
+            return "FULL"
+        if self.preserve_left:
+            return "LEFT"
+        if self.preserve_right:
+            return "RIGHT"
+        return ""
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalNestedLoopJoin(PhysicalJoin):
     """For every outer row, scan the inner side. The algorithm of last resort.
 
     Kept because it is the only one that works on *any* predicate. A hash join
     needs an equality to hash; ``a.x < b.y`` has no key, so this is what is left
     — which is why a range join is slow in every engine and not just this one.
+
+    It is also the only one that can do a ``FULL`` join here: see
+    :class:`PhysicalHashJoin`.
     """
-
-    predicate: Expression
-    left: PhysicalNode
-    right: PhysicalNode
-    right_slices: tuple[tuple[int, int], ...] = ()
-    """``(offset, width)`` per table on the right, copied into the left's row."""
-
-    @property
-    def children(self) -> tuple[PhysicalNode, ...]:
-        return (self.left, self.right)
 
     @property
     def detail(self) -> str:
-        return describe_expression(self.predicate)
+        label = f"{self.outer_label} " if self.outer_label else ""
+        return f"{label}{describe_expression(self.predicate)}"
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalHashJoin(PhysicalNode):
+class PhysicalHashJoin(PhysicalJoin):
     """Build a hash table on the left, probe it with the right.
 
     ``left`` is always the build side, and the planner puts the *smaller*
     estimate there — memory is proportional to it, and getting that backwards
     is the difference between a hash table of ten rows and one of ten million.
+
+    Both outer directions work, and neither is free. Preserving the *probe* side
+    is easy: a probe row that finds no bucket is emitted on the spot. Preserving
+    the *build* side needs a set of which build rows were ever matched and a pass
+    over the leftovers after the probe input runs dry — which is why the operator
+    keeps the build rows in insertion order rather than only in buckets.
     """
 
-    predicate: Expression
-    build_key: Expression
-    probe_key: Expression
-    residual: Expression | None
+    build_key: Expression = None  # type: ignore[assignment]
+    probe_key: Expression = None  # type: ignore[assignment]
+    residual: Expression | None = None
     """The rest of the join condition, re-checked after the hash match. Hashing
     handles one equality; ``a.x = b.y AND a.z < b.w`` needs the second term
     evaluated per matching pair."""
-    left: PhysicalNode
-    right: PhysicalNode
-    right_slices: tuple[tuple[int, int], ...] = ()
-    """``(offset, width)`` per table on the right, copied into the left's row."""
-
-    @property
-    def children(self) -> tuple[PhysicalNode, ...]:
-        return (self.left, self.right)
 
     @property
     def detail(self) -> str:
+        label = f"{self.outer_label} " if self.outer_label else ""
         core = (
             f"{describe_expression(self.build_key)} = {describe_expression(self.probe_key)}"
         )
-        return core + (
-            f" AND {describe_expression(self.residual)}" if self.residual else ""
+        return (
+            label
+            + core
+            + (f" AND {describe_expression(self.residual)}" if self.residual else "")
         )
 
 
@@ -449,18 +495,26 @@ def plan_select(
     }
     stale = any(database.statistics.is_stale(scan.table_name) for scan in scans)
 
-    # WHERE and every ON, in one pool. For an inner join the two are
+    # WHERE and every *inner* ON, in one pool. For an inner join the two are
     # interchangeable — `a JOIN b ON p` and `a, b WHERE p` mean the same thing —
     # and merging them is what lets a condition written as an ON end up pushed
     # down to a scan, or a condition written in the WHERE become a join key.
+    #
+    # For an outer join none of that holds, and the difference is not subtle.
+    # `a LEFT JOIN b ON a.id = b.id AND b.y > 5` keeps every row of `a`; the same
+    # predicate in the WHERE throws away the NULL-extended ones. So an outer
+    # join's ON stays *at* its join, and never enters this pool — which is also
+    # why it cannot be pushed down to a scan or pulled up into a filter.
+    steps = _join_steps(rewritten.plan)
     predicate = _predicate_of(rewritten.plan)
     conjuncts = _split_conjunction(predicate) if predicate is not None else []
-    for join in _find_joins(rewritten.plan):
-        conjuncts.extend(_split_conjunction(join.predicate))
+    for step in steps:
+        if step.kind is JoinKind.INNER:
+            conjuncts.extend(_split_conjunction(step.on))
 
     namer = _Namer()
     joined, alternatives, handled = _plan_joins(
-        scans, conjuncts, database, stats_by_table, options, namer
+        scans, conjuncts, steps, database, stats_by_table, options, namer
     )
 
     residual = _rebuild_conjunction(
@@ -510,9 +564,64 @@ class _Relation:
         return self.node.total_cost
 
 
+@dataclass(frozen=True, slots=True)
+class _Step:
+    """One ``JOIN b ON …`` in the order it was written."""
+
+    kind: JoinKind
+    on: Expression
+    position: int
+    """Which scan is on the right of this join."""
+
+
+def _join_steps(plan: LogicalNode) -> list[_Step]:
+    """The join chain in *written* order.
+
+    :func:`build_logical_plan` emits a left-deep chain in written order, and
+    :func:`_find_joins` walks parents before children — so the outermost join
+    comes back first and reversing gives the order the user typed. That order is
+    what an outer join constrains, so it has to be recoverable.
+    """
+    steps: list[_Step] = []
+    for join in reversed(_find_joins(plan)):
+        right = join.right
+        # Left-deep by construction: the right of every join is a single scan.
+        assert isinstance(right, LogicalScan), "the join chain is not left-deep"
+        steps.append(_Step(join.kind, join.predicate, right.position))
+    return steps
+
+
+def _null_supplied(steps: list[_Step]) -> frozenset[int]:
+    """Scan positions that an outer join can NULL-extend.
+
+    A predicate on one of these must **not** be pushed below the join. Consider
+    ``a LEFT JOIN b ON a.id = b.id WHERE b.y > 5``: pushed to ``b``'s scan and
+    consumed, the surviving ``a`` rows come back NULL-extended, when the WHERE
+    should have rejected them. Kept above the join it is correct, and it rejects
+    them for free — ``NULL > 5`` is NULL, which is not TRUE.
+
+    Pushing to the *preserved* side stays legal and still happens, which is what
+    keeps ``a LEFT JOIN b WHERE a.x = 5`` fast.
+
+    ``RIGHT`` is why this is computed by walking rather than read off one step:
+    it null-extends everything accumulated to its left, which is every table
+    written before it.
+    """
+    nullable: set[int] = set()
+    seen: list[int] = [0]
+    for step in steps:
+        if step.kind.preserves_left:
+            nullable.add(step.position)
+        if step.kind.preserves_right:
+            nullable.update(seen)
+        seen.append(step.position)
+    return frozenset(nullable)
+
+
 def _plan_joins(
     scans: list[LogicalScan],
     conjuncts: list[Expression],
+    steps: list[_Step],
     database: Database,
     stats_by_table: dict[str, TableStatistics],
     options: PlannerOptions,
@@ -525,18 +634,28 @@ def _plan_joins(
 
     Predicate pushdown happens first and is not a choice: a conjunct that names
     one table only is applied at that table's scan, where it shrinks the input
-    to every join above it. Pushing it down can never be worse, which is why it
-    is a *rewrite* rather than a costed alternative — the classic example of the
-    difference between the two.
+    to every join above it. Pushing it down can never be worse — *unless* the
+    table can be NULL-extended by an outer join above, which is what
+    :func:`_null_supplied` excludes.
+
+    Order is then a search over the inner-join segments only. See
+    :func:`_plan_chain`.
     """
     alternatives: list[Alternative] = []
-    relations: list[_Relation] = []
+    leaves: dict[int, _Relation] = {}
     handled: set[int] = set()
+    protected = _null_supplied(steps)
 
     for position, scan in enumerate(scans):
-        mine = [
-            index for index, term in enumerate(conjuncts) if _tables_of(term) == {position}
-        ]
+        mine = (
+            []
+            if position in protected
+            else [
+                index
+                for index, term in enumerate(conjuncts)
+                if _tables_of(term) == {position}
+            ]
+        )
         chosen, considered = _choose_access_path(
             scan,
             [(index, conjuncts[index]) for index in mine],
@@ -564,20 +683,138 @@ def _plan_joins(
             )
             handled.update(leftover)
 
-        relations.append(_Relation(frozenset({position}), node, frozenset()))
+        leaves[position] = _Relation(frozenset({position}), node, frozenset())
 
-    if len(relations) == 1:
-        return relations[0].node, alternatives, frozenset(handled)
+    if len(leaves) == 1:
+        return leaves[0].node, alternatives, frozenset(handled)
 
     joinable = [
         index
         for index, term in enumerate(conjuncts)
         if index not in handled and len(_tables_of(term)) > 1
     ]
-    best = _search_join_order(
-        relations, conjuncts, joinable, scans, stats_by_table, namer, alternatives
+    best = _plan_chain(
+        leaves, steps, conjuncts, joinable, scans, stats_by_table, namer, alternatives
     )
     return best.node, alternatives, frozenset(handled) | best.handled
+
+
+def _plan_chain(
+    leaves: dict[int, _Relation],
+    steps: list[_Step],
+    conjuncts: list[Expression],
+    joinable: list[int],
+    scans: list[LogicalScan],
+    stats_by_table: dict[str, TableStatistics],
+    namer: _Namer,
+    alternatives: list[Alternative],
+) -> _Relation:
+    """Reorder the inner joins; run the outer ones where they were written.
+
+    **An outer join is a barrier.** Walking the chain left to right, consecutive
+    inner joins accumulate into a *segment* that the System-R search may order
+    however it likes. An outer join closes the segment, runs at that point with
+    its own ``ON``, and the result becomes one opaque relation that the next
+    segment's search sees as a single input.
+
+    Opaque is exactly the right amount of freedom, and it falls out for free.
+    The search can *commute* that relation with others — an inner join's two
+    inputs may be swapped, so joining ``c`` to ``(a ⟕ b)`` either way round is
+    sound. It cannot *re-associate* into it, because the relation is one item in
+    the search's world and there is nothing inside to reach: it can never build
+    ``a ⟕ (b ⨝ c)`` from ``(a ⟕ b) ⨝ c``, and those are genuinely different
+    queries.
+
+    **What this gives up**, stated rather than hidden: an inner join written after
+    an outer one cannot move before it, even where that would be legal and
+    cheaper. The general treatment is PostgreSQL's — a ``SpecialJoinInfo`` per
+    outer join carrying ``min_lefthand`` and ``min_righthand`` relation sets, so
+    the search can prove a particular reordering safe by set containment rather
+    than assuming it is not. That is the right answer for a planner that must be
+    fast on twelve-table queries. Here it would be a large amount of machinery to
+    recover orderings for a shape — an outer join with inner joins after it — that
+    the cost model cannot yet estimate well anyway, and the honest version of "we
+    do not reorder across an outer join" is one sentence in ``EXPLAIN``.
+    """
+    result: _Relation | None = None
+    segment: list[int] = [0]
+
+    for step in steps:
+        if step.kind is JoinKind.INNER:
+            segment.append(step.position)
+            continue
+
+        left = _plan_segment(
+            leaves,
+            segment,
+            result,
+            conjuncts,
+            joinable,
+            scans,
+            stats_by_table,
+            namer,
+            alternatives,
+        )
+        result = _join(
+            left,
+            leaves[step.position],
+            conjuncts,
+            joinable,
+            scans,
+            stats_by_table,
+            namer,
+            kind=step.kind,
+            on=step.on,
+        )
+        alternatives.append(
+            Alternative(
+                description=(
+                    f"{_order_of(result.node)} — an outer join runs where it was "
+                    f"written, so the search may not reorder across it"
+                ),
+                access_path=result.node.node_type,
+                cost=result.node.estimated,
+                chosen=True,
+                decision="what order to join in",
+            )
+        )
+        segment = []
+
+    return _plan_segment(
+        leaves,
+        segment,
+        result,
+        conjuncts,
+        joinable,
+        scans,
+        stats_by_table,
+        namer,
+        alternatives,
+    )
+
+
+def _plan_segment(
+    leaves: dict[int, _Relation],
+    segment: list[int],
+    seeded: _Relation | None,
+    conjuncts: list[Expression],
+    joinable: list[int],
+    scans: list[LogicalScan],
+    stats_by_table: dict[str, TableStatistics],
+    namer: _Namer,
+    alternatives: list[Alternative],
+) -> _Relation:
+    """One run of inner joins, ordered freely, optionally onto a fixed relation."""
+    relations = ([seeded] if seeded is not None else []) + [
+        leaves[position] for position in segment
+    ]
+    if not relations:  # pragma: no cover - a step always leaves something to join
+        raise AssertionError("a join segment cannot be empty")
+    if len(relations) == 1:
+        return relations[0]
+    return _search_join_order(
+        relations, conjuncts, joinable, scans, stats_by_table, namer, alternatives
+    )
 
 
 def _search_join_order(
@@ -694,8 +931,21 @@ def _join(
     scans: list[LogicalScan],
     stats_by_table: dict[str, TableStatistics],
     namer: _Namer,
+    *,
+    kind: JoinKind = JoinKind.INNER,
+    on: Expression | None = None,
 ) -> _Relation:
-    """The cheaper of a hash join and a nested loop, for one pair of subsets."""
+    """The cheaper of a hash join and a nested loop, for one pair of subsets.
+
+    ``kind`` and ``on`` are supplied only for an outer join, whose predicate comes
+    from its own ``ON`` rather than from the shared pool — that separation is the
+    whole reason an outer join's condition behaves differently from a ``WHERE``.
+
+    ``left`` is the physical left, and for an outer join it is the *preserved*
+    side as written, because :func:`_plan_chain` hands the sides over in written
+    order. If a later change lets the two be swapped for a cheaper build side, the
+    preserve flags must swap with them — see :class:`PhysicalJoin`.
+    """
     tables = left.tables | right.tables
     applicable = [
         index
@@ -706,13 +956,31 @@ def _join(
         and not _tables_of(conjuncts[index]) <= left.tables
         and not _tables_of(conjuncts[index]) <= right.tables
     ]
-    predicate = _rebuild_conjunction([conjuncts[index] for index in applicable])
+    if kind.is_outer:
+        # An outer join takes its own ON and nothing else. A pooled conjunct
+        # applied here would be a WHERE evaluated *before* NULL-extension, which
+        # is the one thing an outer join must not do.
+        applicable = []
+        predicate = on
+    else:
+        predicate = _rebuild_conjunction([conjuncts[index] for index in applicable])
 
     slices = tuple(
         (scans[position].offset, len(scans[position].schema))
         for position in sorted(right.tables)
     )
-    matches = _join_cardinality(left, right, applicable, conjuncts, scans, stats_by_table)
+    # The join's own conditions: pooled conjuncts for an inner join, the ON's
+    # own terms for an outer one, which are never in the pool.
+    costed = (
+        _split_conjunction(predicate)
+        if kind.is_outer and predicate is not None
+        else [conjuncts[index] for index in applicable]
+    )
+    matches = _join_cardinality(left, right, costed, scans, stats_by_table, kind=kind)
+    preserving = {
+        "preserve_left": kind.preserves_left,
+        "preserve_right": kind.preserves_right,
+    }
 
     if predicate is None:
         # A cross product. Not an error — `FROM a, b` with no condition means
@@ -724,10 +992,15 @@ def _join(
             left=left.node,
             right=right.node,
             right_slices=slices,
+            **preserving,
         )
         return _Relation(tables, node, left.handled | right.handled | frozenset(applicable))
 
-    keys = _equijoin_keys(applicable, conjuncts, left.tables)
+    keys = (
+        _equijoin_keys(applicable, conjuncts, left.tables)
+        if not kind.is_outer
+        else (_outer_equijoin_keys(predicate, left.tables))
+    )
     nested = PhysicalNestedLoopJoin(
         node_id=namer.next("nestloop"),
         estimated=nested_loop_join_cost(left.rows, right.rows, matches=matches),
@@ -735,14 +1008,25 @@ def _join(
         left=left.node,
         right=right.node,
         right_slices=slices,
+        **preserving,
     )
     best: PhysicalNode = nested
 
     if keys is not None:
         build_key, probe_key, used = keys
-        residual = _rebuild_conjunction(
-            [conjuncts[index] for index in applicable if index != used]
-        )
+        if kind.is_outer:
+            # An outer join's terms come from its own ON, which was never in the
+            # pool — so the residual is the rest of *that*, not the rest of
+            # `applicable` (which is empty here, and would silently drop
+            # `ON a.id = b.id AND b.y > 5`'s second term).
+            terms = _split_conjunction(predicate)
+            residual = _rebuild_conjunction(
+                [term for index, term in enumerate(terms) if index != used]
+            )
+        else:
+            residual = _rebuild_conjunction(
+                [conjuncts[index] for index in applicable if index != used]
+            )
         hashed = PhysicalHashJoin(
             node_id=namer.next("hashjoin"),
             estimated=hash_join_cost(left.rows, right.rows, matches=matches),
@@ -752,12 +1036,28 @@ def _join(
             residual=residual,
             left=left.node,
             right=right.node,
+            **preserving,
             right_slices=slices,
         )
         if hashed.total_cost < nested.total_cost:
             best = hashed
 
     return _Relation(tables, best, left.handled | right.handled | frozenset(applicable))
+
+
+def _outer_equijoin_keys(
+    predicate: Expression, left_tables: frozenset[int]
+) -> tuple[Expression, Expression, int] | None:
+    """The hashable equality inside an outer join's ``ON``, if there is one.
+
+    Separate from :func:`_equijoin_keys` only because that one indexes into the
+    shared conjunct pool and an outer join's terms are never in it. The returned
+    position indexes the ``ON``'s own conjuncts, which is what the caller needs to
+    rebuild the residual — and nothing marks an outer ``ON`` as *handled*, because
+    it was never a pool entry that could be applied twice.
+    """
+    terms = _split_conjunction(predicate)
+    return _equijoin_keys(list(range(len(terms))), terms, left_tables)
 
 
 def _equijoin_keys(
@@ -792,10 +1092,11 @@ def _equijoin_keys(
 def _join_cardinality(
     left: _Relation,
     right: _Relation,
-    applicable: list[int],
-    conjuncts: list[Expression],
+    terms: list[Expression],
     scans: list[LogicalScan],
     stats_by_table: dict[str, TableStatistics],
+    *,
+    kind: JoinKind = JoinKind.INNER,
 ) -> float:
     """How many rows the join is expected to produce.
 
@@ -803,20 +1104,36 @@ def _join_cardinality(
     above this one, so an error here compounds up the tree rather than staying
     put. Two tables joined 10x too high makes a three-table plan 10x wrong and a
     four-table plan 100x.
+
+    ``terms`` are the join's own conditions, whatever they came from. It used to
+    take positions into the shared conjunct pool, and an outer join has none —
+    which quietly turned every outer join into a *cross product* for costing
+    purposes: ``a LEFT JOIN b ON a.id = b.aid`` over 60 and 300 rows was estimated
+    at 18,000 instead of 90, because the equality it joins on was not in the list
+    the estimator was reading from.
+
+    An outer join also has a **floor**, which an inner join does not: every
+    preserved row appears whether it matched or not. Without it a selective
+    ``LEFT JOIN`` is estimated below its own left input, which is not merely
+    imprecise but impossible. PostgreSQL clamps the same way in
+    ``calc_joinrel_size_estimate``.
     """
     product = max(left.rows, 1.0) * max(right.rows, 1.0)
-    if not applicable:
-        return product
-
-    selectivity = 1.0
-    for index in applicable:
-        term = conjuncts[index]
-        equality = isinstance(term, BinaryOp) and term.operator is BinaryOperator.EQ
+    for term in terms:
         involved = sorted(_tables_of(term))
+        if len(involved) < 2:
+            continue  # single-table: a filter's selectivity, not a join's
+        equality = isinstance(term, BinaryOp) and term.operator is BinaryOperator.EQ
         left_stats = stats_by_table[scans[involved[0]].table_name]
         right_stats = stats_by_table[scans[involved[-1]].table_name]
-        selectivity *= join_selectivity(left_stats, right_stats, equality=equality)
-    return max(product * selectivity, 1.0)
+        product *= join_selectivity(left_stats, right_stats, equality=equality)
+
+    floor = 1.0
+    if kind.preserves_left:
+        floor = max(floor, left.rows)
+    if kind.preserves_right:
+        floor = max(floor, right.rows)
+    return max(product, floor)
 
 
 def _record_join_alternatives(
@@ -865,11 +1182,17 @@ def _record_join_alternatives(
 
 
 def _order_of(node: PhysicalNode) -> str:
-    """``users ⨝ orders ⨝ items`` — the order the plan actually joins in."""
+    """``users ⨝ orders ⨝ items`` — the order the plan actually joins in.
+
+    An outer join is spelled out rather than shown as ``x``, because "the order it
+    joins in" is the one thing an outer join constrains and a display that hid the
+    flavour would be reporting a plan that is not running.
+    """
     if isinstance(node, PhysicalSeqScan | PhysicalIndexScan):
         return node.table_name
-    if isinstance(node, PhysicalNestedLoopJoin | PhysicalHashJoin):
-        return f"{_order_of(node.left)} x {_order_of(node.right)}"
+    if isinstance(node, PhysicalJoin):
+        operator = f" {node.outer_label} " if node.outer_label else " x "
+        return f"{_order_of(node.left)}{operator}{_order_of(node.right)}"
     if node.children:
         return _order_of(node.children[0])
     return "?"  # pragma: no cover
