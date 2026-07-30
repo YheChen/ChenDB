@@ -273,3 +273,48 @@ def test_no_statement_hardcodes_a_column_the_fixture_does_not_have(
     assert any(
         not column["nullable"] and not column["primary_key"] for column in columns
     ), "a NOT NULL column is what 'break it half-way' violates"
+
+
+# -- the browser build's Python ---------------------------------------------
+
+
+def test_the_wasm_bootstrap_agrees_with_the_engine_on_the_format_version():
+    """The number the browser build stamps into IndexedDB.
+
+    Persisted databases are binary files with a version in their meta page, so
+    a format bump makes a visitor's stored bytes unopenable. The browser build
+    stamps this number alongside them and clears the store when it moves —
+    which only works if the number really is the engine's.
+
+    Read out of the source rather than imported, because importing
+    ``wasmBootstrap`` needs FastAPI mounted at ``/app`` under Pyodide.
+    """
+    from engine.storage.constants import FORMAT_VERSION
+
+    source = (REPO_ROOT / "visualizer" / "src" / "lib" / "wasmBootstrap.py").read_text()
+
+    assert "from engine.storage.constants import FORMAT_VERSION" in source, (
+        "the browser build must take the format version from the engine, not "
+        "hardcode it — a copy would silently stop matching"
+    )
+    assert 'return f"{FORMAT_VERSION}"' in source
+    assert FORMAT_VERSION >= 5, "sanity: the version only ever goes up"
+
+
+def test_the_wasm_bootstrap_closes_handles_before_it_is_persisted():
+    """Persisting stores the *filesystem*, not the buffer pool.
+
+    A page still in the pool is not on the filesystem, so syncing without
+    closing would store whatever happened to be written through — the state
+    recovery exists to repair, and not what someone who typed a statement and
+    closed the tab is entitled to.
+    """
+    source = (REPO_ROOT / "visualizer" / "src" / "lib" / "wasmBootstrap.py").read_text()
+    assert "def close() -> None:" in source
+    assert "workspace.close_all()" in source
+
+    transport = (REPO_ROOT / "visualizer" / "src" / "lib" / "wasmTransport.ts").read_text()
+    # The order is the whole point: close, then syncfs.
+    close_at = transport.index("bootstrap.close();")
+    sync_at = transport.index("FS.syncfs(false", close_at)
+    assert close_at < sync_at, "close() must run before the sync, not after"

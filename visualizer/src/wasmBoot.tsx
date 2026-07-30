@@ -7,11 +7,15 @@
  * "cannot reach the engine" — would be technically fine and read as broken.
  */
 
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "./App";
 import { setTransport } from "./lib/transport";
-import { createWasmTransport, type BootProgress } from "./lib/wasmTransport";
+import {
+  clearStoredData,
+  createWasmTransport,
+  type BootProgress,
+} from "./lib/wasmTransport";
 
 function Booting({ progress }: { progress: BootProgress }) {
   return (
@@ -38,12 +42,35 @@ function Booting({ progress }: { progress: BootProgress }) {
 }
 
 function Failed({ error }: { error: unknown }) {
+  /**
+   * The escape hatch, and the reason persistence needs one.
+   *
+   * Databases now survive a refresh, which means a bad one survives too. A
+   * visitor whose store cannot be opened would otherwise have a permanently
+   * broken page and no way to know it is fixable — worse than a demo that
+   * forgets everything. So the failure screen offers the fix rather than
+   * describing it.
+   */
+  const [clearing, setClearing] = useState(false);
+
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-3 px-6 font-mono">
       <p className="text-sm text-red-500">The engine did not start.</p>
       <p className="text-muted max-w-lg text-center text-[11px]">{String(error)}</p>
-      <p className="text-muted text-[11px]">
-        This build needs WebAssembly and about 15 MB of download.
+      <button
+        type="button"
+        disabled={clearing}
+        className="rounded border border-[var(--border-subtle)] px-3 py-1.5 text-[11px] hover:bg-[var(--surface-sunken)] disabled:opacity-50"
+        onClick={() => {
+          setClearing(true);
+          void clearStoredData().then(() => window.location.reload());
+        }}
+      >
+        {clearing ? "Clearing…" : "Clear saved databases and reload"}
+      </button>
+      <p className="text-muted max-w-lg text-center text-[11px]">
+        This build needs WebAssembly and about 15 MB of download. Your databases
+        are stored in this browser only — nothing is uploaded anywhere.
       </p>
     </div>
   );
@@ -67,8 +94,9 @@ export async function boot(root: Root): Promise<void> {
     setTransport(transport);
     // A teaching demo whose engine cannot be poked at from the console is
     // missing the point. `chendb.request("/health")` from devtools reaches the
-    // same ASGI app every panel does.
-    (window as unknown as { chendb: unknown }).chendb = transport;
+    // same ASGI app every panel does, and `chendb.clearStoredData()` is the
+    // escape hatch for anyone who has wedged their own store.
+    Object.assign(window, { chendb: Object.assign(transport, { clearStoredData }) });
     root.render(
       <StrictMode>
         <App />

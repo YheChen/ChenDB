@@ -21,6 +21,7 @@ the UI until the engine behind it exists.
 | 13 | Joins, `GROUP BY`, aggregates, `ORDER BY`, `LIMIT` | Join trees, grouped planner decisions | **done** |
 | 14 | — (a transport seam, so the app can carry the engine) | Same UI, no server required | **done** |
 | 15 | — (the engine, compiled to WebAssembly) | The whole explorer in a browser tab, no backend | **done** |
+| 16 | — (deployment and persistence) | Databases survive a refresh, kept in IndexedDB | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete —
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -33,7 +34,7 @@ integration, which is a guarantee about the other eleven — see
 entries.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-15-wasm.md`.
+the newest is `docs/milestone-16-persistence.md`.
 
 ## What each milestone adds to the file format
 
@@ -50,6 +51,7 @@ the newest is `docs/milestone-15-wasm.md`.
 | 11 | — | — (an update writes a second version through the M10 header; nothing new on disk) |
 | 12 | — | — (nothing runs; everything is checked) |
 | 13 | — | — (joins are a planner and executor change; the file format is untouched) |
+| 16 | — | — (IndexedDB stores the same bytes; a page keeps the checksum it was written with) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 

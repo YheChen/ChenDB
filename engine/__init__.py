@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -94,7 +94,7 @@ and would have become ``- 2`` here — the exceptions are named in
 :data:`MILESTONES_WITHOUT_ENGINE_FEATURES`. Naming them keeps the assertion
 exact and makes skipping one a decision somebody had to write down."""
 
-MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15})
+MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15, 16})
 """Milestones that shipped no new engine capability, and why.
 
 * **12** — continuous integration, and a guard that runs every demo button.
@@ -103,6 +103,10 @@ MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15})
 * **15** — that build, shipped. The engine gained nothing: the same ``.py``
   files run, unmodified, in a browser tab. Being *deployable* somewhere new is
   not a thing a database can do.
+* **16** — deployment and persistence for that build: Vercel, versioned cache
+  paths, and the browser workspace backed by IndexedDB. *Where* the bytes are
+  kept is not a capability either — the file format is byte-identical, and a
+  page written in the browser has the same checksum it would on disk.
 """
 
 __all__ = [

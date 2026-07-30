@@ -34,6 +34,7 @@ from engine.errors import ChenDBError
 from engine.server import app as app_module
 from engine.server.config import ServerConfig
 from engine.server.mappers import trace_record_to_api
+from engine.storage.constants import FORMAT_VERSION
 
 # --------------------------------------------------------------------------
 # 1. Threads
@@ -90,12 +91,55 @@ _app = _create_app()
 _lifespan: Any = None
 
 
+#: What the persisted workspace was written by. A database is a *binary* file
+#: with a version in its meta page, so a format bump makes yesterday's stored
+#: bytes unopenable — and an unopenable database in IndexedDB is a demo that is
+#: permanently broken for that visitor, with no way for them to know why.
+#: JavaScript reads this at boot and clears the store when it does not match.
+STAMP = Path("/workspace/.chendb-format")
+
+
+def format_version() -> str:
+    """``engine-format`` marker for the persisted workspace.
+
+    The *format* version, not the engine version: 1.5.0 to 1.6.0 need not
+    change a single byte on disk, and clearing a visitor's databases because
+    the UI changed would be gratuitous.
+    """
+    return f"{FORMAT_VERSION}"
+
+
+def stored_version() -> str:
+    """What is already in the store, or ``""`` if nothing is."""
+    try:
+        return STAMP.read_text().strip()
+    except OSError:
+        return ""
+
+
+def stamp() -> None:
+    STAMP.write_text(format_version())
+
+
 async def start() -> str:
     """Enter the app's lifespan. Returns a one-line banner for the console."""
     global _lifespan
     _lifespan = _app.router.lifespan_context(_app)
     await _lifespan.__aenter__()
+    stamp()
     return f"ChenDB {engine.__version__} (milestone {engine.MILESTONE}) in WebAssembly"
+
+
+def close() -> None:
+    """Flush every open handle so the bytes on the filesystem are current.
+
+    Persisting means copying the *filesystem* into IndexedDB, and a page still
+    sitting in the buffer pool is not on the filesystem yet. Without this, the
+    thing that gets stored is whatever last happened to be written through —
+    which is exactly the state recovery exists to repair, and not what a visitor
+    who typed a statement and closed the tab is entitled to.
+    """
+    _app.state.workspace.close_all()
 
 
 async def handle(method: str, path: str, body: str | None) -> str:

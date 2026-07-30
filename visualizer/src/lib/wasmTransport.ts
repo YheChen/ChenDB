@@ -72,7 +72,25 @@ type BootstrapModule = {
   handle: (method: string, path: string, body: string | null) => Promise<string>;
   subscribe: (databaseId: string, emit: (record: string) => void) => void;
   unsubscribe: (databaseId: string) => void;
+  /** The on-disk format version this build writes. */
+  formatVersion: () => string;
+  /** What the persisted store was written by, or "" if it is empty. */
+  storedVersion: () => string;
+  /** Flush every open handle, so the filesystem is current before a sync. */
+  close: () => void;
 };
+
+/**
+ * Where IndexedDB backs the filesystem, and the name of that database.
+ *
+ * Emscripten's IDBFS names its IndexedDB store after the mount point, so this
+ * one constant is both the path Python writes to and the thing
+ * `clearStoredData` deletes.
+ */
+const WORKSPACE = "/workspace";
+
+/** How long a burst of writes is allowed to coalesce before it is stored. */
+const PERSIST_DEBOUNCE_MS = 400;
 
 /**
  * Start the engine in this tab.
@@ -101,18 +119,126 @@ export async function createWasmTransport(
   const micropip = pyodide.pyimport("micropip");
   await micropip.install(PACKAGES);
 
+  step(0.75, "Looking for anything you saved…");
+  await mountPersistent(pyodide);
+
   step(0.8, "Unpacking the engine…");
   const bundle = await fetchEngineBundle(`${ASSET_BASE}${manifest.engine}`);
   writeSources(pyodide, bundle);
 
   step(0.9, "Opening a database…");
   const bootstrap = (await pyodide.runPythonAsync(
-    `${bootstrapSource}\n\nimport types\n_module = types.SimpleNamespace(start=start, handle=handle, subscribe=subscribe, unsubscribe=unsubscribe)\n_module`,
+    [
+      bootstrapSource,
+      "import types",
+      // camelCase on the JS side, snake_case in the Python: the boundary is the
+      // right place for that translation, not either language's own file.
+      "_module = types.SimpleNamespace(",
+      "    start=start, handle=handle, subscribe=subscribe, unsubscribe=unsubscribe,",
+      "    formatVersion=format_version, storedVersion=stored_version, close=close,",
+      ")",
+      "_module",
+    ].join("\n"),
   )) as BootstrapModule;
+
+  // Before the app opens anything, decide whether what is stored is even
+  // readable by this build. A database is a binary file with a version in its
+  // meta page, so a format bump makes yesterday's bytes unopenable — and an
+  // unopenable database in IndexedDB is a demo that is permanently broken for
+  // that visitor, with nothing on screen to explain why.
+  const stored = bootstrap.storedVersion();
+  const current = bootstrap.formatVersion();
+  if (stored && stored !== current) {
+    await clearStoredData();
+    throw new Error(
+      `stored databases were written in format ${stored}, this build reads ` +
+        `${current}. They have been cleared — reload to start fresh.`,
+    );
+  }
+
   const banner = await bootstrap.start();
+  await persist(pyodide, bootstrap);
 
   step(1, banner);
-  return makeTransport(bootstrap);
+  const transport = makeTransport(bootstrap, pyodide);
+  // The filesystem, for anyone debugging what did or did not persist.
+  Object.assign(transport, { FS: pyodide.FS });
+  return transport;
+}
+
+/**
+ * Back `/workspace` with IndexedDB, and load whatever is already there.
+ *
+ * Without this the filesystem lives and dies with the tab, which makes the
+ * demo a toy: build a schema, refresh, and it is gone. IDBFS is the same
+ * Emscripten filesystem the rest of the tree uses, so nothing in the engine
+ * knows the difference — `open()` and `write()` are unchanged.
+ *
+ * `syncfs(true)` populates memory *from* the store, and must happen before the
+ * app opens anything.
+ */
+async function mountPersistent(pyodide: PyodideInterface): Promise<void> {
+  const FS = pyodide.FS as unknown as {
+    mkdirTree: (path: string) => void;
+    mount: (type: unknown, options: object, path: string) => void;
+    filesystems: { IDBFS: unknown };
+    syncfs: (populate: boolean, callback: (error: unknown) => void) => void;
+  };
+  FS.mkdirTree(WORKSPACE);
+  FS.mount(FS.filesystems.IDBFS, {}, WORKSPACE);
+  await new Promise<void>((resolve, reject) => {
+    FS.syncfs(true, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+/**
+ * Copy the filesystem into IndexedDB.
+ *
+ * `close()` first, because persisting means storing the *filesystem* and a page
+ * still in the buffer pool is not on it yet. Storing without that would save
+ * whatever happened to be written through — the state recovery exists to
+ * repair, and not what someone who typed a statement and closed the tab is
+ * entitled to.
+ */
+async function persist(
+  pyodide: PyodideInterface,
+  bootstrap: BootstrapModule,
+): Promise<void> {
+  bootstrap.close();
+  const FS = pyodide.FS as unknown as {
+    syncfs: (populate: boolean, callback: (error: unknown) => void) => void;
+  };
+  await new Promise<void>((resolve, reject) => {
+    FS.syncfs(false, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+/**
+ * Delete everything this origin has stored. **Reload immediately after.**
+ *
+ * A persistent demo that can wedge itself permanently is worse than one that
+ * forgets: without an escape hatch, a visitor whose store is unreadable has a
+ * broken page forever and no way to know it is fixable. So this is exposed on
+ * the transport, offered on the boot-failure screen, and called automatically
+ * when the format version has moved.
+ *
+ * The reload is not politeness, it is required. This deletes the IndexedDB
+ * database that IDBFS is *currently mounted over*, which leaves the mount
+ * pointing at nothing: the in-memory files are still there, so the session
+ * looks fine, and the next sync writes into a store that has been recreated
+ * underneath it. Every caller here reloads. Testing this by clearing and
+ * carrying on is what made persistence look broken when it was not.
+ */
+export async function clearStoredData(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const request = indexedDB.deleteDatabase(WORKSPACE);
+    request.onsuccess = () => resolve();
+    request.onerror = () => resolve();
+    // A store held open by another tab blocks the delete. Resolving anyway is
+    // right: the caller is about to reload, and reporting failure here would
+    // stop them doing the one thing that fixes it.
+    request.onblocked = () => resolve();
+  });
 }
 
 /**
@@ -185,7 +311,73 @@ function lastLine(text: string): string {
   return lines[lines.length - 1] ?? "the engine failed without saying why";
 }
 
-function makeTransport(bootstrap: BootstrapModule): Transport {
+function makeTransport(
+  bootstrap: BootstrapModule,
+  pyodide: PyodideInterface,
+): Transport {
+  let timer: number | undefined;
+  let inFlight: Promise<void> = Promise.resolve();
+  let failures = 0;
+
+  /**
+   * Store the filesystem soon, coalescing a burst of writes into one sync.
+   *
+   * Not after every request: a `syncfs` per `INSERT` would make a twenty-row
+   * demo twenty IndexedDB transactions. Not on a long timer either — the window
+   * between the last write and the flush is data a visitor can lose by closing
+   * the tab, so it is a few hundred milliseconds rather than a few seconds.
+   */
+  /**
+   * Persist, and *say so* if it fails.
+   *
+   * The first version of this swallowed the error, and the debounced sync then
+   * failed silently while an explicit one worked — which cost three rounds of
+   * debugging to notice, because "nothing persisted" and "persisting threw"
+   * look identical from the outside. Losing a visitor's work quietly is the
+   * one outcome worse than losing it loudly.
+   */
+  const run = () => {
+    inFlight = persist(pyodide, bootstrap).then(
+      () => {
+        failures = 0;
+      },
+      (error) => {
+        failures += 1;
+        console.error(
+          `ChenDB: could not save to this browser (attempt ${failures}).`,
+          error,
+        );
+      },
+    );
+    return inFlight;
+  };
+
+  const schedulePersist = () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      void run();
+    }, PERSIST_DEBOUNCE_MS);
+  };
+
+  const flushNow = () => {
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      timer = undefined;
+      return run();
+    }
+    return inFlight;
+  };
+
+  // `pagehide` fires when a tab is closed, navigated away from, or frozen on
+  // mobile; `beforeunload` does not fire reliably on any of those. Neither can
+  // await, so the debounce above is deliberately short — this narrows the window
+  // rather than closing it, and that limit is real.
+  window.addEventListener("pagehide", () => void flushNow());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") void flushNow();
+  });
+
   return {
     kind: "wasm",
 
@@ -209,6 +401,11 @@ function makeTransport(bootstrap: BootstrapModule): Transport {
         status: number;
         body: unknown;
       };
+      // Anything that is not a GET may have written. Being generous here is
+      // the safe direction: an extra sync after a SELECT costs a few
+      // milliseconds, a missed one after an INSERT costs the visitor's work.
+      if (method !== "GET" && status < 400) schedulePersist();
+
       if (status === 204) return undefined as T;
       if (status >= 400) throw extractError(status, payload);
       return payload as T;
