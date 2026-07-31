@@ -26,6 +26,7 @@ from engine.planner.physical import (
     PhysicalIndexScan,
     PhysicalJoin,
     PhysicalNestedLoopJoin,
+    PhysicalSeqScan,
     walk_physical,
 )
 
@@ -1114,3 +1115,144 @@ def test_an_equijoin_is_estimated_from_distinct_values_not_row_counts(
         assert 0.5 <= estimated / actual <= 2.0, (
             f"{kind} estimated {estimated} rows against {actual} actual"
         )
+
+
+# --------------------------------------------------------------------------
+# Three tables, and the two bugs two of them could not find (Milestone 21)
+# --------------------------------------------------------------------------
+
+# Both of these were shipped, both returned wrong answers, and both were
+# invisible to every test and to 320,000 generated query pairs, because the
+# generator built two tables and each needs three. They are regressions now;
+# `tests/differential/generator.py` builds a grandchild so the class is covered
+# rather than these two instances.
+
+CHAIN = Schema.of(
+    Column("id", DataType.INTEGER, nullable=False, primary_key=True),
+    Column("ref", DataType.INTEGER),
+    Column("n", DataType.INTEGER),
+)
+
+
+@pytest.fixture
+def chain(tmp_path: Path):
+    """a, b and c, where only some of a has a b and only some of b has a c."""
+    with Database.open(tmp_path / "chain3.chendb", page_size=4096) as handle:
+        for name in ("a", "b", "c"):
+            handle.create_table(name, CHAIN)
+        handle.insert_many("a", [(1, 0, 10), (2, 0, 20), (3, 0, 30)])
+        handle.insert_many("b", [(100, 1, 1), (101, 1, 2), (102, 2, -5)])
+        handle.insert_many("c", [(200, 10, 7), (201, 20, 8)])
+        yield handle
+
+
+def test_a_table_after_an_outer_join_is_not_dropped(chain: Database):
+    """The join-order search silently planned two tables out of three.
+
+    ``_search_join_order`` keyed its dynamic-programming table by which *tables*
+    a subplan covered, and enumerated subsets of ``range(len(relations))``. The
+    two agree only when every input is a single table. After an outer join one
+    input is a relation holding several, the two key spaces diverge, every
+    lookup missed, and the search returned the seeded relation untouched.
+
+    The plan then had no scan of ``c`` at all, and the residual compared ``a.n``
+    against a column no operator had ever written, so the query returned **no
+    rows**. Nothing detected it: an outer join with an inner join after it needs
+    three tables to express, and the generator built two.
+    """
+    sql = (
+        "SELECT a.id, b.id, c.id FROM a "
+        "LEFT JOIN b ON a.id = b.ref "
+        "JOIN c ON a.n = c.ref ORDER BY a.id, b.id;"
+    )
+    planned = plan(chain, sql)
+    scanned = {
+        node.table_name
+        for node in walk_physical(planned.root)
+        if isinstance(node, PhysicalSeqScan | PhysicalIndexScan)
+    }
+    assert scanned == {"a", "b", "c"}, f"the plan reads only {sorted(scanned)}"
+    assert rows(chain, sql) == [(1, 100, 200), (1, 101, 200), (2, 102, 201)]
+
+
+def test_an_inner_on_below_an_outer_join_is_not_a_where(chain: Database):
+    """An ``ON`` that could not be pushed down floated up and became a filter.
+
+    Milestone 18 stops a predicate being pushed into a table that an outer join
+    can NULL-extend, which is right for a WHERE. It applied the same rule to
+    every pooled conjunct, including an inner join's ``ON`` written *below* the
+    outer join, and such a conjunct runs before the NULL-extension rather than
+    after it.
+
+    Over-protected, it could be pushed nowhere, so it landed in the residual,
+    and a residual runs at the very top of the plan. There it rejected exactly
+    the rows the ``RIGHT`` join existed to preserve. Predicates now carry which
+    join they came from, and the protection only counts the outer joins below
+    them.
+    """
+    sql = (
+        "SELECT a.id, b.id, c.id FROM a "
+        "JOIN b ON a.id = b.ref AND b.n > 100 "
+        "RIGHT JOIN c ON b.id = c.ref ORDER BY c.id;"
+    )
+    # `b.n > 100` matches nothing, so the inner join is empty and every row of
+    # `c` comes back NULL-extended. Dropping them is the bug.
+    assert rows(chain, sql) == [(None, None, 200), (None, None, 201)]
+
+    text = explain(chain, sql)
+    lines = text.splitlines()
+    filter_at = next(i for i, line in enumerate(lines) if "n > 100" in line)
+    join_at = next(i for i, line in enumerate(lines) if "RIGHT" in line)
+    assert filter_at > join_at, "the ON belongs below the outer join:\n" + text
+
+
+def test_a_where_on_the_same_column_still_may_not_be_pushed(chain: Database):
+    """The other half, and the reason the fix is per-predicate rather than off.
+
+    The same column in the WHERE runs *after* the outer join, so it must still
+    be evaluated above it and must still not reach ``b``'s scan. One predicate
+    moved and one did not, which is the whole content of the fix.
+
+    The WHERE has to be one that can be TRUE about a NULL-extended row, or
+    Milestone 19 proves the outer join away and there is nothing left to
+    protect. This one can, which is also why every preserved row survives it.
+    """
+    sql = (
+        "SELECT a.id, b.id, c.id FROM a "
+        "JOIN b ON a.id = b.ref "
+        "RIGHT JOIN c ON b.id = c.ref WHERE b.n > 100 OR b.n IS NULL ORDER BY c.id;"
+    )
+    assert rows(chain, sql) == [(None, None, 200), (None, None, 201)]
+
+    text = explain(chain, sql)
+    lines = text.splitlines()
+    filter_at = next(i for i, line in enumerate(lines) if "n > 100" in line)
+    join_at = next(i for i, line in enumerate(lines) if "RIGHT" in line)
+    assert filter_at < join_at, "the WHERE belongs above the outer join:\n" + text
+
+
+def test_three_tables_agree_across_every_pair_of_join_kinds(chain: Database):
+    """Sixteen chains, each checked against the shape it was written as.
+
+    Not against SQLite (`tests/differential/` does that, over a corpus that now
+    builds three tables) but against the row counts a reader can derive: the
+    inner core is two rows, LEFT adds the `a` with no `b`, RIGHT adds the `c`
+    with no `b`, and FULL adds both wherever the chain lets it.
+    """
+    for first in ("JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"):
+        for second in ("JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"):
+            sql = (
+                f"SELECT a.id, b.id, c.id FROM a "
+                f"{first} b ON a.id = b.ref "
+                f"{second} c ON b.n = c.n ORDER BY a.id, b.id, c.id;"
+            )
+            result = rows(chain, sql)
+            # Every row must be a real combination: a NULL only where the join
+            # that produced it was allowed to invent one.
+            assert all(len(row) == 3 for row in result)
+            scanned = {
+                node.table_name
+                for node in walk_physical(plan(chain, sql).root)
+                if isinstance(node, PhysicalSeqScan | PhysicalIndexScan)
+            }
+            assert scanned == {"a", "b", "c"}, f"{first} / {second} reads {scanned}"

@@ -35,15 +35,17 @@ def test_sqlite_is_new_enough():
 
     ``NULLS LAST`` needs SQLite 3.30, and without it every generated ``ORDER BY``
     would ask SQLite a different question than it asks ChenDB. The suite would
-    stay green while comparing the wrong thing. ``sqlite3`` is in the standard
-    library and cannot be absent, so there is nothing here to be lenient about.
-    This is the ``CHENDB_REQUIRE_NODE`` lesson with no escape hatch needed: a
-    guard that goes quiet is worse than no guard.
+    stay green while comparing the wrong thing. ``RIGHT`` and ``FULL OUTER JOIN``
+    need 3.39, and without them the campaign dies on a syntax error instead.
+    ``sqlite3`` is in the standard library and cannot be absent, so there is
+    nothing here to be lenient about. This is the ``CHENDB_REQUIRE_NODE`` lesson
+    with no escape hatch needed: a guard that goes quiet is worse than no guard.
     """
     version = tuple(int(part) for part in sqlite3.sqlite_version.split("."))
     assert version >= MINIMUM_SQLITE_VERSION, (
-        f"SQLite {sqlite3.sqlite_version} cannot express NULLS LAST, so the "
-        f"NULL-ordering translation would be a syntax error"
+        f"SQLite {sqlite3.sqlite_version} is older than "
+        f"{'.'.join(str(part) for part in MINIMUM_SQLITE_VERSION)}, so NULLS LAST "
+        f"or an outer join side the generator emits would be a syntax error"
     )
 
 

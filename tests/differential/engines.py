@@ -88,6 +88,12 @@ def chendb_outcomes(instance: Case, workspace: Path) -> Run:
     """Run every query of ``instance`` against a fresh ChenDB database."""
     run = Run()
     path = workspace / f"case{instance.seed}.chendb"
+    # The shrinker runs the same case in the same workspace over and over, so a
+    # file left by the previous attempt would make every CREATE TABLE fail and
+    # the shrink report "the generated setup does not apply" instead of the
+    # divergence it was chasing. A fresh database per run, always.
+    for stale in workspace.glob(f"{path.name}*"):
+        stale.unlink()
     with Database.open(path) as database:
         for statement in instance.schema.setup(CHENDB):
             try:

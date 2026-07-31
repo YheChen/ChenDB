@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -98,7 +98,7 @@ and would have become ``- 2`` here) the exceptions are named in
 :data:`MILESTONES_WITHOUT_ENGINE_FEATURES`. Naming them keeps the assertion
 exact and makes skipping one a decision somebody had to write down."""
 
-MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15, 16})
+MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15, 16, 21})
 """Milestones that shipped no new engine capability, and why.
 
 * **12**: continuous integration, and a guard that runs every demo button.
@@ -111,6 +111,12 @@ MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15, 16})
   paths, and the browser workspace backed by IndexedDB. *Where* the bytes are
   kept is not a capability either. The file format is byte-identical, and a
   page written in the browser has the same checksum it would on disk.
+
+* **21**: a third table in the differential generator, and the two planner bugs
+  it immediately found. Both were wrong answers, and fixing a wrong answer
+  *restores* a capability the engine already claimed rather than adding one:
+  "correct three-table joins" was on this list from Milestone 13, and was not
+  true. The list records what each milestone added. This one removed two lies.
 
 Milestone 19 is not on this list either, and it is the closest call so far. An
 optimiser rewrite returns exactly the same rows by definition, so "the engine can

@@ -269,7 +269,44 @@ def schema(source: random.Random) -> SchemaSpec:
         tuple(child_rows),
         indexed=_indexed(source, child_columns),
     )
-    return SchemaSpec((parent, child))
+    return SchemaSpec((parent, child, _grandchild(source, child)))
+
+
+def _grandchild(source: random.Random, child: TableSpec) -> TableSpec:
+    """A third table, keyed on the child, so a query can join three of them.
+
+    Two tables were enough to find seven bugs and not enough to find the eighth.
+    A chain of three is the first shape where the join *order search* has a
+    decision that is not merely which side to build, and where an outer join has
+    something on both sides of it to move. Milestone 21 found a two-table corpus
+    hiding a planner bug that dropped the third table from the plan entirely and
+    returned no rows at all. See ``test_a_table_after_an_outer_join_is_not_dropped``.
+
+    Its key column is drawn the same messy way the child's is: matches, orphans
+    and NULLs, so an outer join at either end of the chain has something to
+    preserve.
+    """
+    columns = (
+        ColumnSpec("gid", INTEGER, nullable=False, primary_key=True),
+        ColumnSpec("child_id", INTEGER, nullable=True),
+        *_columns(source, "g")[1:],
+    )
+    present = [row[0] for row in child.rows]
+    absent = [value for value in _INTEGERS if value not in present] or [99]
+
+    rows: list[tuple[Any, ...]] = []
+    for index in range(source.choice(_ROW_COUNTS)):
+        draw = source.random()
+        if draw < 0.15 or not present:
+            child_id: Any = None
+        elif draw < 0.75:
+            child_id = source.choice(present)
+        else:
+            child_id = source.choice(absent)
+        rest = tuple(_cell(source, column) for column in columns[2:])
+        rows.append((index, child_id, *rest))
+
+    return TableSpec("grandchild", columns, tuple(rows), indexed=_indexed(source, columns))
 
 
 def _indexed(source: random.Random, columns: tuple[ColumnSpec, ...]) -> tuple[str, ...]:
@@ -584,12 +621,13 @@ def _named(entry: Source) -> str:
 #: of the time, a HALF of HAVINGs that reject every group, and a coverage floor
 #: in ``test_harness.py`` fails the build if any named corner stops appearing.
 _SHAPES: Final = (
-    ("scan", 28),
-    ("aggregate", 12),
-    ("grouped", 20),
-    ("join", 18),
-    ("self_join", 8),
-    ("dml", 14),
+    ("scan", 24),
+    ("aggregate", 11),
+    ("grouped", 18),
+    ("join", 16),
+    ("chain", 14),
+    ("self_join", 7),
+    ("dml", 12),
 )
 
 
@@ -605,7 +643,10 @@ def query(source: random.Random, spec: SchemaSpec) -> Query:
 def _select(source: random.Random, spec: SchemaSpec, shape: str) -> Query:
     builder = _Select(source, _sources_for(source, spec, shape), shape)
     if shape in ("join", "self_join"):
-        builder.joins.append(_join_clause(source, builder))
+        builder.joins.append(_join_clause(source, builder, right=1))
+    elif shape == "chain":
+        builder.joins.append(_join_clause(source, builder, right=1))
+        builder.joins.append(_join_clause(source, builder, right=2))
     if shape == "grouped":
         _grouped(source, builder)
     elif shape == "aggregate":
@@ -640,6 +681,12 @@ def _sources_for(source: random.Random, spec: SchemaSpec, shape: str) -> list[So
             Source(spec.table("parent"), "parent"),
             Source(spec.table("child"), "child"),
         ]
+    if shape == "chain":
+        return [
+            Source(spec.table("parent"), "parent"),
+            Source(spec.table("child"), "child"),
+            Source(spec.table("grandchild"), "grandchild"),
+        ]
     table = source.choice(spec.tables)
     return [Source(table, table.name)]
 
@@ -652,7 +699,7 @@ def _sources_for(source: random.Random, spec: SchemaSpec, shape: str) -> list[So
 _JOIN_KINDS: Final = (("INNER", 40), ("LEFT", 25), ("RIGHT", 20), ("FULL", 15))
 
 
-def _join_clause(source: random.Random, builder: _Select) -> str:
+def _join_clause(source: random.Random, builder: _Select, *, right: int) -> str:
     """``[LEFT|RIGHT|FULL] JOIN b ON …``, equijoin most of the time.
 
     An equality is what lets the planner pick a hash join, so it has to be the
@@ -664,48 +711,83 @@ def _join_clause(source: random.Random, builder: _Select) -> str:
     preserve. It does: ``child.parent_id`` is drawn from keys the parent has, keys
     it has not, and NULL, so a single ``LEFT JOIN`` sees a matched row, an orphan
     and an unknown key at once.
+
+    ``right`` is which source this clause brings in, so the same function writes
+    the second link of a three-table chain. That link joins the grandchild to
+    the child most of the time and **to the parent** the rest, which is the
+    shape that gives a join-order search something to prove: a condition that
+    skips over the middle table is one an outer join between them may or may not
+    be allowed to move across.
     """
-    right = builder.sources[1]
-    left = builder.sources[0]
+    entry = builder.sources[right]
     kind = source.choices(
         [name for name, _ in _JOIN_KINDS], weights=[weight for _, weight in _JOIN_KINDS]
     )[0]
 
     if builder.shape == "self_join":
-        condition = f"a.{left.table.key.name} <> b.{right.table.key.name}"
+        left = builder.sources[0]
+        condition = f"a.{left.table.key.name} <> b.{entry.table.key.name}"
         builder.features.add("self_join")
-    elif source.random() < 0.8:
-        condition = f"parent.{left.table.key.name} = child.parent_id"
-        builder.features.add("null_join_key")
-        builder.features.add("unmatched_join_row")
+    elif right == 2:
+        # The grandchild links to the child, or over its head to the parent.
+        anchor = builder.sources[1] if source.random() < 0.7 else builder.sources[0]
+        column = "cid" if anchor.alias == "child" else anchor.table.key.name
+        condition = f"{anchor.alias}.{column} = grandchild.child_id"
+        builder.features.add("three_table_join")
+        if anchor.alias == "parent":
+            builder.features.add("join_skipping_a_table")
     else:
-        condition = f"parent.{left.table.key.name} < child.parent_id"
+        left = builder.sources[0]
+        if source.random() < 0.8:
+            condition = f"parent.{left.table.key.name} = child.parent_id"
+            builder.features.add("null_join_key")
+            builder.features.add("unmatched_join_row")
+        else:
+            condition = f"parent.{left.table.key.name} < child.parent_id"
 
     if kind != "INNER":
         builder.features.add(f"{kind.lower()}_join")
         builder.features.add("outer_join")
-        if kind in ("LEFT", "FULL"):
-            builder.null_supplied.append(right.alias)
-        if kind in ("RIGHT", "FULL"):
-            builder.null_supplied.append(left.alias)
+        builder.null_supplied.extend(_null_supplied_by(builder, kind, right))
         if source.random() < 0.35:
             # An extra ON term on the *null-supplied* side. This is the case that
             # separates an outer join from an inner one with a WHERE: it must
             # restrict which rows match, never which rows survive. Putting it in
-            # the ON was the whole shape of the planner bug this milestone had to
+            # the ON was the whole shape of the planner bug Milestone 18 had to
             # avoid: ON conditions were pooled with the WHERE and pushed down.
             numeric = [
                 column
-                for column in right.table.columns
+                for column in entry.table.columns
                 if column.type in (INTEGER, FLOAT) and not column.primary_key
             ]
             if numeric:
-                column = source.choice(numeric)
-                condition += f" AND {right.alias}.{column.name} > 0"
+                column_spec = source.choice(numeric)
+                condition += f" AND {entry.alias}.{column_spec.name} > 0"
                 builder.features.add("outer_join_extra_on")
+    elif builder.joins and any(
+        clause.startswith(("LEFT", "RIGHT", "FULL")) for clause in builder.joins
+    ):
+        # An inner join written *after* an outer one. The shape whose planning
+        # was broken until Milestone 21, and which two tables could never make.
+        builder.features.add("inner_join_after_outer")
 
     prefix = "" if kind == "INNER" else f"{kind} "
-    return f"{prefix}JOIN {_named(right)} ON {condition}"
+    return f"{prefix}JOIN {_named(entry)} ON {condition}"
+
+
+def _null_supplied_by(builder: _Select, kind: str, right: int) -> list[str]:
+    """Which aliases this outer join can fill with NULLs.
+
+    ``LEFT`` and ``FULL`` NULL-extend the table being brought in. ``RIGHT`` and
+    ``FULL`` NULL-extend everything accumulated to the left, which in a chain is
+    every alias written before this clause, not just the previous one.
+    """
+    out: list[str] = []
+    if kind in ("LEFT", "FULL"):
+        out.append(builder.sources[right].alias)
+    if kind in ("RIGHT", "FULL"):
+        out.extend(entry.alias for entry in builder.sources[:right])
+    return out
 
 
 def _plain(source: random.Random, builder: _Select) -> None:

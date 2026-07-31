@@ -50,6 +50,9 @@ REQUIRED_FEATURES: Final = (
     "outer_join_extra_on",
     "outer_join_where_on_null_side",
     "anti_join_idiom",
+    "three_table_join",
+    "join_skipping_a_table",
+    "inner_join_after_outer",
     "order_by",
     "order_by_desc",
     "limit",
@@ -106,7 +109,15 @@ def test_the_corpus_hits_every_corner(corpus, feature: str):
 
 def test_every_shape_is_generated(corpus):
     _, shapes, _ = corpus
-    assert set(shapes) == {"scan", "aggregate", "grouped", "join", "self_join", "dml"}
+    assert set(shapes) == {
+        "scan",
+        "aggregate",
+        "grouped",
+        "join",
+        "chain",
+        "self_join",
+        "dml",
+    }
     assert min(shapes.values()) >= 20
 
 
