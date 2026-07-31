@@ -507,16 +507,29 @@ def plan_select(
     # predicate in the WHERE throws away the NULL-extended ones. So an outer
     # join's ON stays *at* its join, and never enters this pool: which is also
     # why it cannot be pushed down to a scan or pulled up into a filter.
+    #
+    # Each conjunct carries **where it came from**, because pooling loses that
+    # and it turns out to matter. A conjunct from an inner ``ON`` runs before any
+    # outer join written after it, so pushing it into a table that a *later*
+    # outer join NULL-extends is legal. A conjunct from the WHERE runs after all
+    # of them and is not. Treating both alike protected too much, and the
+    # over-protected conjunct floated to the top of the plan and became a WHERE:
+    # ``a JOIN b ON b.x > 0 RIGHT JOIN c ON …`` then dropped every row `c`
+    # preserved. See ``test_an_inner_on_below_an_outer_join_is_not_a_where``.
     steps = _join_steps(rewritten.plan)
     predicate = _predicate_of(rewritten.plan)
     conjuncts = _split_conjunction(predicate) if predicate is not None else []
-    for step in steps:
+    # The WHERE runs above every join, so ``len(steps)`` is "after all of them".
+    origins = [len(steps)] * len(conjuncts)
+    for index, step in enumerate(steps):
         if step.kind is JoinKind.INNER:
-            conjuncts.extend(_split_conjunction(step.on))
+            terms = _split_conjunction(step.on)
+            conjuncts.extend(terms)
+            origins.extend([index] * len(terms))
 
     namer = _Namer()
     joined, alternatives, handled = _plan_joins(
-        scans, conjuncts, steps, database, stats_by_table, options, namer
+        scans, conjuncts, origins, steps, database, stats_by_table, options, namer
     )
 
     residual = _rebuild_conjunction(
@@ -593,7 +606,7 @@ def _join_steps(plan: LogicalNode) -> list[_Step]:
     return steps
 
 
-def _null_supplied(steps: list[_Step]) -> frozenset[int]:
+def _null_supplied(steps: list[_Step], *, before: int | None = None) -> frozenset[int]:
     """Scan positions that an outer join can NULL-extend.
 
     A predicate on one of these must **not** be pushed below the join. Consider
@@ -608,10 +621,21 @@ def _null_supplied(steps: list[_Step]) -> frozenset[int]:
     ``RIGHT`` is why this is computed by walking rather than read off one step:
     it null-extends everything accumulated to its left, which is every table
     written before it.
+
+    ``before`` limits the walk to the joins written earlier than that step, which
+    is what makes the protection depend on where a predicate came from. A
+    conjunct pooled from the ``ON`` of join *n* runs before joins *n* onward, so
+    only the outer joins below it can NULL-extend anything it sees. Protecting
+    it from the ones above was over-protection with teeth: the conjunct could
+    not be pushed anywhere, ended up in the residual, and a residual runs at the
+    very top of the plan, where an inner join's ``ON`` behaves like a WHERE and
+    rejects the rows a later outer join had preserved.
     """
     nullable: set[int] = set()
     seen: list[int] = [0]
-    for step in steps:
+    for index, step in enumerate(steps):
+        if before is not None and index >= before:
+            break
         if step.kind.preserves_left:
             nullable.add(step.position)
         if step.kind.preserves_right:
@@ -623,6 +647,7 @@ def _null_supplied(steps: list[_Step]) -> frozenset[int]:
 def _plan_joins(
     scans: list[LogicalScan],
     conjuncts: list[Expression],
+    origins: list[int],
     steps: list[_Step],
     database: Database,
     stats_by_table: dict[str, TableStatistics],
@@ -646,18 +671,14 @@ def _plan_joins(
     alternatives: list[Alternative] = []
     leaves: dict[int, _Relation] = {}
     handled: set[int] = set()
-    protected = _null_supplied(steps)
+    protected = [_null_supplied(steps, before=step) for step in range(len(steps) + 1)]
 
     for position, scan in enumerate(scans):
-        mine = (
-            []
-            if position in protected
-            else [
-                index
-                for index, term in enumerate(conjuncts)
-                if _tables_of(term) == {position}
-            ]
-        )
+        mine = [
+            index
+            for index, term in enumerate(conjuncts)
+            if _tables_of(term) == {position} and position not in protected[origins[index]]
+        ]
         chosen, considered = _choose_access_path(
             scan,
             [(index, conjuncts[index]) for index in mine],
@@ -850,8 +871,16 @@ def _search_join_order(
             relations, conjuncts, joinable, scans, stats_by_table, namer, alternatives
         )
 
+    # Keyed by *which of the inputs* a subplan covers, not by which tables. The
+    # two are the same thing only when every input is a single table, and one
+    # of them is not: an outer join arrives here as one relation holding
+    # several. Keying by tables while enumerating subsets of ``range(len)``
+    # mixed the two spaces, and the DP then found no subplan for any subset it
+    # looked up, left ``best`` holding only the inputs, and returned the seeded
+    # one. The tables joined after an outer join were silently dropped from the
+    # plan. See ``test_a_table_after_an_outer_join_is_not_dropped``.
     best: dict[frozenset[int], _Relation] = {
-        relation.tables: relation for relation in relations
+        frozenset({index}): relation for index, relation in enumerate(relations)
     }
     everything = frozenset(range(len(relations)))
 

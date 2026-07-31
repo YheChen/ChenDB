@@ -57,11 +57,18 @@ __all__ = [
 NULL_ORDER_ASC: Final = "NULLS LAST"
 NULL_ORDER_DESC: Final = "NULLS FIRST"
 
-#: ``NULLS LAST`` landed in SQLite 3.30. Below that the translation above is a
-#: syntax error and the whole suite would be comparing the wrong thing, so
-#: ``test_sqlite_is_new_enough`` *fails* rather than skips, ``sqlite3`` is in the
-#: standard library and cannot be absent, so there is nothing to be lenient about.
-MINIMUM_SQLITE_VERSION: Final = (3, 30, 0)
+#: ``NULLS LAST`` landed in SQLite 3.30 and ``RIGHT``/``FULL OUTER JOIN`` in
+#: 3.39. Below either, the generated SQL is a syntax error and the whole suite
+#: would be comparing the wrong thing, so ``test_sqlite_is_new_enough`` *fails*
+#: rather than skips: ``sqlite3`` is in the standard library and cannot be
+#: absent, so there is nothing to be lenient about.
+#:
+#: The floor said 3.30 until Milestone 21. Milestone 18 started generating the
+#: two outer join sides that need 3.39 and did not move it, so on 3.30 through
+#: 3.38 the guard would have passed and the campaign would have failed with a
+#: syntax error on the first RIGHT JOIN. Nobody noticed because every machine
+#: that ran it was far newer.
+MINIMUM_SQLITE_VERSION: Final = (3, 39, 0)
 
 #: How close two floats must be to count as equal, *when* the oracle allows any
 #: slack at all. A few parts in 10¹², not a comfortable epsilon: a tolerance is a

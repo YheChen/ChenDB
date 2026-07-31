@@ -15,12 +15,13 @@ row readable rather than overwriting it. The visualizer is not a mock. Every byt
 it renders was read back from the actual file on disk.
 
 Its answers are checked against SQLite's: random schemas, random rows and random
-queries run through both engines and compared, 160,000 query pairs in two
-minutes. That found seven bugs the 1,243 hand-written tests had missed.
+queries run through both engines and compared, 320,000 query pairs in four
+minutes. That found seven bugs the hand-written tests had missed, and two more
+the day its generator learned to build a third table.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M20    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M21    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -46,7 +47,7 @@ minutes. That found seven bugs the 1,243 hand-written tests had missed.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Twenty milestones are complete.** Nothing is stubbed ahead of time: a
+**Twenty-one milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -76,7 +77,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 2.0.0 - Milestone 20 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics)
+ChenDB 2.1.0 - Milestone 21 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 opened demo.chendb (4 page(s))
@@ -183,7 +184,7 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
-| **Correctness** | 1,681 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
+| **Correctness** | 1,688 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
 Five claims worth checking rather than believing:
 
@@ -333,7 +334,7 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 1,681 tests
+.venv/bin/python -m pytest              # 1,688 tests
 npm --prefix visualizer test            # 160 tests
 ```
 
@@ -412,6 +413,7 @@ change the system observed.
 | [Milestone 18](docs/milestone-18-outer-joins.md) | outer joins, why NULL-extension was free, and why the join search needed a barrier |
 | [Milestone 19](docs/milestone-19-outer-join-simplification.md) | proving an outer join is an inner join, and the estimate that measurement found broken |
 | [Milestone 20](docs/milestone-20-skew.md) | most-common values, equi-depth histograms, and the first test that checks an estimate against reality |
+| [Milestone 21](docs/milestone-21-three-tables.md) | a third table in the fuzzer, and the two wrong answers two tables could never find |
 | [Roadmap](docs/roadmap.md) | every milestone, and what each one added to the file format |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |
