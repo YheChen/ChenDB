@@ -28,6 +28,7 @@ the UI until the engine behind it exists.
 | 20 | Most-common values and a histogram, so the estimator can see skew | A demo where three queries on one column get three different plans | **done** |
 | 21 | (a third table in the differential generator, and the two planner bugs it found) | (a test corpus, not a panel) | **done** |
 | 22 | An outer join constrains the join order instead of freezing it | The constraint named in the plan view, not just the order | **done** |
+| 23 | Uncorrelated subqueries, run once and folded to a constant | A subquery in the editor, and the literal it becomes in the plan | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete,
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -46,7 +47,7 @@ it could not do before. So it is a feature after all, and it is named rather
 than excused.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-22-reordering.md`.
+the newest is `docs/milestone-23-subqueries.md`.
 
 ## What each milestone adds to the file format
 
@@ -70,6 +71,7 @@ the newest is `docs/milestone-22-reordering.md`.
 | 20 | — | (statistics still live in memory and die with the process, on purpose) |
 | 21 | — | (two planner fixes and a wider test corpus; nothing on disk moves) |
 | 22 | — | (a join-order search change; the file format is untouched) |
+| 23 | — | (a subquery is folded before planning; nothing reaches the disk) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -99,7 +101,11 @@ Real problems this design has, with no milestone assigned:
   accurate and often exact. Conjunctions are still multiplied as if independent,
   which is what PostgreSQL's `CREATE STATISTICS` exists to fix, and
   `WHERE lower(name) = 'ada'` still has nothing to read.
-- **Subqueries, `DISTINCT`, `UNION`, window functions.**
+- **Correlated subqueries, `DISTINCT`, `UNION`, window functions.** Milestone
+  23 does the uncorrelated scalar case by folding it to a constant. A
+  correlated one is a decorrelation problem: `EXISTS`, `NOT EXISTS` and a
+  correlated scalar all want a semi-join or an anti-join rather than one
+  execution per outer row.
 - **`RETURNING`, and `INSERT ... SELECT`.** Both need a mutation to be an
   operator that emits rows rather than a call into storage. One refactor covers
   the pair; see `docs/milestone-11-dml.md`.

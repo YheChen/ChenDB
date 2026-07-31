@@ -114,6 +114,7 @@ from engine.parser.ast import (
     Node,
     OrderByItem,
     RollbackStatement,
+    ScalarSubquery,
     SelectItem,
     SelectStatement,
     SortDirection,
@@ -1067,6 +1068,16 @@ class Parser:
         token = self._current
 
         if self._match(TokenType.LPAREN):
+            if self._check_keyword(Keyword.SELECT):
+                # `(SELECT …)` where a value is expected. The only place this
+                # grammar recurses into a whole statement, and the reason
+                # `_select_statement` had to stop assuming it owned the tokens
+                # to the end of the input.
+                inner_select = self._select_statement()
+                end = self._expect(TokenType.RPAREN, "')' after a subquery").span
+                return self._node(
+                    ScalarSubquery, token.span.union(end), statement=inner_select
+                )
             inner = self._expression()
             end = self._expect(TokenType.RPAREN, "')'").span
             # The parenthesised node's span covers the brackets, so selecting it

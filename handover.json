@@ -72,7 +72,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-19 are merged; master is 1.9.0 and CI is green. Nothing is in progress, no branch is open. RECOMMENDED NEXT: reordering across an outer join that survives simplification, backlog[0]. Milestone 19 removes the barrier when it can prove the join away, which covers the common shapes; what remains is the genuinely-outer join that an inner join written after it still cannot move before. PostgreSQL's min_lefthand/min_righthand per SpecialJoinInfo is how that is recovered, so the search can PROVE a reordering safe by set containment instead of assuming it is not. Real machinery, and Milestone 19 made it worth more than it was: the estimator now divides by distinct values rather than row counts, so a search given more freedom will actually spend it well. The cheaper alternative if you want a quick win first is a most-common-values list, which is the single largest thing still missing from the cost model.",
+    "next": "Milestones 1-23 are merged; master is 2.3.0 and CI is green. RECOMMENDED NEXT: correlated subqueries, backlog[0]. EXISTS, NOT EXISTS and a correlated scalar are one problem, and the right answer is DECORRELATION into a semi-join or an anti-join rather than one execution per outer row. Milestone 19's null-rejection analysis and Milestone 22's min_lefthand are both directly reusable: an anti-join is what `NOT EXISTS` becomes, and a semi-join constrains the order the same way an outer join does. The cheaper alternative first is `IN (list)`, which needs no subquery machinery.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -258,7 +258,7 @@
       "verified": "make ci green; 1,688 Python tests; 320,000 differential pairs clean with three-table chains at ~13%. Each fix watched failing against its own bug BOTH hand-written and in the CI-seed corpus: re-keying the DP by tables turns 2 unit tests and seeds 2 and 48 red; protecting every conjunct alike turns 1 unit test and seed 60 red."
     },
     "milestone_22": {
-      "state": "COMPLETE, on branch reorder-across-outer-joins (PR pending at the time of writing)",
+      "state": "COMPLETE and MERGED (PR #33)",
       "shipped": "An outer join now CONSTRAINS the join-order search instead of freezing it. _OuterJoin carries min_left (the tables its own ON reads) in place of Milestone 18's 'everything written to its left', which is PostgreSQL's min_lefthand with the parts a flat FROM needs. _plan_chain and _plan_segment are gone; _search_constrained runs ONE System R search over every table with two rules on it.",
       "the_two_rules": [
         "VALIDITY: a subset is only one a plan could hold if every outer join whose table it contains also has its min_left inside it. Half an outer join is not a relation: {b, c} is impossible when b exists only because a LEFT-JOIN b ran.",
@@ -268,6 +268,18 @@
       "measured": "`a JOIN big ON a.k=big.k LEFT JOIN tag ON a.id=tag.a_id` with 20 / 20,000 / 20 rows: `a x big LEFT tag` at 99.6 ms before, `a LEFT tag x big` at 49.2 ms after. Same 20,000 rows, same as SQLite's.",
       "verified": "make ci green; 1,700 Python tests; 320,000 differential pairs clean. Six queries planned twice, once with min_left forced back to the syntactic set, every answer identical. The RIGHT-join regression needed a second try: its first version used a three-row `a` and the correct order was cheaper anyway, so it passed with the bug in place. An illegal plan is only a test if the search would actually CHOOSE it, which here meant making `a` empty.",
       "the_bug_this_milestone_shipped_and_then_caught": "The containment is ONE-SIDED and the first version was not. min_left <= rest is right for a LEFT join (it PRESERVES the accumulated left, so a table moved in arrives intact) and wrong for RIGHT and FULL (they NULL-EXTEND the accumulated left, so a table moved in is destroyed and a condition reading it elsewhere sees a NULL the written query never produced). All 1,699 tests passed; the differential tester found it at seed 634 on the next campaign, on exactly the three-table shape Milestone 21 built. rest == syntactic_left for RIGHT and FULL now."
+    },
+    "milestone_23": {
+      "state": "COMPLETE, on branch subqueries (PR pending at the time of writing)",
+      "shipped": "Uncorrelated scalar subqueries. ScalarSubquery in the AST (the one node that holds a whole statement), _primary recurses when '(' is followed by SELECT, and fold_subqueries in engine/executor/engine.py runs each one ONCE and substitutes a Literal BEFORE binding.",
+      "why_folding_before_binding": "An uncorrelated subquery names nothing outside itself, so it depends on no outer row and has one value for the whole statement. Folding it before binding means the planner, the index matcher and the cost model all see `column <op> literal`, which is what they were written for: `total = (SELECT MAX(total) FROM orders)` uses the index on total, which it could not if the subquery survived into the plan. Called from BOTH _execute_select and _execute_explain, so EXPLAIN shows the plan the query really gets (and therefore runs the subquery).",
+      "what_it_refuses_and_why": [
+        "More than one row: no defensible answer, and taking the first makes the query depend on physical order.",
+        "More than one column, and SELECT * counts as more even when the table has one column today, so an ALTER TABLE cannot turn a working query into a wrong one.",
+        "Zero rows is NULL, not an error: x = NULL is UNKNOWN for every row, which is the answer.",
+        "A correlated subquery is refused BY NAME. It would otherwise be refused by accident as 'no column named city' for a column that plainly exists, which is an hour of somebody's life. Detected by comparing the subquery's qualifiers against the OUTER aliases; a qualifier naming the subquery's own FROM is not correlated."
+      ],
+      "verified": "make ci green; 1,713 Python tests; 320,000 differential pairs clean with a scalar subquery in 59 of the 1,024 CI-seed queries (COUNT(*) and MIN/MAX over an INTEGER column, the forms where both engines agree on the result's type as well as its value)."
     }
   },
   "architecture_invariants": {
@@ -447,14 +459,15 @@
     "_search_join_order's DP table is keyed by which INPUTS a subplan covers, not which tables. The two are the same only when every input is a single table, which stops being true the moment an outer join hands the search a relation holding several. Keying by tables silently dropped every table joined after an outer join from the plan.",
     "execute_script stops at DEFAULT_MAX_ROWS = 10,000, and that has now bitten twice. Comparing two PLANS by their returned rows on a query bigger than the cap compares two different prefixes and looks exactly like a reordering that changed the answer. Keep such fixtures under the cap or compare COUNT(*).",
     "min_left is computed from the outer join's ON ALONE. An empty intersection with the syntactic left falls back to the syntactic left, because an ON that reads nothing there has proved nothing. Shrinking it further using the WHERE (which PostgreSQL does) would recover more orderings and needs its own argument.",
-    "A test that an illegal plan is not chosen is worthless unless the illegal plan would be CHEAPER. Milestone 22's RIGHT-join regression passed with the bug in place on its first try, because the correct order happened to cost less on a three-row fixture. Make the wrong plan look attractive (an empty table on the wrong side does it) or the assertion is measuring nothing."
+    "A test that an illegal plan is not chosen is worthless unless the illegal plan would be CHEAPER. Milestone 22's RIGHT-join regression passed with the bug in place on its first try, because the correct order happened to cost less on a three-row fixture. Make the wrong plan look attractive (an empty table on the wrong side does it) or the assertion is measuring nothing.",
+    "A subquery has to be folded in BOTH _execute_select and _execute_explain. EXPLAIN does not go through _execute_select, so folding in one place left `EXPLAIN SELECT ... (SELECT ...)` raising 'cannot bind ScalarSubquery' while the same query ran fine. Any future pre-binding rewrite needs the same treatment."
   ],
   "test_layout": {
-    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool, test_null_rejection, test_estimates",
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool, test_null_rejection, test_estimates, test_subqueries",
     "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli, test_planner_api, test_buffer_pool_api",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "1,700 Python tests, 160 frontend tests",
+    "counts_at_handover": "1,713 Python tests, 160 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py.",
@@ -463,14 +476,19 @@
   "known_issues": [],
   "backlog": [
     {
-      "item": "Reordering across an outer join",
+      "item": "Correlated subqueries",
       "status": "not started - RECOMMENDED NEXT",
-      "why": "PostgreSQL's min_lefthand/min_righthand per SpecialJoinInfo, so the search can PROVE a reordering safe by set containment instead of assuming it is not, plus the identity-2 and identity-3 rules for when an outer and an inner join do commute. Milestone 19 took the common case off this pile by proving many outer joins away entirely, and it also fixed the join estimate, so extra freedom is now freedom the search can use."
+      "why": "Milestone 23 folds the uncorrelated scalar case to a constant and refuses correlation by name. EXISTS, NOT EXISTS and a correlated scalar are the same underlying problem: decorrelate into a semi-join or an anti-join. Re-execution per outer row is the naive answer and is what the parser currently refuses rather than does quietly."
     },
     {
-      "item": "A most-common-values list",
+      "item": "IN, both forms",
       "status": "not started",
-      "why": "Milestone 19 fixed join_selectivity to divide by distinct values rather than row counts, which was wrong by 80x on a foreign-key join. distinct_count is still ONE number and skew defeats it: ten million orders spread over three customers is distinct = 3, and the estimate is off by six orders of magnitude. An MCV list plus a histogram is the standard answer and the single largest thing missing from this cost model."
+      "why": "`IN (1, 2, 3)` needs no subquery machinery at all and is the smallest useful thing left in the parser's refusal list. `IN (SELECT ...)` is a semi-join and belongs with the item above."
+    },
+    {
+      "item": "Multi-column and expression statistics",
+      "status": "not started",
+      "why": "Milestone 20 made single-column estimates accurate and often exact. Conjunctions are still multiplied as if independent, which is now the largest error in the cost model and the thing most likely to make a legal reordering the wrong choice. PostgreSQL's answer is CREATE STATISTICS."
     },
     {
       "item": "T14 as the dev server",
@@ -480,7 +498,7 @@
     {
       "item": "Smaller, named in the milestone docs",
       "status": "not started",
-      "why": "USING and NATURAL JOIN (both need the binder to merge two columns into one output column, which the flat RowLayout cannot express); GROUP BY ordinals (ORDER BY has them, GROUP BY silently treats an integer literal as a grouping constant, refusing it is the honest minimum); ORDER BY on an expression outside the select list (ChenDB sorts above the projection); RETURNING and INSERT ... SELECT (one refactor covers the pair); heap-only tuples; TRUNCATE; a coverage gate; a Python version matrix; SharedArrayBuffer for real threads and therefore step mode in the browser."
+      "why": "USING and NATURAL JOIN (the flat RowLayout cannot merge two columns into one output column); GROUP BY ordinals; ORDER BY on an expression outside the select list; DISTINCT; UNION; a subquery in FROM (needs a scope built from a query's output, which is also what a view needs); RETURNING and INSERT ... SELECT; heap-only tuples; TRUNCATE; a coverage gate; a Python version matrix; SharedArrayBuffer for step mode in the browser."
     }
   ],
   "wasm_spike": {

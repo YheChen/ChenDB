@@ -21,7 +21,7 @@ the day its generator learned to build a third table.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M22    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M23    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -47,7 +47,7 @@ the day its generator learned to build a third table.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Twenty-two milestones are complete.** Nothing is stubbed ahead of time: a
+**Twenty-three milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -77,7 +77,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 2.2.0 - Milestone 22 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics + reordering across an outer join)
+ChenDB 2.3.0 - Milestone 23 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics + reordering across an outer join + uncorrelated subqueries)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 opened demo.chendb (4 page(s))
@@ -173,7 +173,7 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Diagnostics** | 5 trace levels · 47 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
-| **Queries** | inner and outer joins (`LEFT`/`RIGHT`/`FULL`) with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
+| **Queries** | uncorrelated scalar subqueries · inner and outer joins (`LEFT`/`RIGHT`/`FULL`) with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
 | **Execution** | volcano operators (scan / filter / project / join / aggregate / sort / limit) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk · a `PRIMARY KEY` builds a real unique index |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
@@ -184,7 +184,7 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
-| **Correctness** | 1,700 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
+| **Correctness** | 1,713 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
 Five claims worth checking rather than believing:
 
@@ -235,8 +235,8 @@ all seven.
 
 Deliberately not built, and each has a paragraph in the milestone docs saying
 why: serializable isolation, `RETURNING`, heap-only tuples, bushy plans, index
-nested-loop joins, reordering across an outer join that survives simplification,
-`USING` and `NATURAL JOIN`, subqueries, `DISTINCT`, parallel statement execution,
+nested-loop joins, correlated subqueries,
+`USING` and `NATURAL JOIN`, `DISTINCT`, parallel statement execution,
 lock escalation, autovacuum, and overflow pages for rows larger than a page.
 
 ---
@@ -334,7 +334,7 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 1,700 tests
+.venv/bin/python -m pytest              # 1,713 tests
 npm --prefix visualizer test            # 160 tests
 ```
 
@@ -415,6 +415,7 @@ change the system observed.
 | [Milestone 20](docs/milestone-20-skew.md) | most-common values, equi-depth histograms, and the first test that checks an estimate against reality |
 | [Milestone 21](docs/milestone-21-three-tables.md) | a third table in the fuzzer, and the two wrong answers two tables could never find |
 | [Milestone 22](docs/milestone-22-reordering.md) | what an outer join actually requires on its left, and the orders that frees |
+| [Milestone 23](docs/milestone-23-subqueries.md) | the subquery that is a constant, and the four things it refuses to be |
 | [Roadmap](docs/roadmap.md) | every milestone, and what each one added to the file format |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |
