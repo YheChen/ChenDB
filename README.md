@@ -184,7 +184,7 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
-| **Correctness** | 1,699 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
+| **Correctness** | 1,700 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
 Five claims worth checking rather than believing:
 
@@ -334,7 +334,7 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 1,699 tests
+.venv/bin/python -m pytest              # 1,700 tests
 npm --prefix visualizer test            # 160 tests
 ```
 
