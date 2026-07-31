@@ -60,6 +60,7 @@ from engine.index.key import SMALLEST_VALUE_KEY, decode_key, describe_key
 from engine.optimizer.cost import (
     Cost,
     aggregate_cost,
+    distinct_join_selectivity,
     estimate_selectivity,
     filter_cost,
     hash_join_cost,
@@ -1089,6 +1090,41 @@ def _equijoin_keys(
     return None
 
 
+def _joined_distinct_counts(
+    term: Expression, stats_by_table: dict[str, TableStatistics]
+) -> tuple[int, int] | None:
+    """Distinct values in the two columns an equijoin compares, when both are known.
+
+    The textbook estimate for ``a.x = b.y`` is ``1 / max(distinct(a.x),
+    distinct(b.y))``, and :func:`distinct_join_selectivity` has spelled it that
+    way since Milestone 6. Nothing called it. :func:`join_selectivity` passed
+    *row counts* where distinct counts belong, and the difference is not a
+    rounding error: a foreign-key join of 50 users to 4,000 orders came out at
+    ``50 * 4000 / 4000``, which is 50, when the real answer is 4,000. The
+    estimate was the size of the wrong side.
+
+    It surfaced measuring Milestone 19, because the rewrite makes the estimate
+    matter more: the two tables rejoin the order search, and a search cannot
+    choose well between plans it cannot size. Wrong by 80x here, and it compounds
+    upward, so a three-table plan is wrong by 6,400.
+
+    ``None`` when either side is not a plain analyzed column, which falls back to
+    the row-count approximation rather than inventing a number.
+    """
+    if not isinstance(term, BinaryOp) or term.operator is not BinaryOperator.EQ:
+        return None
+    counts: list[int] = []
+    for side in (term.left, term.right):
+        if not isinstance(side, BoundColumnRef) or side.table_position is None:
+            return None
+        stats = stats_by_table.get(side.table_name or "")
+        column = stats.column(side.table_position) if stats is not None else None
+        if column is None or column.distinct_count <= 0:
+            return None
+        counts.append(column.distinct_count)
+    return counts[0], counts[1]
+
+
 def _join_cardinality(
     left: _Relation,
     right: _Relation,
@@ -1123,6 +1159,9 @@ def _join_cardinality(
         involved = sorted(_tables_of(term))
         if len(involved) < 2:
             continue  # single-table: a filter's selectivity, not a join's
+        if (distinct := _joined_distinct_counts(term, stats_by_table)) is not None:
+            product *= distinct_join_selectivity(*distinct)
+            continue
         equality = isinstance(term, BinaryOp) and term.operator is BinaryOperator.EQ
         left_stats = stats_by_table[scans[involved[0]].table_name]
         right_stats = stats_by_table[scans[involved[-1]].table_name]

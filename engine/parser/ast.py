@@ -511,6 +511,26 @@ class JoinKind(StrEnum):
         """Whether a row written *after* the keyword survives with no partner."""
         return self in (JoinKind.RIGHT, JoinKind.FULL)
 
+    @classmethod
+    def of(cls, *, preserve_left: bool, preserve_right: bool) -> JoinKind:
+        """The kind with exactly these two behaviours. The inverse of the pair above.
+
+        A join *is* those two booleans; the four names are how SQL spells the
+        four combinations. Naming the inverse is what lets a rewrite drop one
+        behaviour without a table of special cases: proving that a ``FULL``
+        join's left-preserved rows all die turns it into a ``RIGHT``, and the
+        same line turns a ``LEFT`` into an ``INNER``.
+        """
+        match (preserve_left, preserve_right):
+            case (True, True):
+                return cls.FULL
+            case (True, False):
+                return cls.LEFT
+            case (False, True):
+                return cls.RIGHT
+            case _:
+                return cls.INNER
+
 
 @dataclass(frozen=True, slots=True)
 class JoinClause(Node):

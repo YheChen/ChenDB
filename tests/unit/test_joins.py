@@ -20,9 +20,11 @@ import pytest
 from engine import Column, Database, DataType, Schema
 from engine.errors import BindingError
 from engine.executor.engine import execute_script
+from engine.optimizer import rules
 from engine.planner.physical import (
     PhysicalHashJoin,
     PhysicalIndexScan,
+    PhysicalJoin,
     PhysicalNestedLoopJoin,
     walk_physical,
 )
@@ -681,12 +683,22 @@ def test_a_predicate_on_the_preserved_side_is_still_pushed_down(db: Database):
 
 
 def test_a_predicate_on_the_null_supplied_side_is_not_pushed_down(db: Database):
-    # And the reason for the asymmetry: pushed below and consumed, this would
-    # leave the NULL-extended rows in the result, which the WHERE must reject.
+    """And the reason for the asymmetry: pushed below and consumed, this would
+    leave the NULL-extended rows in the result, which the WHERE must reject.
+
+    The predicate has to be one that can be TRUE about a NULL-extended row, or
+    there is no longer an outer join to protect. This one can: ``NULL > 200`` is
+    NULL, ``NULL IS NULL`` is TRUE, so a preserved row passes. Milestone 19
+    turned the plain ``WHERE o.total > 200`` version of this test into an inner
+    join and pushed the predicate down, which is correct and is the point of that
+    milestone, see :func:`test_a_null_rejecting_where_turns_a_left_join_inner`.
+    """
     outer = explain(
         db,
-        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id WHERE o.total > 200;",
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200 OR o.total IS NULL;",
     )
+    assert "LEFT" in outer, "the join must still be outer for this to test anything"
     lines = outer.splitlines()
     filter_at = next(i for i, line in enumerate(lines) if "Filter" in line)
     join_at = next(i for i, line in enumerate(lines) if "Join" in line)
@@ -739,3 +751,366 @@ def test_an_outer_join_is_not_costed_as_a_cross_product(db: Database):
         if isinstance(node, PhysicalHashJoin | PhysicalNestedLoopJoin)
     )
     assert join.estimated.rows < len(USER_ROWS) * len(ORDER_ROWS)
+
+
+# --------------------------------------------------------------------------
+# Outer-join simplification (Milestone 19)
+# --------------------------------------------------------------------------
+
+# Milestone 18 ran an outer join exactly where it was written and never asked
+# whether it had to be one. These test the rule that asks. The interesting half
+# is not that it fires: it is the list of shapes where it must not, because each
+# of those is a query whose rows would quietly change.
+
+#: A third table, so the chain is long enough for one join to prove another and
+#: for reordering to have somewhere to go.
+TAGS = Schema.of(
+    Column("id", DataType.INTEGER, nullable=False, primary_key=True),
+    Column("order_id", DataType.INTEGER),
+    Column("label", DataType.TEXT),
+)
+TAG_ROWS = [(20, 10, "gift"), (21, 13, "rush"), (22, 99, "orphan")]
+
+
+@pytest.fixture
+def three(tmp_path: Path):
+    with Database.open(tmp_path / "chain.chendb", page_size=4096) as handle:
+        handle.create_table("users", USERS)
+        handle.create_table("orders", ORDERS)
+        handle.create_table("tags", TAGS)
+        handle.insert_many("users", USER_ROWS)
+        handle.insert_many("orders", ORDER_ROWS)
+        handle.insert_many("tags", TAG_ROWS)
+        yield handle
+
+
+def joins_of(db: Database, sql: str) -> list[tuple[bool, bool]]:
+    """What each join in the plan actually preserves, innermost first."""
+    return [
+        (node.preserve_left, node.preserve_right)
+        for node in reversed(walk_physical(plan(db, sql).root))
+        if isinstance(node, PhysicalJoin)
+    ]
+
+
+def fired(db: Database, sql: str) -> bool:
+    return "simplify_outer_joins" in plan(db, sql).rewrites
+
+
+INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER = (
+    (False, False),
+    (True, False),
+    (False, True),
+    (True, True),
+)
+
+
+def test_a_null_rejecting_where_turns_a_left_join_inner(db: Database):
+    """The rule, in one query.
+
+    ``o.total`` is NULL in every row the LEFT join preserved, ``NULL > 200`` is
+    NULL, and a WHERE keeps only TRUE. Not one preserved row can reach the
+    output, so preserving them was work nobody could observe.
+    """
+    sql = (
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200;"
+    )
+    assert fired(db, sql)
+    assert joins_of(db, sql) == [INNER]
+
+
+def test_the_rewrite_returns_exactly_what_the_outer_join_returned(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+):
+    """The contract of a rewrite rule, checked rather than asserted.
+
+    ``apply_rules`` reads the module-level ``RULES`` at call time, so removing
+    one entry is enough to plan the same SQL both ways. Every query below has to
+    come back identical, and the ones the rule declines to touch are in the list
+    on purpose: an accidentally-firing rule is caught by the same comparison.
+    """
+    queries = [
+        "SELECT u.name, o.total FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200 ORDER BY u.name, o.total;",
+        "SELECT u.name, o.total FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total IS NULL ORDER BY u.name;",
+        "SELECT u.name, o.total FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200 OR u.city = 'ny' ORDER BY u.name, o.total;",
+        "SELECT u.name, o.id FROM users u RIGHT JOIN orders o ON u.id = o.user_id "
+        "WHERE u.city = 'london' ORDER BY o.id;",
+        "SELECT u.name, o.id FROM users u FULL JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 100 ORDER BY o.id;",
+        "SELECT u.name, o.id FROM users u FULL JOIN orders o ON u.id = o.user_id "
+        "WHERE u.city = 'ny' ORDER BY o.id;",
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE NOT (o.total = 1) ORDER BY u.name;",
+        "SELECT COUNT(*) FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200;",
+    ]
+    with_rule = [rows(db, sql) for sql in queries]
+
+    monkeypatch.setattr(
+        rules, "RULES", tuple(r for r in rules.RULES if r.name != "simplify_outer_joins")
+    )
+    for sql, expected in zip(queries, with_rule, strict=True):
+        assert not fired(db, sql), "the rule is meant to be switched off here"
+        assert rows(db, sql) == expected, f"the rewrite changed the answer to:\n{sql}"
+
+
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        # IS NULL is the anti-join idiom, and the one predicate that goes TRUE
+        # about a row the join invented. Rewriting it would break the single most
+        # common reason anybody writes an outer join by hand.
+        ("o.id IS NULL", LEFT_OUTER),
+        # One survivable branch of an OR is enough to keep a preserved row alive.
+        ("o.total > 200 OR u.city = 'ny'", LEFT_OUTER),
+        ("o.total > 200 OR o.total IS NULL", LEFT_OUTER),
+        # Nothing to do with the NULL-supplied side at all.
+        ("u.city = 'london'", LEFT_OUTER),
+        # And the ones that do reject.
+        ("o.total > 200", INNER),
+        ("o.total IS NOT NULL", INNER),
+        ("NOT (o.total = 1)", INNER),
+        ("o.total > 200 AND u.city = 'ny'", INNER),
+        ("o.total + 1 > 200", INNER),
+        ("o.user_id = u.id", INNER),
+    ],
+)
+def test_which_predicates_collapse_a_left_join(
+    db: Database, where: str, expected: tuple[bool, bool]
+):
+    sql = (
+        f"SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id WHERE {where};"
+    )
+    assert joins_of(db, sql) == [expected]
+
+
+def test_a_right_join_is_reduced_by_a_predicate_on_its_left(db: Database):
+    # The mirror image, and it is not symmetric in the code: a RIGHT join
+    # NULL-extends everything accumulated to its left, not one named table.
+    sql = (
+        "SELECT o.id FROM users u RIGHT JOIN orders o ON u.id = o.user_id "
+        "WHERE u.city = 'london';"
+    )
+    assert joins_of(db, sql) == [INNER]
+
+    kept = (
+        "SELECT o.id FROM users u RIGHT JOIN orders o ON u.id = o.user_id "
+        "WHERE u.city IS NULL;"
+    )
+    assert joins_of(db, kept) == [RIGHT_OUTER]
+
+
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        # Reject the right side and the left-preserved rows die: what is left is
+        # the matches plus the unmatched right, which is a RIGHT join.
+        ("o.total > 100", RIGHT_OUTER),
+        ("u.city = 'ny'", LEFT_OUTER),
+        ("u.city = 'ny' AND o.total > 100", INNER),
+        ("u.city IS NULL OR o.total IS NULL", FULL_OUTER),
+    ],
+)
+def test_a_full_join_gives_up_one_side_at_a_time(
+    db: Database, where: str, expected: tuple[bool, bool]
+):
+    """A join is two booleans, not four names, which is why this is one rule.
+
+    ``FULL`` is the only kind that can be reduced and still be outer, and it is
+    where a rewrite written as a table of name-to-name special cases would have
+    needed two more entries nobody would have thought to add.
+    """
+    sql = (
+        f"SELECT u.name FROM users u FULL JOIN orders o ON u.id = o.user_id WHERE {where};"
+    )
+    assert joins_of(db, sql) == [expected]
+
+
+# -- what counts as evidence -------------------------------------------------
+
+
+def test_a_later_inner_join_proves_an_earlier_outer_one(three: Database):
+    """No WHERE at all, and the LEFT join still collapses.
+
+    ``o.id = t.order_id`` is NULL for every row the LEFT join preserved, and an
+    inner join discards a row its ``ON`` does not accept. So the third join is
+    what proves the first, which is a common shape and one a rule that only read
+    the WHERE would miss.
+    """
+    sql = (
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "JOIN tags t ON o.id = t.order_id;"
+    )
+    assert joins_of(three, sql) == [INNER, INNER]
+    assert sorted(rows(three, sql)) == [("ada",), ("grace",)]
+
+
+def test_a_later_outer_join_proves_nothing(three: Database):
+    # A LEFT join above preserves the rows the LEFT join below invented, so its
+    # ON never gets to reject them and is not admissible evidence.
+    sql = (
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "LEFT JOIN tags t ON o.id = t.order_id;"
+    )
+    assert joins_of(three, sql) == [LEFT_OUTER, LEFT_OUTER]
+
+
+def test_an_outer_joins_own_on_is_not_evidence_about_itself(db: Database):
+    """The mistake this rule most easily makes.
+
+    ``ON b.x = 5`` cannot be TRUE about a NULL-extended row either, and it is
+    still not a reason to rewrite: an outer join's ``ON`` decides which rows
+    *match*, and the rows that do not match are exactly the ones it preserves.
+    Treating the ON like a WHERE is the whole difference between the two.
+    """
+    sql = (
+        "SELECT u.name, o.total FROM users u "
+        "LEFT JOIN orders o ON u.id = o.user_id AND o.total > 200;"
+    )
+    assert joins_of(db, sql) == [LEFT_OUTER]
+    assert sorted(rows(db, sql)) == [("ada", 250), ("alan", None), ("grace", 400)]
+
+
+def test_having_is_not_evidence(db: Database):
+    # HAVING runs after grouping, so a NULL that reaches a group is a longer
+    # argument than this rule makes. Declining is a missed rewrite, not a wrong
+    # answer, and the rows below are what makes that the right call to check.
+    sql = (
+        "SELECT u.name, COUNT(o.id) FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "GROUP BY u.name HAVING COUNT(o.id) > 0;"
+    )
+    assert joins_of(db, sql) == [LEFT_OUTER]
+
+
+def test_the_rule_reaches_a_where_under_a_group_by(db: Database):
+    # The WHERE is below the aggregate in the plan, so the rule has to walk past
+    # the aggregate to find it. The three rules written before joins existed do
+    # not, which is why this one descends generically.
+    sql = (
+        "SELECT u.city, COUNT(*) FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200 GROUP BY u.city;"
+    )
+    assert fired(db, sql)
+    assert joins_of(db, sql) == [INNER]
+
+
+# -- what the rewrite buys ---------------------------------------------------
+
+
+def test_the_rewrite_re_enables_pushdown(db: Database):
+    """The first of the two second-hand wins, and the larger one here.
+
+    Milestone 18 protects a NULL-supplied table from pushdown, correctly. Once
+    the join is inner there is nothing to protect, and the very predicate that
+    proved the rewrite is what gets pushed: it filters ``orders`` before the join
+    instead of filtering the join's output.
+    """
+    text = explain(
+        db,
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200;",
+    )
+    lines = text.splitlines()
+    filter_at = next(i for i, line in enumerate(lines) if "Filter" in line)
+    join_at = next(i for i, line in enumerate(lines) if "Join" in line)
+    assert filter_at > join_at, "the filter belongs below the join now:\n" + text
+
+
+def test_the_rewrite_re_enables_reordering(three: Database):
+    """The second, and the reason this rule is in the milestone at all.
+
+    An outer join is a barrier the join-order search may not cross, and it says
+    so in ``EXPLAIN``. Proving it inner hands both tables back to the search.
+    """
+    barrier = "may not reorder across it"
+    kept = explain(
+        three,
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "LEFT JOIN tags t ON o.id = t.order_id;",
+    )
+    assert barrier in kept
+
+    freed = explain(
+        three,
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "LEFT JOIN tags t ON o.id = t.order_id WHERE t.label = 'gift';",
+    )
+    assert barrier not in freed, "both joins are inner now:\n" + freed
+
+
+def test_a_pushed_predicate_can_use_an_index_after_the_rewrite(tmp_path: Path):
+    """Pushdown is worth more than one scan's worth of filtering.
+
+    A predicate that reaches a scan can be answered by an index instead of by
+    reading the table, which is the difference between the rewrite saving a few
+    comparisons and it saving the scan.
+    """
+    with Database.open(tmp_path / "indexed.chendb", page_size=4096) as db:
+        db.create_table("users", USERS)
+        db.create_table("orders", ORDERS)
+        db.insert_many("users", USER_ROWS)
+        db.insert_many("orders", [(n, n % 3, n) for n in range(200)])
+        db.create_index("orders_total", "orders", "total")
+        db.analyze()
+
+        sql = (
+            "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+            "WHERE o.total = 42;"
+        )
+        assert joins_of(db, sql) == [INNER]
+        assert any(
+            isinstance(node, PhysicalIndexScan)
+            for node in walk_physical(plan(db, sql).root)
+        ), "the pushed predicate should reach the index:\n" + explain(db, sql)
+
+
+def test_explain_names_the_rewrite(db: Database):
+    # A plan that is mysteriously different is only useful if you can see why,
+    # and this rule changes a join's *meaning* in the display, so it has to say
+    # so rather than let the reader wonder where the LEFT went.
+    text = explain(
+        db,
+        "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
+        "WHERE o.total > 200;",
+    )
+    assert "simplify_outer_joins" in text
+    assert "LEFT" not in text
+
+
+# -- the estimate the rewrite made matter more -------------------------------
+
+
+@pytest.mark.parametrize("kind", ["JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"])
+def test_an_equijoin_is_estimated_from_distinct_values_not_row_counts(
+    tmp_path: Path, kind: str
+):
+    """A foreign-key join used to be estimated at the size of the wrong side.
+
+    Fifty users, four thousand orders, eighty orders each, so the join produces
+    four thousand rows whichever way it is written. ``join_selectivity`` divided
+    by ``max(row_count)``, which is 4,000, and got ``50 * 4000 / 4000``. Fifty.
+
+    ``distinct_join_selectivity`` has spelled the right formula since Milestone 6
+    and nothing ever called it. This surfaced measuring Milestone 19, because
+    that milestone hands rewritten joins back to the order search, and a search
+    cannot choose between plans it cannot size. The error compounds upward: 80x
+    on two tables is 6,400x on three.
+    """
+    with Database.open(tmp_path / "estimate.chendb", page_size=4096) as db:
+        db.create_table("users", USERS)
+        db.create_table("orders", ORDERS)
+        db.insert_many("users", [(n, f"u{n}", "x") for n in range(50)])
+        db.insert_many("orders", [(n, n % 50, n) for n in range(4000)])
+        db.analyze()
+
+        sql = f"SELECT u.name FROM users u {kind} orders o ON u.id = o.user_id"
+        estimated = plan(db, sql).estimated_rows
+        actual = len(rows(db, sql))
+        assert actual == 4000
+        assert 0.5 <= estimated / actual <= 2.0, (
+            f"{kind} estimated {estimated} rows against {actual} actual"
+        )

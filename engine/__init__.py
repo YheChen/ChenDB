@@ -49,7 +49,7 @@ from engine.serialization.types import DataType
 from engine.storage.constants import DEFAULT_PAGE_SIZE, PageType
 from engine.storage.heap import RecordId
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 """Bumped once per milestone: 0.N.0 corresponds to Milestone N."""
 
 MILESTONE = int(__version__.split(".")[0]) * 10 + int(__version__.split(".")[1])
@@ -79,6 +79,7 @@ MILESTONE_FEATURES: tuple[str, ...] = (
     "joins and aggregation",
     "enforced primary keys",
     "outer joins",
+    "outer-join simplification",
 )
 """What the engine can do, in the order the milestones added it.
 
@@ -109,6 +110,13 @@ MILESTONES_WITHOUT_ENGINE_FEATURES: frozenset[int] = frozenset({12, 14, 15, 16})
   paths, and the browser workspace backed by IndexedDB. *Where* the bytes are
   kept is not a capability either. The file format is byte-identical, and a
   page written in the browser has the same checksum it would on disk.
+
+Milestone 19 is not on this list either, and it is the closest call so far. An
+optimiser rewrite returns exactly the same rows by definition, so "the engine can
+now simplify an outer join" is a statement about how a query runs and not about
+what can be asked of it. The precedent that settles it is Milestone 7: a buffer
+pool changes no answer either and is named above. A milestone whose whole content
+is the engine getting faster at something belongs in the list.
 
 Milestone 17 is *not* on this list, and that is worth a word. It shipped a
 differential tester, which is a statement about the engine like Milestone 12's
