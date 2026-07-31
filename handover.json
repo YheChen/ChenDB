@@ -58,7 +58,8 @@
     "differential_ci": ".venv/bin/python -m pytest -q tests/differential  \u2014 64 seeds, ~1s. CHENDB_DIFFERENTIAL_SEEDS='0:5000' widens it with no code change.",
     "example_m17": "python3 examples/milestone17_differential.py",
     "example_m18": "python3 examples/milestone18_outer_joins.py",
-    "types_check": "make types-check \u2014 regenerates and diffs the committed docs/openapi.json and visualizer/src/types/api.ts, failing if they have drifted. Now part of `make ci`."
+    "types_check": "make types-check \u2014 regenerates and diffs the committed docs/openapi.json and visualizer/src/types/api.ts, failing if they have drifted. Now part of `make ci`.",
+    "example_m19": ".venv/bin/python examples/milestone19_outer_join_simplification.py"
   },
   "status": {
     "milestone_1": {
@@ -70,7 +71,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-18 are merged; master is 1.8.0 and CI is green. Nothing is in progress, no branch is open. Prose is em-dash free and the README matches the engine. RECOMMENDED NEXT: outer-join simplification, backlog[0]. `a LEFT JOIN b ON ... WHERE b.x = 5` is provably an inner join, every serious planner rewrites it, and the rewrite both removes Milestone 18's reordering barrier and re-enables pushdown, so it buys back most of what that milestone gave up. It is a null-rejection test on a predicate plus a rule in engine/optimizer/rules.py, and tests/differential/ already generates the shape, so correctness is checked the moment it lands.",
+    "next": "Milestones 1-19 are merged; master is 1.9.0 and CI is green. Nothing is in progress, no branch is open. RECOMMENDED NEXT: reordering across an outer join that survives simplification, backlog[0]. Milestone 19 removes the barrier when it can prove the join away, which covers the common shapes; what remains is the genuinely-outer join that an inner join written after it still cannot move before. PostgreSQL's min_lefthand/min_righthand per SpecialJoinInfo is how that is recovered, so the search can PROVE a reordering safe by set containment instead of assuming it is not. Real machinery, and Milestone 19 made it worth more than it was: the estimator now divides by distinct values rather than row counts, so a search given more freedom will actually spend it well. The cheaper alternative if you want a quick win first is a most-common-values list, which is the single largest thing still missing from the cost model.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -217,6 +218,21 @@
       "the_bug_the_fuzzer_found": "HashJoin emitted an unmatched probe row when its bucket was EMPTY. Wrong condition: a hash join hashes the equality and re-checks the residual per pair, so a probe row can hash into a FULL bucket and be rejected by every candidate in it. `FULL JOIN ... ON a.id = b.aid AND b.aid > 0` lost two of three rows. Nine hand-written FULL JOIN cases all had a bare equality for their ON and missed it; the generator found it on the first run, because a third of its outer joins carry an extra term on the null-supplied side. Fixed with a _probe_matched flag.",
       "what_is_given_up": "No reordering across an outer join \u2014 an inner join written after one cannot move before it, even where legal. PostgreSQL recovers those with min_lefthand/min_righthand per SpecialJoinInfo; that is a milestone of its own. EXPLAIN says so rather than hiding it. Also no outer-join simplification: `a LEFT JOIN b ON ... WHERE b.x = 5` is provably an inner join and ChenDB does not rewrite it.",
       "verified": "make ci green; 160,000 differential pairs clean with outer joins in the mix."
+    },
+    "milestone_19": {
+      "state": "COMPLETE, on branch outer-join-simplification (PR pending at the time of writing)",
+      "shipped": "Outer-join simplification. engine/optimizer/nullability.py proves that a predicate cannot be TRUE once a table's columns are all NULL; _simplify_outer_joins in engine/optimizer/rules.py uses that to reduce LEFT/RIGHT/FULL to the smaller join they really are. Plus JoinKind.of, the inverse of preserves_left/preserves_right, which is what makes the rewrite one line applied twice.",
+      "the_analysis": "Abstract interpretation over SETS of truth values, not strictness flags. Every column of a NULL-supplied table is known NULL, everything else is ANY, and the result is pushed through SQL's own truth tables. TRUE absent from the set is a proof TRUE is impossible. Sound because every rule returns a SUPERSET, which is why an unrecognised node returns ANY: a new AST node then costs a missed rewrite, never a wrong answer. Written out rather than done with a strictness flag because IS NULL is not strict (it goes TRUE on exactly the invented rows, the anti-join idiom) and neither is OR (NULL OR TRUE is TRUE, so an OR rejects only when both sides do).",
+      "what_counts_as_evidence": [
+        "The WHERE.",
+        "The ON of any LATER join in the chain that does not preserve its left input, because such a join discards an accumulated row its ON rejects. INNER is one, and so is RIGHT. That makes `a LEFT JOIN b ON ... JOIN c ON b.k = c.k` an inner join with no WHERE at all.",
+        "NOT the outer join's own ON. It decides which rows MATCH, and the non-matching rows are precisely the ones it preserves. This is the bug the rule is one step away from at all times.",
+        "NOT an earlier join's ON (it ran before the NULLs existed) and NOT HAVING (it runs after grouping).",
+        "The chain is walked OUTERMOST FIRST so a join reduced this pass counts as its reduced kind for the ones inside it. One pass, not a fixed point."
+      ],
+      "the_second_bug": "Measuring the milestone found join_selectivity passing ROW COUNTS where DISTINCT COUNTS belong. 50 users joined to 4,000 orders was estimated at 50 * 4000 / 4000 = 50, the size of the wrong side, off by 80x and compounding to 6,400x on three tables. distinct_join_selectivity had spelled the right formula since Milestone 6 and NOTHING had ever called it. Wired up as _joined_distinct_counts in engine/planner/physical.py; no existing test needed to change. It hid because Milestone 18's outer-join floor rescued RIGHT and FULL by accident, so only half the cases were visibly wrong.",
+      "measured": "50 users, 4,000 orders, median of 25 runs, `WHERE o.total = 42` over a LEFT JOIN: 19.4 ms -> 13.4 ms with no index (1.5x), 19.4 ms -> 0.47 ms with an index on orders.total (41x). The 41x is the index doing the work and the rewrite is what let the query reach it.",
+      "verified": "make ci green; 1,654 Python tests and 160 frontend; the rewrite compared against itself with the rule monkeypatched out of RULES over eight queries; an exhaustive soundness property in tests/unit/test_null_rejection.py; differential campaigns clean against SQLite."
     }
   },
   "architecture_invariants": {
@@ -263,7 +279,9 @@
     "on_is_not_where": "For an INNER join, `a JOIN b ON p` and `a, b WHERE p` mean the same thing, so plan_select pools them and pushes each single-table conjunct to its scan. For an OUTER join every part of that fails, so its ON is kept out of the pool and applied at the join. Three placements of the same predicate \u2014 pushed below, at the join, above the join \u2014 are three different queries, and EXPLAIN shows which.",
     "an_outer_join_is_a_barrier": "The System-R search's licence to reorder is that an inner join is commutative and associative. _plan_chain therefore lets consecutive inner joins form a segment the search orders freely, and an outer join closes the segment and becomes one OPAQUE relation. Opaque is exactly right and costs nothing to enforce: the search can commute that relation with others but has no way to reach inside it, so it can never build a \u27d5 (b \u2a1d c) from (a \u27d5 b) \u2a1d c. The cost is that an inner join written after an outer one cannot move before it.",
     "null_extension_is_free": "Milestone 13 made a row's layout the written order of the FROM, always, and paid for it in row width. That is what makes NULL extension free: an unmatched left row already has None in the right side's slots, because nothing ever wrote them. Emitting it unchanged IS the extension, and the mirror holds for the right side.",
-    "a_registry_excuses_errors_not_values": "The differential registry can record 'ChenDB refuses what SQLite accepts' and never 'both returned rows and the rows differed'. An error is a categorical outcome a human has already reasoned about; a wrong row is what the tester exists to find. Entries match on outcomes only \u2014 no SQL, no seed \u2014 so there is no known-failing-seeds list, which is the line between knowledge and an undiagnosed bug."
+    "a_registry_excuses_errors_not_values": "The differential registry can record 'ChenDB refuses what SQLite accepts' and never 'both returned rows and the rows differed'. An error is a categorical outcome a human has already reasoned about; a wrong row is what the tester exists to find. Entries match on outcomes only \u2014 no SQL, no seed \u2014 so there is no known-failing-seeds list, which is the line between knowledge and an undiagnosed bug.",
+    "an_outer_join_may_not_be_one": "Milestone 19's rule changes what a join IS, not how it runs, and it saves nothing by itself: an inner join and an outer join over the same inputs cost the same. The whole return is second-hand, through two prohibitions Milestone 18 correctly imposed. Predicate pushdown may not cross into a NULL-supplied side and the join-order search may not cross an outer join; an inner join is subject to neither. That is why it lives in rules.py rather than inline: it pays off in parts of the planner it never mentions.",
+    "soundness_defaults_to_declining": "engine/optimizer/nullability.py returns ANY for any expression it does not recognise, so a rewrite fires only on the ABSENCE of TRUE from the possible set. Every new AST node is therefore safe by default. Defaulting the other way would mean each future node silently licences a rewrite until somebody notices, and the failure mode is not a crash: it is FEWER ROWS, quietly, with nothing downstream to blame."
   },
   "gotchas": [
     "The visualizer needs BOTH resolve.alias in vite.config.ts AND paths in tsconfig.json for '@/*'. tsc passing does not mean Rollup will resolve it.",
@@ -371,14 +389,21 @@
     "A STALE __pycache__ can make scripts/generate_api_types.py emit a docstring whose source file has already been reverted. It looks exactly like the generator ignoring its input. `find . -name __pycache__ -not -path './.venv/*' -prune -exec rm -rf {} +`.",
     "The em-dash sweep was wrong four times before it was right, and each way was invisible until looked for. (1) Its 'is this a literal' guard looked for a quote NEAR the dash rather than AROUND it, so every `\u2014 \\`code\\`` was skipped, and this codebase writes that constantly. (2) `| \u2014 |` placeholders in markdown tables became `|, |`. (3) In an ALIGNED ASCII listing the dash is a COLUMN SEPARATOR, so a comma reads as prose; engine/errors.py's exception tree and docs/architecture.md's file map want colons. (4) Worst: a BORDERED table mock in docs/milestone-09-wal.md had its placeholder dashes paired into parentheses ACROSS rows, wrecking the column alignment. Any bordered diagram row must be restored byte for byte. If a similar sweep is ever needed, check all four.",
     "The README's CLI transcript is verified by RE-RUNNING it, never from memory. Two of its lines were false: `.tree users_age` printed `root page 5` when it is page 6 (Milestone 17's implied primary-key index took page 5), and the plan claimed `IndexScan` when the real plan is a `SeqScan` (two rows fit in one page, so the cost model turns the index down). The transcript now shows the seq scan and explains why, because a fabricated IndexScan is worse than an honest scan.",
-    "A PRIMARY KEY now creates <table>_pkey, which means it OCCUPIES PAGES and shifts every page number after it. Any doc, transcript or test that pins a page id was written before Milestone 17 and may be off by one index's worth of pages."
+    "A PRIMARY KEY now creates <table>_pkey, which means it OCCUPIES PAGES and shifts every page number after it. Any doc, transcript or test that pins a page id was written before Milestone 17 and may be off by one index's worth of pages.",
+    "An outer join's own ON is not evidence that the join can be simplified. `a LEFT JOIN b ON b.x = 5` cannot be TRUE about a NULL-extended row either, and rewriting on that basis is wrong, because an ON decides which rows MATCH and the non-matching rows are exactly what the join preserves. Treating an ON like a WHERE is the entire difference between the two clauses. tests/unit/test_joins.py::test_an_outer_joins_own_on_is_not_evidence_about_itself pins it.",
+    "preserves_left creates NULLs on the RIGHT. The rows a LEFT join keeps are the LEFT rows that found no partner, so it is the RIGHT side's columns that come back NULL. Every line of the simplification rule reads backwards from the naive expectation and that is not a typo.",
+    "match's literal patterns compare None/True/False by IDENTITY and everything else with ==, so `case Literal(value=True)` does NOT match Literal(1). nullability.py spells it `Literal(value=bool() as value)` anyway, because soundness-critical code should not depend on remembering that rule.",
+    "join_selectivity took ROW COUNTS where the textbook formula wants DISTINCT COUNTS, and a foreign-key join came out at the size of the wrong side (80x low on 50 users to 4,000 orders). distinct_join_selectivity had the right formula since Milestone 6 and nothing called it. If a plan looks oddly cheap above a join, check what the join itself estimated first: the error compounds upward, so 80x on two tables is 6,400x on three.",
+    "`make types-check` runs `git diff --exit-code`, so it fails on an UNCOMMITTED regeneration even when you have just run `make types` correctly. Commit, then re-run `make ci`. In CI the tree is clean at HEAD so the check means what it says.",
+    "The version bump alone moves docs/openapi.json (the OpenAPI `info.version` is engine.__version__), so every milestone needs `make types` in the same commit, not only the ones that touch a docstring under engine/server/.",
+    "A rewrite rule that fires too eagerly does not crash. It returns FEWER ROWS, quietly, and nothing downstream would attribute the loss to the optimiser. So the tests for one are weighted at when it must NOT fire (nine of Milestone 19's twenty-six join cases), and the rule is also run against itself with the rule removed from RULES so every answer has to be identical."
   ],
   "test_layout": {
     "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool",
     "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli, test_planner_api, test_buffer_pool_api",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "1,441 Python tests, 160 frontend tests",
+    "counts_at_handover": "1,654 Python tests, 160 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py.",
@@ -387,24 +412,24 @@
   "known_issues": [],
   "backlog": [
     {
-      "item": "Outer-join simplification",
-      "status": "not started \u2014 RECOMMENDED NEXT",
-      "why": "`a LEFT JOIN b ON ... WHERE b.x = 5` is an inner join: a null-rejecting WHERE on the null-supplied side discards every row the outer join preserved. Rewriting it removes the reordering barrier AND re-enables pushdown, so it is the one change that buys back most of what Milestone 18 gave up. Needs a null-rejection predicate test (does P evaluate to non-TRUE when its column is NULL?) and a rule in engine/optimizer/rules.py. The differential suite already generates the shape, so correctness is checked the moment it lands."
+      "item": "Reordering across an outer join",
+      "status": "not started - RECOMMENDED NEXT",
+      "why": "PostgreSQL's min_lefthand/min_righthand per SpecialJoinInfo, so the search can PROVE a reordering safe by set containment instead of assuming it is not, plus the identity-2 and identity-3 rules for when an outer and an inner join do commute. Milestone 19 took the common case off this pile by proving many outer joins away entirely, and it also fixed the join estimate, so extra freedom is now freedom the search can use."
     },
     {
-      "item": "Reordering across an outer join",
+      "item": "A most-common-values list",
       "status": "not started",
-      "why": "PostgreSQL's min_lefthand/min_righthand per SpecialJoinInfo, so the search can PROVE a reordering safe by set containment instead of assuming it is not, plus the identity-2/identity-3 rules for when an outer and an inner join do commute. Real machinery, and worth less than the simplification above until the cardinality estimator is better \u2014 join_selectivity has no notion of a foreign key."
+      "why": "Milestone 19 fixed join_selectivity to divide by distinct values rather than row counts, which was wrong by 80x on a foreign-key join. distinct_count is still ONE number and skew defeats it: ten million orders spread over three customers is distinct = 3, and the estimate is off by six orders of magnitude. An MCV list plus a histogram is the standard answer and the single largest thing missing from this cost model."
     },
     {
       "item": "T14 as the dev server",
       "status": "waiting on hardware",
-      "why": "tailscale up, bind the server, systemd unit. A tailnet IS the auth \u2014 the API has none, so it must never be public. Buys real fsync, the recovery suite forking and SIGKILLing processes, and benchmarks off the laptop."
+      "why": "tailscale up, bind the server, systemd unit. A tailnet IS the auth: the API has none, so it must never be public. Buys real fsync, the recovery suite forking and SIGKILLing processes, and benchmarks off the laptop."
     },
     {
       "item": "Smaller, named in the milestone docs",
       "status": "not started",
-      "why": "USING and NATURAL JOIN (both need the binder to merge two columns into one output column, which the flat RowLayout cannot express); GROUP BY ordinals (ORDER BY has them, GROUP BY silently treats an integer literal as a grouping constant \u2014 refusing it is the honest minimum); ORDER BY on an expression outside the select list (ChenDB sorts above the projection); RETURNING and INSERT ... SELECT (one refactor covers the pair); heap-only tuples; TRUNCATE; a coverage gate; a Python version matrix; SharedArrayBuffer for real threads and therefore step mode in the browser."
+      "why": "USING and NATURAL JOIN (both need the binder to merge two columns into one output column, which the flat RowLayout cannot express); GROUP BY ordinals (ORDER BY has them, GROUP BY silently treats an integer literal as a grouping constant, refusing it is the honest minimum); ORDER BY on an expression outside the select list (ChenDB sorts above the projection); RETURNING and INSERT ... SELECT (one refactor covers the pair); heap-only tuples; TRUNCATE; a coverage gate; a Python version matrix; SharedArrayBuffer for real threads and therefore step mode in the browser."
     }
   ],
   "wasm_spike": {

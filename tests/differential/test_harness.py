@@ -48,6 +48,8 @@ REQUIRED_FEATURES: Final = (
     "right_join",
     "full_join",
     "outer_join_extra_on",
+    "outer_join_where_on_null_side",
+    "anti_join_idiom",
     "order_by",
     "order_by_desc",
     "limit",

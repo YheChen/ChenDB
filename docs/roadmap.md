@@ -24,6 +24,7 @@ the UI until the engine behind it exists.
 | 16 | (deployment and persistence) | Databases survive a refresh, kept in IndexedDB | **done** |
 | 17 | Enforced primary keys, and seven bug fixes a differential tester found | (a test suite, not a panel) | **done** |
 | 18 | `LEFT`/`RIGHT`/`FULL OUTER JOIN`, and a join search that respects them | An outer-join demo, and the flavour named in every plan | **done** |
+| 19 | Proving an outer join is an inner join, so pushdown and reordering apply again | The rewrite named in the plan view, as every rewrite is | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete,
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -42,7 +43,7 @@ it could not do before. So it is a feature after all, and it is named rather
 than excused.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-18-outer-joins.md`.
+the newest is `docs/milestone-19-outer-join-simplification.md`.
 
 ## What each milestone adds to the file format
 
@@ -62,6 +63,7 @@ the newest is `docs/milestone-18-outer-joins.md`.
 | 16 | — | (IndexedDB stores the same bytes; a page keeps the checksum it was written with) |
 | 17 | — | (a `PRIMARY KEY` now builds a real B+ tree, but with the M5 page types and no new meta field) |
 | 18 | — | (outer joins are a planner and executor change; the file format is untouched) |
+| 19 | — | (a rewrite rule and a cost estimate; nothing reaches the disk) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -80,10 +82,16 @@ Real problems this design has, with no milestone assigned:
 - **Bushy plans and index nested-loop joins.** Milestone 13 does left-deep
   plans; each of these is a real extension with a real reason it was left out.
   (Outer joins were on this list until Milestone 18.)
-- **Reordering across an outer join, and outer-join simplification.** Milestone 18
-  runs an outer join where it was written and never rewrites one to an inner join,
-  even when a null-rejecting `WHERE` proves it is one. PostgreSQL's
-  `min_lefthand`/`min_righthand` per outer join is how the first is recovered.
+- **Reordering across an outer join that survives the rewrite.** Milestone 19
+  proves an outer join away when a null-rejecting filter above it allows, and
+  removes the barrier along with it. It does not make the barrier permeable, so
+  an inner join written after an outer one that genuinely is outer still cannot
+  move before it. PostgreSQL's `min_lefthand`/`min_righthand` per
+  `SpecialJoinInfo` is how that is recovered.
+- **A most-common-values list.** Milestone 19 fixed the join estimate to divide
+  by distinct values rather than row counts, which was wrong by 80x on a
+  foreign-key join. `distinct_count` is still one number, and skew defeats it:
+  ten million orders over three customers is `distinct = 3`.
 - **Subqueries, `DISTINCT`, `UNION`, window functions.**
 - **`RETURNING`, and `INSERT ... SELECT`.** Both need a mutation to be an
   operator that emits rows rather than a call into storage. One refactor covers

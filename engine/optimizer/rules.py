@@ -14,42 +14,50 @@ Each rule reports whether it fired, so ``EXPLAIN`` and the plan view can show
 which rewrites applied. A plan that is mysteriously fast is only useful if you
 can see why.
 
-Why so few
-----------
-Four rules, because there is one table and no aggregation.  The two that matter
-most in a real optimiser are absent for structural reasons rather than
-oversight:
+What is here, and what is not
+-----------------------------
+Constant folding runs the arithmetic once instead of once per row, two
+eliminations remove whole operators from the pipeline, and one rule changes what
+a join *is*. Milestone 3 already did the identity-projection one inline; moving
+it here is the point of having a rules module. It becomes inspectable and
+testable in isolation rather than being a conditional buried in plan
+construction.
 
-* **Predicate pushdown**: moving a filter below a join so fewer rows are
-  joined. There are no joins, and a filter is already directly above the scan.
-* **Join reordering**: the single largest win in any real planner, and the
-  reason cost models exist at all.
+The two rewrites a textbook names first are elsewhere on purpose, because both
+depend on costs and on which table an expression reads:
 
-What *is* here is chosen to be honestly useful: constant folding runs the
-arithmetic once instead of once per row, and the two eliminations remove whole
-operators from the pipeline. Milestone 3 already did the identity-projection
-one inline; moving it here is the point of having a rules module. It becomes
-inspectable and testable in isolation rather than being a conditional buried in
-plan construction.
+* **Predicate pushdown** is in :func:`~engine.planner.physical._plan_joins`,
+  where a conjunct that names one table is applied at that table's scan.
+* **Join reordering** is :func:`~engine.planner.physical._search_join_order`,
+  System R's dynamic programme, and it needs the cost model in hand.
+
+:func:`_simplify_outer_joins` is the rule that makes both of those work harder.
+Neither may cross an outer join, so proving that an outer join is really an inner
+one hands two tables back to the search and unblocks pushdown into a side that
+was protected a moment earlier. It is the only rule here that pays off through
+other parts of the planner rather than by itself.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from engine.errors import EvaluationError
 from engine.executor.binder import BoundColumnRef
 from engine.executor.expression import evaluate
+from engine.optimizer.nullability import rejects_nulls
 from engine.parser.ast import (
     BinaryOp,
     Expression,
     IsNullTest,
+    JoinKind,
     Literal,
     UnaryOp,
 )
 from engine.planner.logical import (
     LogicalFilter,
+    LogicalJoin,
     LogicalNode,
     LogicalProject,
     LogicalScan,
@@ -327,6 +335,132 @@ def _merge_adjacent_filters(plan: LogicalNode) -> LogicalNode:
     return plan
 
 
+def _simplify_outer_joins(plan: LogicalNode) -> LogicalNode:
+    """Turn an outer join into the smaller join it is, when a filter proves it.
+
+    ``a LEFT JOIN b ON a.id = b.id WHERE b.x = 5`` is an inner join. The LEFT
+    keeps every ``a`` row that found no partner, filling ``b``'s columns with
+    NULLs; ``NULL = 5`` is NULL, a WHERE keeps only TRUE, and so not one of those
+    rows can reach the output. Preserving them was work with no observer.
+
+    The proof is :func:`~engine.optimizer.nullability.rejects_nulls`, and the
+    rewrite is the same line four times, because a join is really two independent
+    booleans rather than four names, see :meth:`JoinKind.of`::
+
+        LEFT  ─(the right side is null-rejected)─▶  INNER
+        RIGHT ─(the left side is null-rejected)──▶  INNER
+        FULL  ─(the right side is null-rejected)─▶  RIGHT
+        FULL  ─(the left side is null-rejected)──▶  LEFT
+        FULL  ─(both)────────────────────────────▶  INNER
+
+    **Why this rule earns its place.** It removes no operator and saves nothing
+    on its own: an inner join and an outer join over the same inputs cost the
+    same to run. What it does is hand the query back to the rest of the planner.
+    Milestone 18 made an outer join a barrier that join reordering may not cross
+    and a wall that predicate pushdown may not pass, both for good reasons. An
+    inner join is neither. So the saving is second-hand and can be large: the
+    two tables rejoin the search space, and the very predicate that proved the
+    rewrite is now free to be pushed down to a scan and to use an index.
+
+    **What proves it.** The WHERE, and also the ``ON`` of any *later* join in the
+    chain that does not preserve its left input. An inner join's ``ON`` discards
+    an accumulated row that fails it, and so does a ``RIGHT`` join's, which is
+    what makes ``a LEFT JOIN b ON … JOIN c ON b.k = c.k`` an inner join too even
+    with no WHERE at all. A ``LEFT`` or ``FULL`` join above preserves those rows,
+    so its ``ON`` proves nothing and is not consulted. HAVING is not consulted
+    either: it runs after grouping, and a NULL that survives into a group is a
+    longer argument than this rule needs to make.
+
+    The chain is walked **outermost first** so that a join already reduced this
+    pass counts as its reduced kind for the ones inside it. A ``FULL`` that
+    became a ``RIGHT`` starts discarding accumulated rows, and its ``ON`` becomes
+    admissible evidence for the join beneath it.
+    """
+    if isinstance(plan, LogicalJoin):
+        return _reduce_join_chain(plan, ())
+    if isinstance(plan, LogicalFilter) and isinstance(plan.child, LogicalJoin):
+        reduced = _reduce_join_chain(plan.child, (plan.predicate,))
+        return (
+            plan
+            if reduced is plan.child
+            else LogicalFilter(plan.node_id, plan.predicate, reduced)
+        )
+
+    child = getattr(plan, "child", None)
+    if not isinstance(child, LogicalNode):
+        return plan
+    rewritten = _simplify_outer_joins(child)
+    return plan if rewritten is child else replace(plan, child=rewritten)
+
+
+def _reduce_join_chain(root: LogicalJoin, where: tuple[Expression, ...]) -> LogicalNode:
+    chain = _written_order(root)
+    if not any(join.kind.is_outer for join in chain):
+        return root
+
+    leftmost = chain[0].left
+    if not isinstance(leftmost, LogicalScan) or not all(
+        isinstance(join.right, LogicalScan) for join in chain
+    ):
+        # The planner builds left-deep chains of scans and this rule reads scan
+        # positions off them. Anything else is a shape it has not been proved
+        # against, so it is left alone rather than guessed at.
+        return root
+
+    kinds = _reduced_kinds(chain, leftmost.position, where)
+    if kinds == [join.kind for join in chain]:
+        return root
+
+    node: LogicalNode = leftmost
+    for join, kind in zip(chain, kinds, strict=True):
+        node = replace(join, left=node, kind=kind)
+    return node
+
+
+def _written_order(root: LogicalJoin) -> list[LogicalJoin]:
+    """The chain innermost first, which is the order the joins were typed in."""
+    chain: list[LogicalJoin] = []
+    node: LogicalNode = root
+    while isinstance(node, LogicalJoin):
+        chain.append(node)
+        node = node.left
+    chain.reverse()
+    return chain
+
+
+def _reduced_kinds(
+    chain: list[LogicalJoin], first: int, where: tuple[Expression, ...]
+) -> list[JoinKind]:
+    """The kind each join in the chain can be reduced to. See the rule above."""
+    rights = [join.right.position for join in chain]  # type: ignore[union-attr]
+
+    # What sits to the left of each join: the first table, plus every table
+    # joined before this one. That whole set is what a RIGHT join NULL-extends,
+    # which is why it cannot be read off a single step.
+    lefts: list[frozenset[int]] = []
+    accumulated = {first}
+    for position in rights:
+        lefts.append(frozenset(accumulated))
+        accumulated.add(position)
+
+    kinds = [join.kind for join in chain]
+    for index in reversed(range(len(chain))):
+        if not kinds[index].is_outer:
+            continue
+        witnesses = list(where) + [
+            chain[later].predicate
+            for later in range(index + 1, len(chain))
+            if not kinds[later].preserves_left
+        ]
+        kinds[index] = JoinKind.of(
+            preserve_left=kinds[index].preserves_left
+            and not rejects_nulls(witnesses, frozenset({rights[index]})),
+            preserve_right=kinds[index].preserves_right
+            and not rejects_nulls(witnesses, lefts[index]),
+        )
+    return kinds
+
+
 def _scanned_schema(plan: LogicalNode):
     for node in (plan, *_descendants(plan)):
         if isinstance(node, LogicalScan):
@@ -364,5 +498,10 @@ RULES: tuple[Rule, ...] = (
         "drop_identity_projection",
         "Skip a projection that returns every column unchanged",
         _drop_identity_projection,
+    ),
+    Rule(
+        "simplify_outer_joins",
+        "Reduce an outer join whose preserved rows a filter above it cannot keep",
+        _simplify_outer_joins,
     ),
 )

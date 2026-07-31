@@ -294,6 +294,47 @@ SELECT s.name, sh.id
 FROM staff s FULL JOIN shifts sh ON s.id = sh.staff_id
 ORDER BY s.name, sh.id;`;
 
+export const SIMPLIFIED_OUTER_JOIN_DEMO_SQL = `-- An outer join is not always an outer join.
+-- Run this, then read the plan panel for each SELECT. Two of them say
+-- "rewrites applied: simplify_outer_joins" and run as inner joins, and one does
+-- not. The difference is what the WHERE could possibly say about a row the join
+-- invented by filling the missing side with NULLs.
+
+CREATE TABLE IF NOT EXISTS staff (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS shifts (id INTEGER PRIMARY KEY, staff_id INTEGER, hours INTEGER);
+CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, shift_id INTEGER, body TEXT);
+
+INSERT INTO staff VALUES (1, 'ada'), (2, 'alan'), (3, 'grace'), (4, 'edsger');
+INSERT INTO shifts VALUES (10, 1, 8), (11, 1, 4), (12, 2, 9), (13, 99, 6);
+INSERT INTO notes VALUES (20, 10, 'late'), (21, 12, 'swap');
+
+-- edsger has no shifts, so this join preserves a row whose sh.hours is NULL.
+-- NULL > 5 is NULL, a WHERE keeps only TRUE, and that row cannot survive. So
+-- the planner runs an inner join instead, and now that it may, it pushes the
+-- filter below the join as well.
+SELECT s.name, sh.hours
+FROM staff s LEFT JOIN shifts sh ON s.id = sh.staff_id
+WHERE sh.hours > 5
+ORDER BY s.name;
+
+-- The same predicate with an escape hatch. NULL > 5 is still NULL, but
+-- sh.hours IS NULL is TRUE about exactly the invented rows, and one survivable
+-- branch of an OR is enough. The join stays outer and edsger comes back.
+SELECT s.name, sh.hours
+FROM staff s LEFT JOIN shifts sh ON s.id = sh.staff_id
+WHERE sh.hours > 5 OR sh.hours IS NULL
+ORDER BY s.name;
+
+-- And the case that needs no WHERE at all. The inner join at the bottom throws
+-- away any row its ON rejects, and sh.id = n.shift_id is NULL for every invented
+-- row, so the outer join above it has nothing left to preserve. Both run as
+-- inner joins, and the order search is free to reorder all three tables.
+SELECT s.name, n.body
+FROM staff s
+LEFT JOIN shifts sh ON s.id = sh.staff_id
+     JOIN notes  n  ON sh.id = n.shift_id
+ORDER BY s.name;`;
+
 export const EXAMPLES: Example[] = [
   {
     label: "CREATE TABLE",
@@ -346,6 +387,16 @@ SELECT "select" FROM "order";`,
     label: "Joins and aggregation",
     parses: true,
     sql: JOIN_DEMO_SQL,
+  },
+  {
+    label: "Outer joins",
+    parses: true,
+    sql: OUTER_JOIN_DEMO_SQL,
+  },
+  {
+    label: "When an outer join is not one",
+    parses: true,
+    sql: SIMPLIFIED_OUTER_JOIN_DEMO_SQL,
   },
   {
     label: "Not implemented yet",
@@ -497,6 +548,12 @@ export function demoStatements(table: TableDetail): DemoStatement[] {
     id: "execution/outer-joins",
     label: "Outer joins",
     sql: OUTER_JOIN_DEMO_SQL,
+    on: "empty",
+  });
+  add({
+    id: "execution/outer-join-simplification",
+    label: "When an outer join is not one",
+    sql: SIMPLIFIED_OUTER_JOIN_DEMO_SQL,
     on: "empty",
   });
   return out;

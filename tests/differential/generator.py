@@ -528,6 +528,13 @@ class _Select:
     limit: int | None = None
     offset: int | None = None
     joins: list[str] = field(default_factory=list)
+    null_supplied: list[str] = field(default_factory=list)
+    """Aliases an outer join can fill with NULLs. Empty for an inner join.
+
+    Recorded so :func:`_label` can tell a WHERE that touches the invented rows
+    from one that does not, which is the difference between a query the planner
+    may collapse to an inner join and one it may not. See ``docs/milestone-19``.
+    """
     features: set[str] = field(default_factory=set)
 
     def add(self, expression_: Expr) -> int:
@@ -677,6 +684,10 @@ def _join_clause(source: random.Random, builder: _Select) -> str:
     if kind != "INNER":
         builder.features.add(f"{kind.lower()}_join")
         builder.features.add("outer_join")
+        if kind in ("LEFT", "FULL"):
+            builder.null_supplied.append(right.alias)
+        if kind in ("RIGHT", "FULL"):
+            builder.null_supplied.append(left.alias)
         if source.random() < 0.35:
             # An extra ON term on the *null-supplied* side. This is the case that
             # separates an outer join from an inner one with a WHERE: it must
@@ -701,8 +712,29 @@ def _plain(source: random.Random, builder: _Select) -> None:
     for _ in range(source.randint(1, 3)):
         builder.add(expression(source, builder.sources, source.choice(_TYPES)))
     if source.random() < 0.65:
-        builder.where = predicate(source, builder.sources)
+        builder.where = _where(source, builder)
         builder.features.add("where")
+
+
+def _where(source: random.Random, builder: _Select) -> Expr:
+    """The WHERE, with the anti-join idiom drawn deliberately rather than hoped for.
+
+    ``… LEFT JOIN b ON … WHERE b.k IS NULL`` is how anyone asks "which rows found
+    no partner", and it is the one WHERE that is TRUE about precisely the rows an
+    outer join invented. That makes it the shape Milestone 19's rewrite must never
+    touch, and so the shape whose coverage is worth drawing on purpose. Left to
+    chance it appeared five times across the CI seeds, which is a floor rather
+    than coverage.
+
+    The draw is skipped entirely when nothing can be NULL-extended, which keeps
+    every non-outer query's random sequence exactly where it was.
+    """
+    if builder.null_supplied and source.random() < 0.3:
+        alias = source.choice(builder.null_supplied)
+        entry = next(item for item in builder.sources if item.alias == alias)
+        column = source.choice(entry.table.columns)
+        return Expr(f"{alias}.{column.name} IS NULL", BOOLEAN, nullable=False)
+    return predicate(source, builder.sources)
 
 
 def _aggregate_only(source: random.Random, builder: _Select) -> None:
@@ -811,6 +843,37 @@ def _label(builder: _Select, spec: SchemaSpec) -> None:
             builder.features.add("not_null_column")
     if builder.where is not None and builder.where.type == BOOLEAN:
         builder.features.add("boolean_predicate")
+    _label_outer_join_shapes(builder)
+
+
+def _label_outer_join_shapes(builder: _Select) -> None:
+    """Whether the WHERE says anything about the rows an outer join invented.
+
+    Two corners, and the second is the one worth guarding. A WHERE that cannot be
+    TRUE about a NULL-extended row makes the outer join an inner one, and
+    Milestone 19's planner rewrites it on that basis; a WHERE built from
+    ``IS NULL`` is TRUE about exactly those rows and must survive untouched. Both
+    are generated already. What was missing was a name, so a change that stopped
+    producing either would leave the suite green.
+
+    Labelled from the rendered SQL rather than by asking the planner. A label
+    computed by the code under test agrees with its bugs.
+    """
+    if not builder.null_supplied or builder.where is None:
+        return
+    text = builder.where.sql
+    touched = [alias for alias in builder.null_supplied if f"{alias}." in text]
+    if not touched:
+        return
+    builder.features.add("outer_join_where_on_null_side")
+    for entry in builder.sources:
+        if entry.alias not in touched:
+            continue
+        if any(
+            f"{entry.alias}.{column.name} IS NULL" in text for column in entry.table.columns
+        ):
+            builder.features.add("anti_join_idiom")
+            return
 
 
 def _dml(source: random.Random, spec: SchemaSpec) -> Query:
