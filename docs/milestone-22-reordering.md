@@ -54,15 +54,29 @@ wrong rather than merely conservative:
 its left has proved nothing about what may be absent.
 
 **`RIGHT` and `FULL` get no freedom at all**, and this is the identity failing
-rather than caution. A `LEFT` join NULL-extends the table arriving; a `RIGHT`
-join NULL-extends everything accumulated to its left. Move an inner join below
-one and it is handed NULLs the written query never showed it:
+rather than caution. A `LEFT` join *preserves* everything accumulated on its
+left, so a table moved in there arrives with its values intact. A `RIGHT` join
+**NULL-extends** that same accumulated left, so a table moved in there is
+destroyed, and a condition that reads it elsewhere then sees a NULL the written
+query never produced.
 
+The containment is therefore one-sided: `min_left ⊆ rest` for a `LEFT` join,
+`rest == syntactic_left` for the other two.
+
+That distinction is not one this milestone reasoned its way to. It shipped
+without it, all 1,699 tests passed, and the differential tester found it on the
+next campaign:
+
+```sql
+SELECT … FROM parent
+RIGHT JOIN child ON parent.pid = child.parent_id AND child.parent_id > 0
+     JOIN grandchild ON child.cid = grandchild.child_id
+WHERE parent.p_tex IS NULL;
 ```
-(a ⨝ c) RIGHT JOIN b   an unmatched b gives (NULL, NULL, b)
-(a RIGHT JOIN b) ⨝ c   the same b gives (NULL, b), then c's condition on a
-                       sees NULL and drops the row
-```
+
+planned as `(grandchild × parent) ⟖ child`, which NULL-extends `grandchild` on
+the way past and then compares it. No rows, where there was one. The corpus
+Milestone 21 built is what caught it, on exactly the shape it was built for.
 
 **The set is closed under lower outer joins.** Needing `b`, which exists
 NULL-extended only because of the join that produced it, means needing that
@@ -113,9 +127,12 @@ into twice.
 Milestone 21 builds three tables and links the third over the second's head 40
 times in the CI seeds, which is precisely the shape `min_left` reasons about.
 
-**`RIGHT` and `FULL` are pinned by test**, not left to the reader to trust: their
-order still ends with the outer join and `EXPLAIN` still says every outer join
-needed everything written to its left.
+**`RIGHT` and `FULL` are pinned by test**, not left to the reader to trust:
+their order still ends with the outer join, `EXPLAIN` still says every outer
+join needed everything written to its left, and
+`test_a_table_written_after_a_right_join_may_not_move_before_it` is the bug
+above as a regression. Making the containment one-sided for every kind turns it
+red, along with the differential seed that found it.
 
 ---
 

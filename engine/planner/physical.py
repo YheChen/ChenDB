@@ -951,13 +951,30 @@ def _outer_may_run(
 ) -> bool:
     """Whether ``outer`` may run now, against everything joined so far.
 
-    ``min_left`` is the reordering this milestone buys. The second condition is
-    the one it does not: outer joins keep their written order relative to each
-    other. Commuting two of them is sometimes legal and needs an argument per
-    pair of join types, and the shapes that would benefit are ones the cost
-    model cannot size well yet. Stated rather than hidden.
+    ``min_left`` is the reordering this milestone buys, and the containment is
+    one-sided **only for a LEFT join**. A LEFT join preserves everything
+    accumulated on its left, so a table moved in there arrives with its values
+    intact. A ``RIGHT`` or ``FULL`` join NULL-extends that same accumulated
+    left, so a table moved in there is destroyed, and a condition on it
+    elsewhere in the query then reads a NULL the written form never produced.
+    Their left side must be *exactly* what was written, which is Milestone 18's
+    rule kept where it is still the right one.
+
+    The differential tester found that the run after this milestone's own tests
+    went green. ``parent RIGHT JOIN child … JOIN grandchild ON child.cid =
+    grandchild.child_id`` was planned as ``(grandchild x parent) ⟖ child``,
+    which NULL-extends ``grandchild`` and then compares it, and returned no rows
+    where there was one.
+
+    The second condition is the freedom this milestone does not take: outer
+    joins keep their written order relative to each other. Commuting two of them
+    is sometimes legal, needs an argument per pair of join types, and the shapes
+    that would benefit are ones the cost model cannot size well yet.
     """
-    if not outer.min_left <= rest:
+    if outer.kind is JoinKind.LEFT:
+        if not outer.min_left <= rest:
+            return False
+    elif rest != outer.syntactic_left:
         return False
     return all(
         position in rest for position, info in constraints.items() if info.rank < outer.rank

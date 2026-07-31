@@ -1422,3 +1422,41 @@ def test_half_an_outer_join_is_not_a_relation(chain: Database):
         f"`b` may not appear before the join that produced it, got {order}"
     )
     assert rows(chain, sql) == [(1, 100, 200), (1, 101, 200), (2, 102, 201)]
+
+
+def test_a_table_written_after_a_right_join_may_not_move_before_it(tmp_path: Path):
+    """The bug the differential tester found the run after this milestone's own
+    tests went green, and the reason the containment is one-sided.
+
+    A ``LEFT`` join *preserves* everything accumulated on its left, so a table
+    moved in there arrives with its values intact. A ``RIGHT`` join
+    NULL-extends that same accumulated left. Move ``c`` in and it is destroyed,
+    and the condition that reads it then sees a NULL the written query never
+    produced. Planned as ``(c x a) ⟖ b`` this returns nothing; there are two
+    rows.
+
+    ``a`` is **empty** on purpose, and that is what makes this a test rather
+    than a hope. The illegal order has to look *cheap* or the search will not
+    pick it, and the first version of this case used a three-row ``a``: the
+    correct order was cheaper anyway, so it passed with the bug in place.
+    """
+    with Database.open(tmp_path / "right3.chendb", page_size=4096) as db:
+        for name in ("a", "b", "c"):
+            db.create_table(name, CHAIN)
+        db.insert_many("b", [(100, 1, 1), (101, 1, 2)])
+        db.insert_many("c", [(200, 30, 1), (201, 40, 2)])
+        db.analyze()
+
+        sql = (
+            "SELECT a.id, b.id, c.id FROM a "
+            "RIGHT JOIN b ON a.id = b.ref "
+            "JOIN c ON b.n = c.n ORDER BY b.id;"
+        )
+        order = order_of(db, sql)
+        assert order.startswith("a RIGHT b"), (
+            f"`c` may not move before the RIGHT join, got {order}"
+        )
+        # Nothing in `a`, so the RIGHT join preserves both `b` rows with a NULL
+        # `a`, and both then match a `c`. A plan that NULL-extended `c` on the
+        # way past would lose them.
+        assert rows(db, sql) == [(None, 100, 200), (None, 101, 201)]
