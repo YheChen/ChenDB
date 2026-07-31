@@ -220,7 +220,7 @@
       "verified": "make ci green; 160,000 differential pairs clean with outer joins in the mix."
     },
     "milestone_19": {
-      "state": "COMPLETE, on branch outer-join-simplification (PR pending at the time of writing)",
+      "state": "COMPLETE and MERGED (PR #29)",
       "shipped": "Outer-join simplification. engine/optimizer/nullability.py proves that a predicate cannot be TRUE once a table's columns are all NULL; _simplify_outer_joins in engine/optimizer/rules.py uses that to reduce LEFT/RIGHT/FULL to the smaller join they really are. Plus JoinKind.of, the inverse of preserves_left/preserves_right, which is what makes the rewrite one line applied twice.",
       "the_analysis": "Abstract interpretation over SETS of truth values, not strictness flags. Every column of a NULL-supplied table is known NULL, everything else is ANY, and the result is pushed through SQL's own truth tables. TRUE absent from the set is a proof TRUE is impossible. Sound because every rule returns a SUPERSET, which is why an unrecognised node returns ANY: a new AST node then costs a missed rewrite, never a wrong answer. Written out rather than done with a strictness flag because IS NULL is not strict (it goes TRUE on exactly the invented rows, the anti-join idiom) and neither is OR (NULL OR TRUE is TRUE, so an OR rejects only when both sides do).",
       "what_counts_as_evidence": [
@@ -232,7 +232,7 @@
       ],
       "the_second_bug": "Measuring the milestone found join_selectivity passing ROW COUNTS where DISTINCT COUNTS belong. 50 users joined to 4,000 orders was estimated at 50 * 4000 / 4000 = 50, the size of the wrong side, off by 80x and compounding to 6,400x on three tables. distinct_join_selectivity had spelled the right formula since Milestone 6 and NOTHING had ever called it. Wired up as _joined_distinct_counts in engine/planner/physical.py; no existing test needed to change. It hid because Milestone 18's outer-join floor rescued RIGHT and FULL by accident, so only half the cases were visibly wrong.",
       "measured": "50 users, 4,000 orders, median of 25 runs, `WHERE o.total = 42` over a LEFT JOIN: 19.4 ms -> 13.4 ms with no index (1.5x), 19.4 ms -> 0.47 ms with an index on orders.total (41x). The 41x is the index doing the work and the rewrite is what let the query reach it.",
-      "verified": "make ci green; 1,654 Python tests and 160 frontend; the rewrite compared against itself with the rule monkeypatched out of RULES over eight queries; an exhaustive soundness property in tests/unit/test_null_rejection.py; differential campaigns clean against SQLite."
+      "verified": "make ci green and all six PR checks green; 1,654 Python tests and 160 frontend; 320,000 differential pairs against SQLite clean on the committed code, with outer_join_where_on_null_side and anti_join_idiom now named in REQUIRED_FEATURES; the rewrite compared against itself with the rule monkeypatched out of RULES over eight queries; an exhaustive soundness property in tests/unit/test_null_rejection.py. Every guard watched failing: removing the rule from RULES turns 17 join tests red, and making OR behave like AND in the analysis turns 13 null-rejection tests red including the exhaustive property. Seen working in a real browser: the M19 badge, the demo in both Examples dropdowns, `REWRITES APPLIED simplify_outer_joins` in the plan panel, and the join order coming back as `notes x shifts x staff` when the query was written staff, shifts, notes."
     }
   },
   "architecture_invariants": {
