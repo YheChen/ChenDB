@@ -270,7 +270,7 @@
       "the_bug_this_milestone_shipped_and_then_caught": "The containment is ONE-SIDED and the first version was not. min_left <= rest is right for a LEFT join (it PRESERVES the accumulated left, so a table moved in arrives intact) and wrong for RIGHT and FULL (they NULL-EXTEND the accumulated left, so a table moved in is destroyed and a condition reading it elsewhere sees a NULL the written query never produced). All 1,699 tests passed; the differential tester found it at seed 634 on the next campaign, on exactly the three-table shape Milestone 21 built. rest == syntactic_left for RIGHT and FULL now."
     },
     "milestone_23": {
-      "state": "COMPLETE, on branch subqueries (PR pending at the time of writing)",
+      "state": "COMPLETE and MERGED (PR #34)",
       "shipped": "Uncorrelated scalar subqueries. ScalarSubquery in the AST (the one node that holds a whole statement), _primary recurses when '(' is followed by SELECT, and fold_subqueries in engine/executor/engine.py runs each one ONCE and substitutes a Literal BEFORE binding.",
       "why_folding_before_binding": "An uncorrelated subquery names nothing outside itself, so it depends on no outer row and has one value for the whole statement. Folding it before binding means the planner, the index matcher and the cost model all see `column <op> literal`, which is what they were written for: `total = (SELECT MAX(total) FROM orders)` uses the index on total, which it could not if the subquery survived into the plan. Called from BOTH _execute_select and _execute_explain, so EXPLAIN shows the plan the query really gets (and therefore runs the subquery).",
       "what_it_refuses_and_why": [
@@ -279,7 +279,7 @@
         "Zero rows is NULL, not an error: x = NULL is UNKNOWN for every row, which is the answer.",
         "A correlated subquery is refused BY NAME. It would otherwise be refused by accident as 'no column named city' for a column that plainly exists, which is an hour of somebody's life. Detected by comparing the subquery's qualifiers against the OUTER aliases; a qualifier naming the subquery's own FROM is not correlated."
       ],
-      "verified": "make ci green; 1,713 Python tests; 320,000 differential pairs clean with a scalar subquery in 59 of the 1,024 CI-seed queries (COUNT(*) and MIN/MAX over an INTEGER column, the forms where both engines agree on the result's type as well as its value)."
+      "verified": "make ci green and all six PR checks green; 1,714 Python tests and 160 frontend; 320,000 differential pairs clean with a scalar subquery in 59 of the 1,024 CI-seed queries (COUNT(*) and MIN/MAX over an INTEGER column, the forms where both engines agree on the result's type as well as its value)."
     }
   },
   "architecture_invariants": {
