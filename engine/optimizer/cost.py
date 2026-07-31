@@ -96,6 +96,7 @@ __all__ = [
     "distinct_pages_touched",
     "estimate_selectivity",
     "index_scan_cost",
+    "mcv_join_selectivity",
     "seq_scan_cost",
 ]
 
@@ -406,6 +407,74 @@ def distinct_join_selectivity(left_distinct: int, right_distinct: int) -> float:
     return _clamp(1.0 / max(left_distinct, right_distinct, 1))
 
 
+def mcv_join_selectivity(
+    left: ColumnStatistics,
+    right: ColumnStatistics,
+    left_rows: int,
+    right_rows: int,
+) -> float | None:
+    """An equijoin's selectivity, read off both columns' most-common values.
+
+    ``1 / max(distinct)`` assumes every value is equally common on both sides,
+    and a join is exactly where that assumption compounds: an error in the
+    estimate feeds every join above this one, so two tables wrong by 10x make a
+    four-table plan wrong by 1,000.
+
+    Matching the two lists removes the assumption for the values in them. This
+    is PostgreSQL's ``eqjoinsel_inner`` in miniature, and it has three terms:
+
+    1. **Both sides' lists agree on a value.** Its contribution is exactly
+       ``f₁(v) · f₂(v)``, because both frequencies are counts.
+    2. **A value in one list is missing from the other's.** It can still match
+       rows in the other side's tail, spread over the distinct values that tail
+       is known to hold.
+    3. **Tail against tail**, uniform, which is the old estimate applied to what
+       is left rather than to everything.
+
+    The property worth noticing: when both lists are complete, terms 2 and 3 are
+    zero and the first is the *true* join cardinality divided by the cross
+    product. Not an estimate. Every foreign-key join between tables of ordinary
+    size is in that case, which is the one Milestone 19 found being estimated at
+    80x under its real size.
+
+    ``None`` when either side has no list to match, which leaves the caller on
+    :func:`distinct_join_selectivity`.
+    """
+    if not left.most_common or not right.most_common or not left_rows or not right_rows:
+        return None
+
+    left_frequency = {value: count / left_rows for value, count in left.most_common}
+    right_frequency = {value: count / right_rows for value, count in right.most_common}
+    shared = left_frequency.keys() & right_frequency.keys()
+
+    matched = sum(left_frequency[value] * right_frequency[value] for value in shared)
+    unmatched_left = sum(
+        frequency for value, frequency in left_frequency.items() if value not in shared
+    )
+    unmatched_right = sum(
+        frequency for value, frequency in right_frequency.items() if value not in shared
+    )
+
+    # The fraction of each side that neither list accounts for. NULLs are in
+    # neither, and are excluded rather than left in the tail, because a NULL
+    # never matches anything, not even another NULL.
+    other_left = max(
+        1.0 - left.null_fraction(left_rows) - left.most_common_rows / left_rows, 0.0
+    )
+    other_right = max(
+        1.0 - right.null_fraction(right_rows) - right.most_common_rows / right_rows, 0.0
+    )
+
+    selectivity = matched
+    tail_left = left.distinct_count - len(shared)
+    tail_right = right.distinct_count - len(shared)
+    if tail_right > 0:
+        selectivity += unmatched_left * other_right / tail_right
+    if tail_left > 0:
+        selectivity += other_left * (unmatched_right + other_right) / tail_left
+    return _clamp(selectivity)
+
+
 # --------------------------------------------------------------------------
 # Selectivity
 # --------------------------------------------------------------------------
@@ -445,7 +514,7 @@ def _selectivity(predicate: Expression, stats: TableStatistics) -> float:
             if info is None:
                 return DEFAULT_EQ_SELECTIVITY
             fraction = info.null_fraction(stats.row_count)
-            return 1.0 - fraction if negated else fraction
+            return max(1.0 - fraction if negated else fraction, _one_row(stats.row_count))
 
         case BinaryOp() if predicate.operator.is_comparison:
             return _comparison_selectivity(predicate, stats)
@@ -490,29 +559,181 @@ def _comparison_selectivity(predicate: BinaryOp, stats: TableStatistics) -> floa
         # them as different nodes.
         return MIN_SELECTIVITY
 
-    non_null = 1.0 - info.null_fraction(stats.row_count)
+    rows = stats.row_count
+    non_null = 1.0 - info.null_fraction(rows)
 
     match operator:
         case BinaryOperator.EQ:
-            return non_null / info.distinct_count
+            fraction = _equality_fraction(info, value, rows)
         case BinaryOperator.NEQ:
-            return non_null * (1.0 - 1.0 / info.distinct_count)
-        case BinaryOperator.LT | BinaryOperator.LTE:
-            return non_null * _range_fraction(info, value, below=True)
-        case BinaryOperator.GT | BinaryOperator.GTE:
-            return non_null * _range_fraction(info, value, below=False)
+            fraction = non_null - _equality_fraction(info, value, rows)
+        case BinaryOperator.LT:
+            fraction = _below_fraction(info, value, rows, inclusive=False)
+        case BinaryOperator.LTE:
+            fraction = _below_fraction(info, value, rows, inclusive=True)
+        case BinaryOperator.GT:
+            fraction = non_null - _below_fraction(info, value, rows, inclusive=True)
+        case BinaryOperator.GTE:
+            fraction = non_null - _below_fraction(info, value, rows, inclusive=False)
+        case _:  # pragma: no cover - all comparisons are covered above
+            return DEFAULT_INEQ_SELECTIVITY
 
-    return DEFAULT_INEQ_SELECTIVITY  # pragma: no cover - all comparisons covered
+    return max(fraction, _one_row(rows))
 
 
-def _range_fraction(info: ColumnStatistics, value: Any, *, below: bool) -> float:
+def _one_row(row_count: int) -> float:
+    """The smallest a comparison's estimate may be: one row, never zero.
+
+    Every number the estimator has is as of the last ``ANALYZE``, so "this value
+    does not occur" means "did not occur when we looked". Predicting zero rows
+    from that makes every operator above the scan free, and a plan built on a
+    free subtree is not merely imprecise, it is unrecoverable: no amount of
+    later work can outweigh nothing. PostgreSQL floors the same way in
+    ``clamp_row_est``, for the same reason.
+
+    ``x = NULL`` is deliberately *not* floored. It admits no rows by the
+    definition of three-valued logic rather than by observation, which is a
+    claim no future insert can falsify.
+    """
+    return 1.0 / row_count if row_count > 0 else MIN_SELECTIVITY
+
+
+def _equality_fraction(info: ColumnStatistics, value: Any, row_count: int) -> float:
+    """The fraction of rows equal to ``value``, from the most-common list.
+
+    Three cases, and only the third is an estimate:
+
+    * **In the list.** Its count is exact.
+    * **Absent from a complete list.** The value does not occur, and the answer
+      is zero rows. It is floored at *one* row instead, because the list is only
+      complete as of the last ``ANALYZE``: a value inserted since is invisible
+      to it, and an estimate of zero makes every operator above the scan look
+      free. One row is the smallest honest answer, and it is what PostgreSQL
+      clamps to as well.
+    * **Absent from a partial list.** Uniform over what the list does not
+      account for, which is the old estimate narrowed to the tail. Better than
+      the old one, because the skewed head has been taken out of the average.
+    """
+    if row_count <= 0:
+        return DEFAULT_EQ_SELECTIVITY
+    for candidate, count in info.most_common:
+        if candidate == value:
+            return count / row_count
+    if info.covers_every_value or _outside_range(info, value):
+        return _one_row(row_count)
+    if not info.most_common:
+        return (1.0 - info.null_fraction(row_count)) / info.distinct_count
+
+    tail_rows = row_count - info.null_count - info.most_common_rows
+    tail_distinct = max(info.distinct_count - len(info.most_common), 1)
+    return max(tail_rows, 0.0) / row_count / tail_distinct
+
+
+def _outside_range(info: ColumnStatistics, value: Any) -> bool:
+    """Whether ``value`` is beyond every value the column was seen to hold.
+
+    Cheaper evidence than a complete most-common list and available far more
+    often: min and max bound the column whatever its cardinality. Without it,
+    ``bucket = 500`` on a column holding 0..99 gets the average of the tail,
+    which is the estimate for a value that *might* be there. This one is not.
+    """
+    if info.minimum is None or info.maximum is None or not _comparable(info, value):
+        return False
+    return value < info.minimum or value > info.maximum
+
+
+def _below_fraction(
+    info: ColumnStatistics, value: Any, row_count: int, *, inclusive: bool
+) -> float:
+    """The fraction of rows below ``value``, counting MCVs and histogram buckets.
+
+    The MCV part is exact: every listed value is either below the bound or not.
+    The histogram part counts whole buckets and interpolates inside the one the
+    bound falls in. Between them they replace a straight line drawn from min to
+    max, which was wrong by however skewed the column was, and which could not
+    tell ``<`` from ``<=`` at all.
+
+    A column with neither structure (never analyzed, or analyzed when empty)
+    falls back to that line, so :func:`_uniform_fraction` is still here.
+    """
+    if row_count <= 0:
+        return DEFAULT_INEQ_SELECTIVITY
+    if not info.most_common and not info.histogram:
+        non_null = 1.0 - info.null_fraction(row_count)
+        return non_null * _uniform_fraction(info, value)
+    if not _comparable(info, value):
+        return DEFAULT_INEQ_SELECTIVITY
+
+    rows = sum(count for candidate, count in info.most_common if candidate < value)
+    fraction = (rows + _histogram_rows_below(info, value, row_count)) / row_count
+    if inclusive:
+        # `<= v` is `< v` plus the rows equal to v, which is the one estimate
+        # that already exists. A histogram cannot resolve a single value inside
+        # a bucket, so without this `<` and `<=` come out identical, which is
+        # the entire answer when the column holds two values. PostgreSQL splits
+        # ``scalarltsel`` and ``scalarlesel`` the same way.
+        fraction += _equality_fraction(info, value, row_count)
+    return fraction
+
+
+def _histogram_rows_below(info: ColumnStatistics, value: Any, row_count: int) -> float:
+    """How many of the histogram's rows are below ``value``.
+
+    Each bucket holds the same number of rows by construction, so a bound past
+    ``k`` boundaries has ``k`` whole buckets below it. The straddled bucket is
+    split by linear interpolation for a number, and taken as half for anything
+    else: TEXT can be *ordered*, which is what puts the bound in the right
+    bucket, but there is no sensible fraction of the way from 'apple' to 'pear'.
+    """
+    bounds = info.histogram
+    if len(bounds) < 2:
+        return 0.0
+    covered = row_count - info.null_count - info.most_common_rows
+    if covered <= 0:
+        return 0.0
+
+    buckets = len(bounds) - 1
+    per_bucket = covered / buckets
+    if value <= bounds[0]:
+        return 0.0
+    if value >= bounds[-1]:
+        return float(covered)
+
+    whole = 0
+    while whole < buckets and value >= bounds[whole + 1]:
+        whole += 1
+    low, high = bounds[whole], bounds[whole + 1]
+    if isinstance(value, (int, float)) and isinstance(low, (int, float)):
+        span = float(high) - float(low)
+        within = (float(value) - float(low)) / span if span > 0 else 0.5
+    else:
+        within = 0.5
+    return (whole + min(max(within, 0.0), 1.0)) * per_bucket
+
+
+def _comparable(info: ColumnStatistics, value: Any) -> bool:
+    """Whether ``value`` can be ordered against this column's stored values.
+
+    A boolean is not an integer here even though Python says otherwise, and the
+    binder refuses the mixed comparison long before this, so the guard is about
+    a statistics lookup landing on the wrong column rather than about SQL.
+    """
+    if info.data_type is DataType.BOOLEAN:
+        return isinstance(value, bool)
+    if info.data_type in (DataType.INTEGER, DataType.FLOAT):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, str)
+
+
+def _uniform_fraction(info: ColumnStatistics, value: Any) -> float:
     """Where ``value`` falls between min and max, assuming a uniform spread.
 
-    Uniformity is the assumption a histogram exists to remove: on a column whose
-    values cluster at one end, this is wrong by however skewed the data is. It
-    is still far better than a fixed guess, because it gets the *shape* right.
-    A bound outside the observed range estimates ~0 or ~1, which is correct and
-    is the case a fixed guess handles worst.
+    The estimate everything used before Milestone 20, kept for a column that has
+    no summary at all. Uniformity is exactly what the histogram removes: on a
+    column whose values cluster at one end this is wrong by however skewed the
+    data is. It still gets the *shape* right, and a bound outside the observed
+    range estimates ~0 or ~1, which is correct and is the case a fixed guess
+    handles worst.
     """
     if not info.has_range or not isinstance(value, (int, float)):
         return DEFAULT_INEQ_SELECTIVITY
@@ -521,13 +742,10 @@ def _range_fraction(info: ColumnStatistics, value: Any, *, below: bool) -> float
     point = float(value)
     if high <= low:
         # Every row shares one value: the predicate is all or nothing.
-        if below:
-            return 1.0 if point > low else MIN_SELECTIVITY
-        return 1.0 if point < low else MIN_SELECTIVITY
+        return 1.0 if point > low else MIN_SELECTIVITY
 
     fraction = (point - low) / (high - low)
-    fraction = min(max(fraction, 0.0), 1.0)
-    return fraction if below else 1.0 - fraction
+    return min(max(fraction, 0.0), 1.0)
 
 
 def _as_column_literal(

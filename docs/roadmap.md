@@ -25,6 +25,7 @@ the UI until the engine behind it exists.
 | 17 | Enforced primary keys, and seven bug fixes a differential tester found | (a test suite, not a panel) | **done** |
 | 18 | `LEFT`/`RIGHT`/`FULL OUTER JOIN`, and a join search that respects them | An outer-join demo, and the flavour named in every plan | **done** |
 | 19 | Proving an outer join is an inner join, so pushdown and reordering apply again | The rewrite named in the plan view, as every rewrite is | **done** |
+| 20 | Most-common values and a histogram, so the estimator can see skew | A demo where three queries on one column get three different plans | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete,
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -43,7 +44,7 @@ it could not do before. So it is a feature after all, and it is named rather
 than excused.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-19-outer-join-simplification.md`.
+the newest is `docs/milestone-20-skew.md`.
 
 ## What each milestone adds to the file format
 
@@ -64,6 +65,7 @@ the newest is `docs/milestone-19-outer-join-simplification.md`.
 | 17 | — | (a `PRIMARY KEY` now builds a real B+ tree, but with the M5 page types and no new meta field) |
 | 18 | — | (outer joins are a planner and executor change; the file format is untouched) |
 | 19 | — | (a rewrite rule and a cost estimate; nothing reaches the disk) |
+| 20 | — | (statistics still live in memory and die with the process, on purpose) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -88,10 +90,11 @@ Real problems this design has, with no milestone assigned:
   an inner join written after an outer one that genuinely is outer still cannot
   move before it. PostgreSQL's `min_lefthand`/`min_righthand` per
   `SpecialJoinInfo` is how that is recovered.
-- **A most-common-values list.** Milestone 19 fixed the join estimate to divide
-  by distinct values rather than row counts, which was wrong by 80x on a
-  foreign-key join. `distinct_count` is still one number, and skew defeats it:
-  ten million orders over three customers is `distinct = 3`.
+- **Multi-column and expression statistics.** Milestone 20 gave every column a
+  most-common-values list and a histogram, so single-column estimates are now
+  accurate and often exact. Conjunctions are still multiplied as if independent,
+  which is what PostgreSQL's `CREATE STATISTICS` exists to fix, and
+  `WHERE lower(name) = 'ada'` still has nothing to read.
 - **Subqueries, `DISTINCT`, `UNION`, window functions.**
 - **`RETURNING`, and `INSERT ... SELECT`.** Both need a mutation to be an
   operator that emits rows rather than a call into storage. One refactor covers

@@ -20,7 +20,7 @@ minutes. That found seven bugs the 1,243 hand-written tests had missed.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M19    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M20    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -46,7 +46,7 @@ minutes. That found seven bugs the 1,243 hand-written tests had missed.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Nineteen milestones are complete.** Nothing is stubbed ahead of time: a
+**Twenty milestones are complete.** Nothing is stubbed ahead of time: a
 feature absent from the engine is absent from the API and hidden in the UI. See
 [the roadmap](docs/roadmap.md).
 
@@ -76,7 +76,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 1.9.0 - Milestone 19 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification)
+ChenDB 2.0.0 - Milestone 20 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 opened demo.chendb (4 page(s))
@@ -176,14 +176,14 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Execution** | volcano operators (scan / filter / project / join / aggregate / sort / limit) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk · a `PRIMARY KEY` builds a real unique index |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
-| **Planner** | logical and physical plans · statistics · a cost model calibrated by measurement · predicate pushdown · System R join-order search · outer joins proved to be inner joins and reordered · `EXPLAIN` |
+| **Planner** | logical and physical plans · most-common values and equi-depth histograms · a cost model calibrated by measurement · predicate pushdown · System R join-order search · outer joins proved to be inner joins and reordered · `EXPLAIN` |
 | **Buffer pool** | write-back · exact LRU · counters for every frame |
 | **Transactions** | `BEGIN` / `COMMIT` / `ROLLBACK` · page-level undo log · implicit transactions · atomic DDL |
 | **Durability** | write-ahead log · LSN per page · checkpoints · ARIES recovery (analysis / redo / undo) · a crash button that proves it |
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
-| **Correctness** | 1,654 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
+| **Correctness** | 1,681 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
 Five claims worth checking rather than believing:
 
@@ -210,6 +210,15 @@ is not: `b.x` is NULL in every row the join preserved, `NULL = 5` is NULL, and a
 back at once, and on 4,000 rows with an index it is the difference between 19 ms
 and half a millisecond. `EXPLAIN` names each decision separately, including that
 one. `tests/unit/test_joins.py` asserts it.
+
+**And the numbers it decides on are checked against reality.** Every column
+carries its most-common values with exact counts and an equi-depth histogram
+over the rest, so a column holding 90% `info`, 9% `warn` and 1% `error` gets
+three different estimates rather than one average of them. Where the list covers
+every value, which is most columns at this size, the estimate is a count and not
+a prediction. `tests/unit/test_estimates.py` runs each case twice, once for what
+the planner predicted and once for what came back, which is the test this
+project did not have when a join estimate sat 80x under its true value.
 
 **An update does not overwrite anything.** It writes eight bytes to the old
 version and appends a new one, so a transaction that took its snapshot first
@@ -324,7 +333,7 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 1,654 tests
+.venv/bin/python -m pytest              # 1,681 tests
 npm --prefix visualizer test            # 160 tests
 ```
 
@@ -365,6 +374,7 @@ change the system observed.
 | `python examples/milestone17_differential.py` | the seven bugs SQLite found, and why a test can agree with one |
 | `python examples/milestone18_outer_joins.py` | outer joins, and the licence the planner had to give up |
 | `python examples/milestone19_outer_join_simplification.py` | proving an outer join is an inner join, and what that unblocks |
+| `python examples/milestone20_skew.py` | one estimate for three queries, and the two structures that fixed it |
 | `python scripts/differential.py --seeds 0:5000` | a real differential campaign, ~80,000 query pairs |
 | `make ci` | lint, typecheck, both test suites and every example, CI's order |
 | `make demo-sql` | every SQL statement the explorer's buttons will produce |
@@ -401,6 +411,7 @@ change the system observed.
 | [Milestone 17](docs/milestone-17-differential.md) | seven bugs a second engine found, and the line between a rule and an excuse |
 | [Milestone 18](docs/milestone-18-outer-joins.md) | outer joins, why NULL-extension was free, and why the join search needed a barrier |
 | [Milestone 19](docs/milestone-19-outer-join-simplification.md) | proving an outer join is an inner join, and the estimate that measurement found broken |
+| [Milestone 20](docs/milestone-20-skew.md) | most-common values, equi-depth histograms, and the first test that checks an estimate against reality |
 | [Roadmap](docs/roadmap.md) | every milestone, and what each one added to the file format |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |
