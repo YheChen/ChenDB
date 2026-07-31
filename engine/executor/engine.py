@@ -32,8 +32,8 @@ later.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from engine.diagnostics.events import (
@@ -51,6 +51,7 @@ from engine.errors import (
     IndexingError,
     QueryCancelledError,
     TransactionError,
+    UnsupportedSqlError,
 )
 from engine.executor.binder import (
     BoundDelete,
@@ -84,17 +85,26 @@ from engine.executor.operators import (
 from engine.parser.ast import (
     AnalyzeStatement,
     BeginStatement,
+    BinaryOp,
+    ColumnRef,
     CommitStatement,
     CreateIndexStatement,
     CreateTableStatement,
     DeleteStatement,
     ExplainStatement,
     Expression,
+    FunctionCall,
     InsertStatement,
+    IsNullTest,
+    Literal,
     RollbackStatement,
+    ScalarSubquery,
     SelectStatement,
+    Star,
     Statement,
+    UnaryOp,
     UpdateStatement,
+    walk,
 )
 from engine.parser.parser import parse
 from engine.planner.logical import (
@@ -128,6 +138,7 @@ from engine.planner.physical import (
 )
 from engine.serialization.record import Row
 from engine.serialization.schema import Schema
+from engine.serialization.types import DataType
 from engine.storage.heap import RecordId
 from engine.transaction.manager import TransactionState
 
@@ -795,6 +806,13 @@ def _execute_explain(
 
     match inner:
         case SelectStatement():
+            # Folded here as well as in `_execute_select`, because an EXPLAIN
+            # must show the plan the query would actually get, and after
+            # folding that plan holds a literal rather than a subquery. It also
+            # means EXPLAIN *runs* the subquery, which is worth knowing: an
+            # uncorrelated subquery is a constant, and you cannot plan around a
+            # constant you have not computed.
+            inner = fold_subqueries(inner, database, context)
             planned = plan_query(
                 bind_select(inner, database.catalog),
                 database,
@@ -1140,6 +1158,7 @@ def _execute_select(
     *,
     planned: PlannedQuery | None = None,
 ) -> QueryResult:
+    statement = fold_subqueries(statement, database, context)
     bound = bind_select(statement, database.catalog)
     # EXPLAIN ANALYZE has already planned; re-planning would emit a second set
     # of planner events and re-gather statistics for no gain.
@@ -1303,3 +1322,177 @@ def _find_scan(plan: Operator) -> ScanOperator | None:
         if isinstance(operator, ScanOperator):
             return operator
     return None
+
+
+# --------------------------------------------------------------------------
+# Subqueries (Milestone 23)
+# --------------------------------------------------------------------------
+
+
+def fold_subqueries(
+    statement: SelectStatement, database: Database, context: ExecutionContext
+) -> SelectStatement:
+    """Run every ``(SELECT …)`` once and substitute the value it produced.
+
+    An uncorrelated subquery names nothing outside itself, so it depends on no
+    row of the query around it and has **one value for the whole statement**.
+    Running it once and folding the result into a literal is therefore not an
+    optimisation of some more general mechanism; for this shape it is the whole
+    semantics, and it happens before binding so everything downstream (the
+    planner, the index matcher, the cost model) sees an ordinary constant and
+    needs to know nothing about subqueries at all.
+
+    ``WHERE total > (SELECT AVG(total) FROM orders)`` becomes
+    ``WHERE total > 812``, which an index on ``total`` can answer.
+
+    A **correlated** subquery is refused by name. It is a different feature with
+    a different implementation, either a join or one execution per outer row,
+    and running one per row without saying so would turn a query somebody wrote
+    into a plan nobody would have chosen.
+    """
+    outer = {reference.binding_name.casefold() for reference in statement.tables}
+    return _map_expressions(statement, lambda item: _fold(item, database, context, outer))
+
+
+def _fold(
+    expression: Expression,
+    database: Database,
+    context: ExecutionContext,
+    outer: set[str],
+) -> Expression:
+    """Replace every subquery in one expression tree with its value."""
+    match expression:
+        case ScalarSubquery(statement=inner):
+            _refuse_if_correlated(expression, inner, outer)
+            value = _run_scalar(expression, inner, database, context)
+            return Literal(
+                node_id=expression.node_id,
+                span=expression.span,
+                value=value,
+                data_type=_literal_type(value),
+            )
+        case UnaryOp(operand=operand):
+            folded = _fold(operand, database, context, outer)
+            if folded is operand:
+                return expression
+            return replace(expression, operand=folded)
+        case BinaryOp(left=left, right=right):
+            new_left = _fold(left, database, context, outer)
+            new_right = _fold(right, database, context, outer)
+            if new_left is left and new_right is right:
+                return expression
+            return replace(expression, left=new_left, right=new_right)
+        case IsNullTest(operand=operand):
+            folded = _fold(operand, database, context, outer)
+            return expression if folded is operand else replace(expression, operand=folded)
+        case FunctionCall(argument=argument) if argument is not None:
+            folded = _fold(argument, database, context, outer)
+            return (
+                expression if folded is argument else replace(expression, argument=folded)
+            )
+    return expression
+
+
+def _run_scalar(
+    node: ScalarSubquery,
+    inner: SelectStatement,
+    database: Database,
+    context: ExecutionContext,
+) -> Any:
+    """Execute the subquery and reduce its result to one value.
+
+    Two errors, and both are PostgreSQL's. One column, because a value is one
+    value; at most one row, because more than one has no defensible answer and
+    picking the first would make the query depend on physical order. Zero rows
+    is **NULL**, not an error, which is what makes
+    ``WHERE x = (SELECT … WHERE false)`` return nothing rather than fail.
+    """
+    if len(inner.projections) != 1 or isinstance(inner.projections[0].expression, Star):
+        raise _subquery_error(node, "a subquery used as a value must return one column")
+
+    result = _execute_select(inner, database, context)
+    if not result.rows:
+        return None
+    if len(result.rows) > 1:
+        raise _subquery_error(
+            node,
+            f"a subquery used as a value returned {len(result.rows)} rows; "
+            f"add a LIMIT, an aggregate, or a condition that makes it one",
+        )
+    return result.rows[0][0]
+
+
+def _refuse_if_correlated(
+    node: ScalarSubquery, inner: SelectStatement, outer: set[str]
+) -> None:
+    """Refuse a subquery that reaches into the query around it.
+
+    Detected by name rather than by letting the binder fail: an unqualified
+    column that does not exist inside is a typo and deserves "no column named",
+    while ``o.total`` inside a subquery over ``items`` is a correlated
+    reference and deserves to be told so.
+    """
+    inside = {reference.binding_name.casefold() for reference in inner.tables}
+    for child in walk(inner):
+        if not isinstance(child, ColumnRef) or child.table is None:
+            continue
+        qualifier = child.table.casefold()
+        if qualifier in outer and qualifier not in inside:
+            raise UnsupportedSqlError(
+                f"a correlated subquery is not implemented yet: "
+                f"{child.qualified_name!r} belongs to the query outside this one",
+                start=child.span.start,
+                end=child.span.end,
+                line=child.span.line,
+                column=child.span.column,
+                found=child.qualified_name,
+            )
+
+
+def _subquery_error(node: ScalarSubquery, message: str) -> BindingError:
+    return BindingError(
+        message,
+        start=node.span.start,
+        end=node.span.end,
+        line=node.span.line,
+        column=node.span.column,
+    )
+
+
+def _literal_type(value: Any) -> DataType | None:
+    match value:
+        case bool():
+            return DataType.BOOLEAN
+        case int():
+            return DataType.INTEGER
+        case float():
+            return DataType.FLOAT
+        case str():
+            return DataType.TEXT
+    return None
+
+
+def _map_expressions(
+    statement: SelectStatement, transform: Callable[[Expression], Expression]
+) -> SelectStatement:
+    """Apply ``transform`` to every expression a ``SELECT`` can hold.
+
+    Written out rather than derived from the dataclass fields, because a generic
+    rewriter would have to know which tuples hold nodes that hold expressions
+    and which hold expressions directly, and the list is six entries long.
+    """
+    return replace(
+        statement,
+        projections=tuple(
+            replace(item, expression=transform(item.expression))
+            for item in statement.projections
+        ),
+        joins=tuple(replace(join, on=transform(join.on)) for join in statement.joins),
+        where=transform(statement.where) if statement.where is not None else None,
+        group_by=tuple(transform(key) for key in statement.group_by),
+        having=transform(statement.having) if statement.having is not None else None,
+        order_by=tuple(
+            replace(item, expression=transform(item.expression))
+            for item in statement.order_by
+        ),
+    )

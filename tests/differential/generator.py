@@ -811,6 +811,26 @@ def _where(source: random.Random, builder: _Select) -> Expr:
     The draw is skipped entirely when nothing can be NULL-extended, which keeps
     every non-outer query's random sequence exactly where it was.
     """
+    if source.random() < 0.15 and (numeric := _columns_of(builder.sources, INTEGER)):
+        # A comparison against an uncorrelated scalar subquery. Both engines run
+        # it once, so the only thing being compared is whether ChenDB folds the
+        # right value, and COUNT(*) and MIN/MAX over an INTEGER column are the
+        # forms where the two agree on the *type* as well as the number.
+        column = source.choice(numeric)
+        table = source.choice([entry.table.name for entry in builder.sources])
+        inner = (
+            "COUNT(*)"
+            if source.random() < 0.4
+            else f"{source.choice(('MIN', 'MAX'))}({column.sql.split('.')[-1]})"
+        )
+        builder.features.add("scalar_subquery")
+        return Expr(
+            f"{column.sql} {source.choice(('=', '<>', '<', '>='))} "
+            f"(SELECT {inner} FROM {table})",
+            BOOLEAN,
+            nullable=True,
+        )
+
     if builder.null_supplied and source.random() < 0.3:
         alias = source.choice(builder.null_supplied)
         entry = next(item for item in builder.sources if item.alias == alias)

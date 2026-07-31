@@ -70,6 +70,7 @@ __all__ = [
     "Node",
     "OrderByItem",
     "RollbackStatement",
+    "ScalarSubquery",
     "SelectItem",
     "SelectStatement",
     "SortDirection",
@@ -615,3 +616,26 @@ class SelectStatement(Statement):
     def tables(self) -> tuple[TableRef, ...]:
         """Every table in the ``FROM``, in the order it was written."""
         return (self.table, *(join.table for join in self.joins))
+
+
+@dataclass(frozen=True, slots=True)
+class ScalarSubquery(Expression):
+    """``(SELECT …)`` used where a value is expected.
+
+    Declared after :class:`SelectStatement` because it holds one, which is the
+    only cycle in this grammar and the reason the file is ordered the way it is.
+
+    A subquery that names nothing outside itself is a **constant**: it depends
+    on no row of the query around it, so it has one value for the whole
+    statement however many rows that statement scans. Milestone 23 runs it once
+    and substitutes the value, which is both the simplest correct thing and,
+    for this shape, the fastest. A *correlated* subquery is a different feature
+    with a different implementation (a join, or a per-row re-execution) and the
+    parser refuses one by name rather than running it slowly.
+    """
+
+    statement: SelectStatement
+
+    @property
+    def detail(self) -> str:
+        return "(SELECT …)"

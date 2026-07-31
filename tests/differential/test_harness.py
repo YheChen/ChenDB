@@ -53,6 +53,7 @@ REQUIRED_FEATURES: Final = (
     "three_table_join",
     "join_skipping_a_table",
     "inner_join_after_outer",
+    "scalar_subquery",
     "order_by",
     "order_by_desc",
     "limit",
