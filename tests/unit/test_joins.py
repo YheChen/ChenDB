@@ -13,6 +13,7 @@ different reasons and a mixed suite would not say which.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from engine import Column, Database, DataType, Schema
 from engine.errors import BindingError
 from engine.executor.engine import execute_script
 from engine.optimizer import rules
+from engine.planner import physical
 from engine.planner.physical import (
     PhysicalHashJoin,
     PhysicalIndexScan,
@@ -712,11 +714,11 @@ def test_explain_names_the_join_flavour(db: Database):
     # join constrains.
     outer = explain(db, "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id;")
     assert "LEFT" in outer
-    assert "may not reorder across it" in outer
+    assert "outer join" in outer, "the order decision must say what constrained it"
 
     inner = explain(db, "SELECT * FROM users u JOIN orders o ON u.id = o.user_id;")
     assert "LEFT" not in inner
-    assert "may not reorder across it" not in inner
+    assert "outer join" not in inner
 
 
 def test_an_outer_join_is_estimated_above_its_preserved_input(db: Database):
@@ -1024,23 +1026,24 @@ def test_the_rewrite_re_enables_pushdown(db: Database):
 def test_the_rewrite_re_enables_reordering(three: Database):
     """The second, and the reason this rule is in the milestone at all.
 
-    An outer join is a barrier the join-order search may not cross, and it says
-    so in ``EXPLAIN``. Proving it inner hands both tables back to the search.
+    An outer join constrains the join-order search, and ``EXPLAIN`` says which
+    ones did. Proving them inner removes the constraint entirely: the order
+    decision stops mentioning an outer join because there is not one left.
     """
-    barrier = "may not reorder across it"
+    constrained = "outer join"
     kept = explain(
         three,
         "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
         "LEFT JOIN tags t ON o.id = t.order_id;",
     )
-    assert barrier in kept
+    assert constrained in kept
 
     freed = explain(
         three,
         "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id "
         "LEFT JOIN tags t ON o.id = t.order_id WHERE t.label = 'gift';",
     )
-    assert barrier not in freed, "both joins are inner now:\n" + freed
+    assert constrained not in freed, "both joins are inner now:\n" + freed
 
 
 def test_a_pushed_predicate_can_use_an_index_after_the_rewrite(tmp_path: Path):
@@ -1256,3 +1259,204 @@ def test_three_tables_agree_across_every_pair_of_join_kinds(chain: Database):
                 if isinstance(node, PhysicalSeqScan | PhysicalIndexScan)
             }
             assert scanned == {"a", "b", "c"}, f"{first} / {second} reads {scanned}"
+
+
+# --------------------------------------------------------------------------
+# Reordering across an outer join (Milestone 22)
+# --------------------------------------------------------------------------
+
+# Milestone 18 required every table written to an outer join's left to be
+# joined before it. That is the safe over-approximation. The real requirement
+# is the tables its own ON reads, and the difference is what lets an inner join
+# written after an outer one run before it.
+
+WIDE = Schema.of(
+    Column("id", DataType.INTEGER, nullable=False, primary_key=True),
+    Column("k", DataType.INTEGER),
+)
+TAGGED = Schema.of(
+    Column("id", DataType.INTEGER, nullable=False, primary_key=True),
+    Column("a_id", DataType.INTEGER),
+)
+
+
+@pytest.fixture
+def wide(tmp_path: Path):
+    """Twenty rows, four thousand rows, twenty rows.
+
+    Deliberately lopsided: joining ``big`` last is worth measuring, and joining
+    it first is what Milestone 18 was forced into. Four thousand rather than the
+    twenty thousand the milestone document measures on, because
+    ``execute_script`` stops at ``DEFAULT_MAX_ROWS`` and two plans that return
+    different ten-thousand-row *prefixes* of the same answer would look like a
+    reordering that changed it.
+    """
+    with Database.open(tmp_path / "wide.chendb", page_size=4096) as handle:
+        handle.create_table("a", WIDE)
+        handle.create_table("big", WIDE)
+        handle.create_table("tag", TAGGED)
+        handle.insert_many("a", [(n, n) for n in range(20)])
+        handle.insert_many("big", [(n, n % 20) for n in range(4_000)])
+        handle.insert_many("tag", [(n, n) for n in range(20)])
+        handle.analyze()
+        yield handle
+
+
+def order_of(db: Database, sql: str) -> str:
+    """The chosen join order, as ``EXPLAIN`` reports it."""
+    return next(
+        alternative.description.split(":")[0]
+        for alternative in plan(db, sql).alternatives
+        if alternative.decision == "what order to join in" and alternative.chosen
+    )
+
+
+def syntactic_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put the planner back on Milestone 18's rule: everything written to the left."""
+    original = physical._outer_constraints
+
+    def patched(steps, first):
+        return {
+            position: replace(info, min_left=info.syntactic_left)
+            for position, info in original(steps, first).items()
+        }
+
+    monkeypatch.setattr(physical, "_outer_constraints", patched)
+
+
+REORDERABLE = (
+    "SELECT a.id FROM a JOIN big ON a.k = big.k LEFT JOIN tag ON a.id = tag.a_id",
+    "SELECT a.id FROM a JOIN big ON a.k = big.k LEFT JOIN tag ON a.id = tag.a_id "
+    "WHERE tag.id IS NULL",
+    "SELECT a.id FROM a LEFT JOIN tag ON a.id = tag.a_id JOIN big ON a.k = big.k",
+    "SELECT a.id FROM a JOIN big ON a.k = big.k RIGHT JOIN tag ON a.id = tag.a_id",
+    "SELECT a.id FROM a JOIN big ON a.k = big.k FULL JOIN tag ON a.id = tag.a_id",
+    "SELECT a.id FROM a LEFT JOIN big ON a.k = big.k LEFT JOIN tag ON big.id = tag.a_id",
+)
+
+
+def test_an_inner_join_may_now_move_before_an_outer_one(wide: Database):
+    """The milestone, in one query.
+
+    ``LEFT JOIN tag ON a.id = tag.a_id`` reads only ``a``, so it does not need
+    ``big`` on its left however it was written. Joining twenty rows to twenty
+    rows and then to twenty thousand beats the other way round, and Milestone 18
+    had no way to say so.
+    """
+    sql = REORDERABLE[0]
+    assert order_of(wide, sql) == "a LEFT tag x big"
+    assert "could reorder around them" in explain(wide, sql)
+
+
+def test_the_reordering_is_worth_measuring(wide: Database, monkeypatch):
+    """Not merely a different plan: a cheaper one, by the model's own numbers."""
+    sql = REORDERABLE[0]
+    freed = plan(wide, sql).estimated_cost
+
+    syntactic_only(monkeypatch)
+    pinned = plan(wide, sql).estimated_cost
+    assert order_of(wide, sql) == "a x big LEFT tag"
+    assert freed < pinned
+
+
+@pytest.mark.parametrize("sql", REORDERABLE, ids=range(len(REORDERABLE)))
+def test_reordering_does_not_change_the_answer(
+    wide: Database, monkeypatch: pytest.MonkeyPatch, sql: str
+):
+    """The contract, checked against the planner it replaced rather than asserted.
+
+    Every query is planned twice: once with Milestone 18's rule that an outer
+    join needs everything written to its left, and once with this milestone's.
+    A reordering that changes a row is not an optimisation.
+    """
+    freed = sorted(rows(wide, sql))
+    syntactic_only(monkeypatch)
+    assert sorted(rows(wide, sql)) == freed, f"the reordering changed:\n{sql}"
+
+
+def test_a_right_join_gets_no_freedom(wide: Database):
+    """And this is not conservatism, it is the identity failing.
+
+    A ``RIGHT`` join NULL-extends everything accumulated to its left rather than
+    the table arriving, so an inner join moved below one would be handed NULLs
+    the written query never showed it. ``min_left`` stays syntactic for
+    ``RIGHT`` and ``FULL``, and the order is pinned exactly as Milestone 18 had
+    it.
+    """
+    for kind in ("RIGHT", "FULL"):
+        sql = (
+            f"SELECT a.id FROM a JOIN big ON a.k = big.k {kind} JOIN tag ON a.id = tag.a_id"
+        )
+        assert order_of(wide, sql).endswith(f"{kind} tag"), order_of(wide, sql)
+        assert "needed everything written to its left" in explain(wide, sql)
+
+
+def test_an_outer_join_that_reads_every_table_still_pins_the_order(wide: Database):
+    # `min_left` is a proof, not a preference. An ON that reads both tables to
+    # its left proves nothing can be missing, and the order is as written.
+    sql = (
+        "SELECT a.id FROM a JOIN big ON a.k = big.k "
+        "LEFT JOIN tag ON a.id = tag.a_id AND big.id = tag.id"
+    )
+    assert order_of(wide, sql) == "a x big LEFT tag"
+    assert "needed everything written to its left" in explain(wide, sql)
+
+
+def test_half_an_outer_join_is_not_a_relation(chain: Database):
+    """The validity rule, which is what stops the search inventing a subplan.
+
+    ``b`` exists NULL-extended only because the join that made it ran, and that
+    join needed ``a``. So ``{b, c}`` is not a set of tables any plan could hold,
+    and the search must never cost one. Left unchecked it would build ``b ⨝ c``
+    and then have nowhere to put the outer join.
+    """
+    # The later ON reads only `a` and `c`, so Milestone 19 leaves the LEFT join
+    # alone and the validity rule is what does the work here.
+    sql = (
+        "SELECT a.id, b.id, c.id FROM a "
+        "LEFT JOIN b ON a.id = b.ref "
+        "JOIN c ON a.n = c.ref ORDER BY a.id, b.id;"
+    )
+    order = order_of(chain, sql)
+    assert order.index("a") < order.index("b"), (
+        f"`b` may not appear before the join that produced it, got {order}"
+    )
+    assert rows(chain, sql) == [(1, 100, 200), (1, 101, 200), (2, 102, 201)]
+
+
+def test_a_table_written_after_a_right_join_may_not_move_before_it(tmp_path: Path):
+    """The bug the differential tester found the run after this milestone's own
+    tests went green, and the reason the containment is one-sided.
+
+    A ``LEFT`` join *preserves* everything accumulated on its left, so a table
+    moved in there arrives with its values intact. A ``RIGHT`` join
+    NULL-extends that same accumulated left. Move ``c`` in and it is destroyed,
+    and the condition that reads it then sees a NULL the written query never
+    produced. Planned as ``(c x a) ⟖ b`` this returns nothing; there are two
+    rows.
+
+    ``a`` is **empty** on purpose, and that is what makes this a test rather
+    than a hope. The illegal order has to look *cheap* or the search will not
+    pick it, and the first version of this case used a three-row ``a``: the
+    correct order was cheaper anyway, so it passed with the bug in place.
+    """
+    with Database.open(tmp_path / "right3.chendb", page_size=4096) as db:
+        for name in ("a", "b", "c"):
+            db.create_table(name, CHAIN)
+        db.insert_many("b", [(100, 1, 1), (101, 1, 2)])
+        db.insert_many("c", [(200, 30, 1), (201, 40, 2)])
+        db.analyze()
+
+        sql = (
+            "SELECT a.id, b.id, c.id FROM a "
+            "RIGHT JOIN b ON a.id = b.ref "
+            "JOIN c ON b.n = c.n ORDER BY b.id;"
+        )
+        order = order_of(db, sql)
+        assert order.startswith("a RIGHT b"), (
+            f"`c` may not move before the RIGHT join, got {order}"
+        )
+        # Nothing in `a`, so the RIGHT join preserves both `b` rows with a NULL
+        # `a`, and both then match a `c`. A plan that NULL-extended `c` on the
+        # way past would lose them.
+        assert rows(db, sql) == [(None, 100, 200), (None, 101, 201)]

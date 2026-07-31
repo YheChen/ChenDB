@@ -722,6 +722,96 @@ def _plan_joins(
     return best.node, alternatives, frozenset(handled) | best.handled
 
 
+@dataclass(frozen=True, slots=True)
+class _OuterJoin:
+    """One outer join, and the smallest relation set it may legally run over.
+
+    PostgreSQL keeps one of these per outer join as a ``SpecialJoinInfo``, with
+    ``min_lefthand`` and ``min_righthand``. The point of the pair is that the
+    join-order search can then *prove* a reordering safe by set containment,
+    instead of refusing every reordering because one of them would be unsafe.
+
+    ``min_right`` is always the one table being brought in: ChenDB's ``FROM`` is
+    a flat chain, so there is nothing on the right to shrink.
+    """
+
+    position: int
+    kind: JoinKind
+    on: Expression
+    rank: int
+    """Which outer join this is, counting from zero in written order."""
+    min_left: frozenset[int]
+    """The smallest set that must already be joined before this may run."""
+    syntactic_left: frozenset[int]
+    """Everything written to its left. What Milestone 18 required."""
+
+
+def _outer_constraints(steps: list[_Step], first: int) -> dict[int, _OuterJoin]:
+    """What each outer join actually needs on its left, keyed by its own table.
+
+    Milestone 18 required *everything written before it*, which is the safe
+    over-approximation and the reason an inner join written after an outer one
+    could never move before it. The real requirement is smaller: the tables the
+    join's own ``ON`` reads.
+
+        a JOIN c ON a.k = c.k  LEFT JOIN b ON a.id = b.aid
+
+    The ``LEFT`` join reads only ``a``, so ``(a ⟕ b) ⨝ c`` is as legal as
+    ``(a ⨝ c) ⟕ b``, and if ``c`` is large the first is much cheaper. That is
+    the whole milestone.
+
+    Three things keep it honest:
+
+    * **An empty set falls back to the syntactic one.** An ``ON`` that reads
+      nothing on its left proves nothing about what may be missing.
+    * **``RIGHT`` and ``FULL`` get no freedom at all.** They NULL-extend the
+      accumulated left rather than the table arriving, so an inner join moved
+      below one would see NULLs the original query never showed it. The
+      identity simply does not hold, and ``min_left`` stays syntactic.
+    * **The set is closed under lower outer joins.** Needing ``b``, which only
+      exists NULL-extended because of the join that produced it, means needing
+      that join's left as well.
+    """
+    constraints: dict[int, _OuterJoin] = {}
+    seen = {first}
+    rank = 0
+    for step in steps:
+        if step.kind.is_outer:
+            syntactic = frozenset(seen)
+            if step.kind is JoinKind.LEFT:
+                minimum = _tables_of(step.on) & syntactic
+                minimum = frozenset(minimum) if minimum else syntactic
+                minimum = _close_over(minimum, constraints)
+            else:
+                minimum = syntactic
+            constraints[step.position] = _OuterJoin(
+                position=step.position,
+                kind=step.kind,
+                on=step.on,
+                rank=rank,
+                min_left=minimum,
+                syntactic_left=syntactic,
+            )
+            rank += 1
+        seen.add(step.position)
+    return constraints
+
+
+def _close_over(
+    wanted: frozenset[int], constraints: dict[int, _OuterJoin]
+) -> frozenset[int]:
+    """Add the left side of every outer join whose output ``wanted`` reaches into."""
+    out = set(wanted)
+    changed = True
+    while changed:
+        changed = False
+        for position, info in constraints.items():
+            if position in out and not info.min_left <= out:
+                out |= info.min_left
+                changed = True
+    return frozenset(out)
+
+
 def _plan_chain(
     leaves: dict[int, _Relation],
     steps: list[_Step],
@@ -732,45 +822,31 @@ def _plan_chain(
     namer: _Namer,
     alternatives: list[Alternative],
 ) -> _Relation:
-    """Reorder the inner joins; run the outer ones where they were written.
+    """One search over every table, with the outer joins as constraints on it.
 
-    **An outer join is a barrier.** Walking the chain left to right, consecutive
-    inner joins accumulate into a *segment* that the System-R search may order
-    however it likes. An outer join closes the segment, runs at that point with
-    its own ``ON``, and the result becomes one opaque relation that the next
-    segment's search sees as a single input.
+    Milestone 18 split the chain into *segments* at each outer join and searched
+    each one separately, which is correct and gives up more than it has to: two
+    tables on opposite sides of an outer join could never meet, whatever their
+    sizes. Milestone 22 runs a single search and asks
+    :func:`_outer_constraints` which orders are legal.
 
-    Opaque is exactly the right amount of freedom, and it falls out for free.
-    The search can *commute* that relation with others. An inner join's two
-    inputs may be swapped, so joining ``c`` to ``(a ⟕ b)`` either way round is
-    sound. It cannot *re-associate* into it, because the relation is one item in
-    the search's world and there is nothing inside to reach: it can never build
-    ``a ⟕ (b ⨝ c)`` from ``(a ⟕ b) ⨝ c``, and those are genuinely different
-    queries.
+    The dynamic programme is the same one, over subsets of the tables rather
+    than subsets of a segment, with two extra rules:
 
-    **What this gives up**, stated rather than hidden: an inner join written after
-    an outer one cannot move before it, even where that would be legal and
-    cheaper. The general treatment is PostgreSQL's. A ``SpecialJoinInfo`` per
-    outer join carrying ``min_lefthand`` and ``min_righthand`` relation sets, so
-    the search can prove a particular reordering safe by set containment rather
-    than assuming it is not. That is the right answer for a planner that must be
-    fast on twelve-table queries. Here it would be a large amount of machinery to
-    recover orderings for a shape (an outer join with inner joins after it) that
-    the cost model cannot yet estimate well anyway, and the honest version of "we
-    do not reorder across an outer join" is one sentence in ``EXPLAIN``.
+    * A subset is **valid** only if every outer join whose table it contains
+      also has its ``min_left`` inside it. Half of an outer join is not a thing
+      that exists.
+    * Bringing in an outer join's table is legal only when its ``min_left`` is
+      already present and every outer join written before it has already run.
+      Outer joins keep their order relative to each other; it is the *inner*
+      ones that gained the freedom, and no shape this planner can express needs
+      more.
     """
-    result: _Relation | None = None
-    segment: list[int] = [0]
-
-    for step in steps:
-        if step.kind is JoinKind.INNER:
-            segment.append(step.position)
-            continue
-
-        left = _plan_segment(
-            leaves,
-            segment,
-            result,
+    first = min(leaves)
+    constraints = _outer_constraints(steps, first)
+    if not constraints:
+        return _search_join_order(
+            [leaves[position] for position in sorted(leaves)],
             conjuncts,
             joinable,
             scans,
@@ -778,48 +854,14 @@ def _plan_chain(
             namer,
             alternatives,
         )
-        result = _join(
-            left,
-            leaves[step.position],
-            conjuncts,
-            joinable,
-            scans,
-            stats_by_table,
-            namer,
-            kind=step.kind,
-            on=step.on,
-        )
-        alternatives.append(
-            Alternative(
-                description=(
-                    f"{_order_of(result.node)}: an outer join runs where it was "
-                    f"written, so the search may not reorder across it"
-                ),
-                access_path=result.node.node_type,
-                cost=result.node.estimated,
-                chosen=True,
-                decision="what order to join in",
-            )
-        )
-        segment = []
-
-    return _plan_segment(
-        leaves,
-        segment,
-        result,
-        conjuncts,
-        joinable,
-        scans,
-        stats_by_table,
-        namer,
-        alternatives,
+    return _search_constrained(
+        leaves, constraints, conjuncts, joinable, scans, stats_by_table, namer, alternatives
     )
 
 
-def _plan_segment(
+def _search_constrained(
     leaves: dict[int, _Relation],
-    segment: list[int],
-    seeded: _Relation | None,
+    constraints: dict[int, _OuterJoin],
     conjuncts: list[Expression],
     joinable: list[int],
     scans: list[LogicalScan],
@@ -827,16 +869,195 @@ def _plan_segment(
     namer: _Namer,
     alternatives: list[Alternative],
 ) -> _Relation:
-    """One run of inner joins, ordered freely, optionally onto a fixed relation."""
-    relations = ([seeded] if seeded is not None else []) + [
-        leaves[position] for position in segment
+    """System R's dynamic programme, filtered by what the outer joins allow."""
+    positions = frozenset(leaves)
+    if len(positions) > MAX_TABLES_TO_ENUMERATE:
+        return _written_order(
+            leaves,
+            constraints,
+            conjuncts,
+            joinable,
+            scans,
+            stats_by_table,
+            namer,
+            alternatives,
+        )
+
+    best: dict[frozenset[int], _Relation] = {}
+    for position in positions:
+        single = frozenset({position})
+        if _is_valid(single, constraints):
+            best[single] = leaves[position]
+
+    for size in range(2, len(positions) + 1):
+        for subset in _subsets_of_size(positions, size):
+            if not _is_valid(subset, constraints):
+                continue
+            for position in subset:
+                rest = subset - {position}
+                left = best.get(rest)
+                if left is None:
+                    continue
+                outer = constraints.get(position)
+                if outer is not None:
+                    if not _outer_may_run(rest, outer, constraints):
+                        continue
+                    candidate = _join(
+                        left,
+                        leaves[position],
+                        conjuncts,
+                        joinable,
+                        scans,
+                        stats_by_table,
+                        namer,
+                        kind=outer.kind,
+                        on=outer.on,
+                    )
+                else:
+                    candidate = _join(
+                        left,
+                        leaves[position],
+                        conjuncts,
+                        joinable,
+                        scans,
+                        stats_by_table,
+                        namer,
+                    )
+                incumbent = best.get(subset)
+                if incumbent is None or candidate.cost < incumbent.cost:
+                    best[subset] = candidate
+
+    winner = best[positions]
+    _record_constrained_alternatives(winner, constraints, alternatives)
+    return winner
+
+
+def _is_valid(subset: frozenset[int], constraints: dict[int, _OuterJoin]) -> bool:
+    """Whether this set of tables is one a plan could actually have produced.
+
+    A table that only exists because an outer join NULL-extended it cannot be
+    present without the join that did so, and that join cannot have run without
+    everything it needs on its left.
+    """
+    return all(
+        info.min_left <= subset
+        for position, info in constraints.items()
+        if position in subset
+    )
+
+
+def _outer_may_run(
+    rest: frozenset[int], outer: _OuterJoin, constraints: dict[int, _OuterJoin]
+) -> bool:
+    """Whether ``outer`` may run now, against everything joined so far.
+
+    ``min_left`` is the reordering this milestone buys, and the containment is
+    one-sided **only for a LEFT join**. A LEFT join preserves everything
+    accumulated on its left, so a table moved in there arrives with its values
+    intact. A ``RIGHT`` or ``FULL`` join NULL-extends that same accumulated
+    left, so a table moved in there is destroyed, and a condition on it
+    elsewhere in the query then reads a NULL the written form never produced.
+    Their left side must be *exactly* what was written, which is Milestone 18's
+    rule kept where it is still the right one.
+
+    The differential tester found that the run after this milestone's own tests
+    went green. ``parent RIGHT JOIN child … JOIN grandchild ON child.cid =
+    grandchild.child_id`` was planned as ``(grandchild x parent) ⟖ child``,
+    which NULL-extends ``grandchild`` and then compares it, and returned no rows
+    where there was one.
+
+    The second condition is the freedom this milestone does not take: outer
+    joins keep their written order relative to each other. Commuting two of them
+    is sometimes legal, needs an argument per pair of join types, and the shapes
+    that would benefit are ones the cost model cannot size well yet.
+    """
+    if outer.kind is JoinKind.LEFT:
+        if not outer.min_left <= rest:
+            return False
+    elif rest != outer.syntactic_left:
+        return False
+    return all(
+        position in rest for position, info in constraints.items() if info.rank < outer.rank
+    )
+
+
+def _written_order(
+    leaves: dict[int, _Relation],
+    constraints: dict[int, _OuterJoin],
+    conjuncts: list[Expression],
+    joinable: list[int],
+    scans: list[LogicalScan],
+    stats_by_table: dict[str, TableStatistics],
+    namer: _Namer,
+    alternatives: list[Alternative],
+) -> _Relation:
+    """Past the enumeration limit: join left to right, as written.
+
+    Greedy would need the legality test inside its inner loop and could still
+    paint itself into a corner where no legal pair remains. Written order is
+    always legal by construction, and a planner that says it gave up is better
+    than one that quietly returns something it cannot justify.
+    """
+    result: _Relation | None = None
+    for position in sorted(leaves):
+        if result is None:
+            result = leaves[position]
+            continue
+        outer = constraints.get(position)
+        result = _join(
+            result,
+            leaves[position],
+            conjuncts,
+            joinable,
+            scans,
+            stats_by_table,
+            namer,
+            kind=outer.kind if outer else JoinKind.INNER,
+            on=outer.on if outer else None,
+        )
+    assert result is not None
+    alternatives.append(
+        Alternative(
+            description=(
+                f"written order over {len(leaves)} tables, above the "
+                f"{MAX_TABLES_TO_ENUMERATE}-table enumeration limit, so this is "
+                f"the order you typed rather than the cheapest one"
+            ),
+            access_path="WrittenJoinOrder",
+            cost=result.node.estimated,
+            chosen=True,
+            decision="what order to join in",
+        )
+    )
+    return result
+
+
+def _record_constrained_alternatives(
+    winner: _Relation,
+    constraints: dict[int, _OuterJoin],
+    alternatives: list[Alternative],
+) -> None:
+    """Say what the outer joins allowed, not merely what was chosen."""
+    freed = [
+        info
+        for info in constraints.values()
+        if info.kind is JoinKind.LEFT and info.min_left < info.syntactic_left
     ]
-    if not relations:  # pragma: no cover - a step always leaves something to join
-        raise AssertionError("a join segment cannot be empty")
-    if len(relations) == 1:
-        return relations[0]
-    return _search_join_order(
-        relations, conjuncts, joinable, scans, stats_by_table, namer, alternatives
+    if freed:
+        note = (
+            f"{len(freed)} outer join(s) needed fewer tables on the left than "
+            f"were written there, so the search could reorder around them"
+        )
+    else:
+        note = "every outer join needed everything written to its left"
+    alternatives.append(
+        Alternative(
+            description=f"{_order_of(winner.node)}: {note}",
+            access_path=winner.node.node_type,
+            cost=winner.node.estimated,
+            chosen=True,
+            decision="what order to join in",
+        )
     )
 
 

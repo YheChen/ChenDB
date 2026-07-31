@@ -27,6 +27,7 @@ the UI until the engine behind it exists.
 | 19 | Proving an outer join is an inner join, so pushdown and reordering apply again | The rewrite named in the plan view, as every rewrite is | **done** |
 | 20 | Most-common values and a histogram, so the estimator can see skew | A demo where three queries on one column get three different plans | **done** |
 | 21 | (a third table in the differential generator, and the two planner bugs it found) | (a test corpus, not a panel) | **done** |
+| 22 | An outer join constrains the join order instead of freezing it | The constraint named in the plan view, not just the order | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete,
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -45,7 +46,7 @@ it could not do before. So it is a feature after all, and it is named rather
 than excused.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-21-three-tables.md`.
+the newest is `docs/milestone-22-reordering.md`.
 
 ## What each milestone adds to the file format
 
@@ -68,6 +69,7 @@ the newest is `docs/milestone-21-three-tables.md`.
 | 19 | — | (a rewrite rule and a cost estimate; nothing reaches the disk) |
 | 20 | — | (statistics still live in memory and die with the process, on purpose) |
 | 21 | — | (two planner fixes and a wider test corpus; nothing on disk moves) |
+| 22 | — | (a join-order search change; the file format is untouched) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
