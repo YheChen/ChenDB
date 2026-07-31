@@ -67,6 +67,7 @@ from engine.optimizer.cost import (
     index_scan_cost,
     join_selectivity,
     limit_cost,
+    mcv_join_selectivity,
     nested_loop_join_cost,
     project_cost,
     seq_scan_cost,
@@ -94,7 +95,7 @@ from engine.planner.logical import (
     LogicalScan,
     LogicalSort,
 )
-from engine.planner.statistics import TableStatistics
+from engine.planner.statistics import ColumnStatistics, TableStatistics
 from engine.serialization.schema import Schema
 
 if TYPE_CHECKING:
@@ -1090,10 +1091,10 @@ def _equijoin_keys(
     return None
 
 
-def _joined_distinct_counts(
+def _joined_columns(
     term: Expression, stats_by_table: dict[str, TableStatistics]
-) -> tuple[int, int] | None:
-    """Distinct values in the two columns an equijoin compares, when both are known.
+) -> tuple[tuple[ColumnStatistics, TableStatistics], ...] | None:
+    """The two analyzed columns an equijoin compares, each with its table's stats.
 
     The textbook estimate for ``a.x = b.y`` is ``1 / max(distinct(a.x),
     distinct(b.y))``, and :func:`distinct_join_selectivity` has spelled it that
@@ -1105,15 +1106,19 @@ def _joined_distinct_counts(
 
     It surfaced measuring Milestone 19, because the rewrite makes the estimate
     matter more: the two tables rejoin the order search, and a search cannot
-    choose well between plans it cannot size. Wrong by 80x here, and it compounds
-    upward, so a three-table plan is wrong by 6,400.
+    choose well between plans it cannot size. Wrong by 80x there, and it
+    compounds upward, so a three-table plan is wrong by 6,400.
+
+    Milestone 20 went further and returns the whole column, because the distinct
+    count is still one number and skew defeats it. See
+    :func:`~engine.optimizer.cost.mcv_join_selectivity`.
 
     ``None`` when either side is not a plain analyzed column, which falls back to
     the row-count approximation rather than inventing a number.
     """
     if not isinstance(term, BinaryOp) or term.operator is not BinaryOperator.EQ:
         return None
-    counts: list[int] = []
+    found: list[tuple[ColumnStatistics, TableStatistics]] = []
     for side in (term.left, term.right):
         if not isinstance(side, BoundColumnRef) or side.table_position is None:
             return None
@@ -1121,8 +1126,8 @@ def _joined_distinct_counts(
         column = stats.column(side.table_position) if stats is not None else None
         if column is None or column.distinct_count <= 0:
             return None
-        counts.append(column.distinct_count)
-    return counts[0], counts[1]
+        found.append((column, stats))
+    return found[0], found[1]
 
 
 def _join_cardinality(
@@ -1159,8 +1164,19 @@ def _join_cardinality(
         involved = sorted(_tables_of(term))
         if len(involved) < 2:
             continue  # single-table: a filter's selectivity, not a join's
-        if (distinct := _joined_distinct_counts(term, stats_by_table)) is not None:
-            product *= distinct_join_selectivity(*distinct)
+        if (columns := _joined_columns(term, stats_by_table)) is not None:
+            (near, near_table), (far, far_table) = columns
+            # Match the two most-common lists first, which is exact when both
+            # are complete, and fall back to the distinct counts when either
+            # column has no list to match.
+            matched = mcv_join_selectivity(
+                near, far, near_table.row_count, far_table.row_count
+            )
+            product *= (
+                matched
+                if matched is not None
+                else distinct_join_selectivity(near.distinct_count, far.distinct_count)
+            )
             continue
         equality = isinstance(term, BinaryOp) and term.operator is BinaryOperator.EQ
         left_stats = stats_by_table[scans[involved[0]].table_name]

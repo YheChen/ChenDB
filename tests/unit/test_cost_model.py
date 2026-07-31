@@ -14,6 +14,9 @@ cases.
 
 from __future__ import annotations
 
+from collections import Counter
+from itertools import pairwise
+
 import pytest
 
 from engine import Column, Database, DataType, Schema
@@ -38,6 +41,7 @@ from engine.planner.physical import (
     PhysicalSeqScan,
     PlannerOptions,
 )
+from engine.planner.statistics import STATISTICS_TARGET, summarise
 
 SCHEMA = Schema.of(
     Column("id", DataType.INTEGER, nullable=False, primary_key=True),
@@ -77,6 +81,11 @@ def selectivity_of(db: Database, where: str) -> float:
     return estimate_selectivity(
         fold_constants_in(bound.where), db.statistics.for_table("t")
     )
+
+
+def rows_matching(db: Database, where: str) -> int:
+    """How many rows the predicate really admits. The number to compare against."""
+    return execute_script(f"SELECT COUNT(*) FROM t WHERE {where}", db)[-1].rows[0][0]
 
 
 def chosen_path(db: Database, sql: str, **kwargs) -> str:
@@ -160,22 +169,141 @@ def test_analyze_with_no_table_does_every_table(db: Database):
 # -- selectivity ------------------------------------------------------------
 
 
-def test_equality_uses_the_distinct_count(db: Database):
+def test_equality_counts_the_value_rather_than_averaging_over_them(db: Database):
+    """This used to assert ``non_null / distinct``, and that is now the contrast.
+
+    ``bucket`` is ``n % 100`` except every seventh row, which is NULL, so bucket
+    5 holds 17 of the 2,000 rows. The old formula predicts 17.14, which is very
+    nearly right *because this fixture is nearly uniform*. The point is that the
+    estimate is no longer a prediction: 17 is a count taken during ANALYZE.
+
+    ``tests/unit/test_estimates.py`` has the fixture where the difference is 33x
+    rather than 0.14 of a row.
+    """
     stats = db.statistics.for_table("t")
-    expected = (1 - stats.column(1).null_fraction(ROWS)) / stats.column(1).distinct_count
-    assert selectivity_of(db, "bucket = 5") == pytest.approx(expected)
+    actual = rows_matching(db, "bucket = 5")
+    assert actual == 17
+
+    assert selectivity_of(db, "bucket = 5") == pytest.approx(actual / ROWS)
+
+    averaged = (1 - stats.column(1).null_fraction(ROWS)) / stats.column(1).distinct_count
+    assert averaged != pytest.approx(actual / ROWS), (
+        "the old estimate should differ, or this fixture proves nothing"
+    )
+
+
+def test_a_value_that_never_occurs_is_estimated_at_one_row(db: Database):
+    """Not zero, and the difference matters more than it looks.
+
+    ``bucket`` holds 0..99, so 500 occurs nowhere and the most-common list plus
+    the histogram between them say so exactly. Reporting zero would make every
+    operator above the scan free, and a subtree costed at nothing wins every
+    comparison it is ever part of. One row is the smallest honest answer, and it
+    is also the safe one: the statistics are as of the last ANALYZE, and a value
+    inserted since is invisible to them.
+    """
+    assert rows_matching(db, "bucket = 500") == 0
+    assert selectivity_of(db, "bucket = 500") == pytest.approx(1 / ROWS)
+
+
+def test_the_most_common_list_is_the_whole_column_when_it_is_small_enough(
+    db: Database,
+):
+    """The regime that makes an estimate a count. Both sides of it are checked.
+
+    ``label`` is unique across 2,000 rows and ``bucket`` has 100 distinct
+    values, so neither fits in a list of :data:`STATISTICS_TARGET`. A column
+    that does fit gets no histogram at all, because there is nothing left for
+    one to describe.
+    """
+    stats = db.statistics.for_table("t")
+    bucket = stats.column(1)
+    assert bucket.distinct_count > STATISTICS_TARGET
+    assert len(bucket.most_common) == STATISTICS_TARGET
+    assert not bucket.covers_every_value
+    assert bucket.histogram, "the tail needs a histogram"
+
+    db.create_table("small", Schema.of(Column("flag", DataType.INTEGER)))
+    db.insert_many("small", [(n % 3,) for n in range(90)])
+    flag = db.statistics.gather("small").column(0)
+    assert flag.covers_every_value
+    assert flag.most_common == ((0, 30), (1, 30), (2, 30))
+    assert flag.histogram == (), "nothing is left over to bucket"
+
+
+def test_the_most_common_list_is_ordered_by_count_then_by_value(db: Database):
+    """Ties are broken by value, not by whatever order the heap was scanned in.
+
+    ``Counter.most_common`` breaks ties by insertion order, which here is heap
+    order, which changes when rows are deleted and reinserted. A plan that
+    depended on it would be planned differently after a VACUUM, and the same
+    query would get a different plan for no reason anybody could see.
+    """
+    db.create_table("tied", Schema.of(Column("v", DataType.INTEGER)))
+    db.insert_many("tied", [(v,) for v in (3, 1, 2, 3, 1, 2)])
+    assert db.statistics.gather("tied").column(0).most_common == ((1, 2), (2, 2), (3, 2))
+
+
+def test_the_histogram_describes_what_the_list_does_not(db: Database):
+    """Equi-depth: strictly increasing bounds, over the non-MCV rows only."""
+    bucket = db.statistics.for_table("t").column(1)
+    listed = {value for value, _ in bucket.most_common}
+    assert bucket.histogram == tuple(sorted(bucket.histogram))
+    assert len(set(bucket.histogram)) == len(bucket.histogram), "strictly increasing"
+    assert not (set(bucket.histogram) & listed), (
+        "a value in the list is not in the histogram, or it would be counted twice"
+    )
+
+
+def test_equi_depth_buckets_hold_roughly_equal_row_counts():
+    """The property that makes a histogram worth having, checked directly.
+
+    Equal-*width* buckets over a column that clusters at one end put nearly
+    every row in one bucket and spend their resolution describing empty space.
+    Equal-*depth* buckets put it where the rows are, which is what a
+    selectivity estimate is asking about. The values below are deliberately
+    lopsided: 1,000 rows crammed into 0..9 and 100 spread over 100..1099.
+    """
+    counts = Counter(dict.fromkeys(range(10), 100))
+    counts.update({100 + n: 1 for n in range(1000)})
+    _, histogram = summarise(counts)
+
+    assert histogram == tuple(sorted(histogram))
+    assert histogram[0] >= 10, "the crammed values are all in the MCV list"
+
+    widths = [b - a for a, b in pairwise(histogram)]
+    assert max(widths) < 3 * (sum(widths) / len(widths)), (
+        "equal depth over uniform tail values means near-equal widths too"
+    )
 
 
 def test_a_unique_column_is_estimated_as_one_row(db: Database):
     assert selectivity_of(db, "id = 500") == pytest.approx(1 / ROWS, rel=0.01)
 
 
-def test_a_range_interpolates_between_min_and_max(db: Database):
-    # bucket spans 0..99, so `< 25` should come out near a quarter of the
-    # non-null rows. Uniformity is the assumption a histogram would remove.
+def test_a_range_counts_values_below_the_bound(db: Database):
+    # bucket spans 0..99, so `< 25` is about a quarter of the non-null rows.
+    # It used to be a straight line drawn from min to max; it is now the
+    # most-common values below the bound plus whole histogram buckets, which
+    # gets the same answer here because this fixture is nearly uniform, and a
+    # very different one where it is not.
     non_null = 1 - 1 / 7
     assert selectivity_of(db, "bucket < 25") == pytest.approx(0.25 * non_null, abs=0.03)
     assert selectivity_of(db, "bucket < 75") == pytest.approx(0.75 * non_null, abs=0.03)
+    for bound in (5, 25, 50, 75, 95):
+        assert selectivity_of(db, f"bucket < {bound}") == pytest.approx(
+            rows_matching(db, f"bucket < {bound}") / ROWS, abs=0.02
+        )
+
+
+def test_a_range_can_tell_strict_from_inclusive(db: Database):
+    # A straight line between min and max could not: `< 25` and `<= 25` were
+    # the same number. The difference is one bucket's worth of rows, and it is
+    # the whole answer when a column holds two distinct values.
+    strict = selectivity_of(db, "bucket < 25")
+    inclusive = selectivity_of(db, "bucket <= 25")
+    assert inclusive > strict
+    assert (inclusive - strict) * ROWS == pytest.approx(rows_matching(db, "bucket = 25"))
 
 
 def test_a_bound_outside_the_observed_range_saturates(db: Database):
