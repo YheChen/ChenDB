@@ -14,6 +14,11 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { api, type TraceLevelName } from "@/lib/api";
+import {
+  SAMPLE_DATABASE_ID,
+  SAMPLE_PAGE_SIZE,
+  sampleDatabaseSql,
+} from "@/lib/demoSql";
 import type {
   BufferPoolResponse,
   CatalogResponse,
@@ -418,6 +423,33 @@ export function useCreateDatabase() {
   return useMutation({
     mutationFn: (payload: { database_id: string; page_size: number }) =>
       api.createDatabase(payload),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: queryKeys.databases });
+    },
+  });
+}
+
+/**
+ * Create the database the explorer opens with, and fill it.
+ *
+ * Two calls rather than one, because the API has no "create with contents"
+ * endpoint and should not: creating a database and running SQL against it are
+ * different operations with different failure modes, and a combined endpoint
+ * would have to invent a policy for a half-built one. Here the policy is
+ * simple, if the SQL fails the empty database is still there and the visitor
+ * sees the error, which is the same thing they would see having typed it.
+ */
+export function useSeedSampleDatabase() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      await api.createDatabase({
+        database_id: SAMPLE_DATABASE_ID,
+        page_size: SAMPLE_PAGE_SIZE,
+      });
+      await api.runQuery(SAMPLE_DATABASE_ID, sampleDatabaseSql());
+      return SAMPLE_DATABASE_ID;
+    },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.databases });
     },

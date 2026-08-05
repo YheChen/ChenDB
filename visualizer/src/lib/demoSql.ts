@@ -335,6 +335,62 @@ LEFT JOIN shifts sh ON s.id = sh.staff_id
      JOIN notes  n  ON sh.id = n.shift_id
 ORDER BY s.name;`;
 
+/**
+ * The database every visitor lands on.
+ *
+ * The explorer used to open on eight panels all saying "No database open",
+ * which is accurate and useless: everything worth looking at needs a database,
+ * and a first-time visitor has no reason to know that `+ New` is the way in.
+ * So one is created and filled before they arrive.
+ *
+ * Three choices in here are deliberate:
+ *
+ * - **256-byte pages.** A handful of rows fills one, so the disk map has a
+ *   dozen pages to look at rather than one, and the heap chain is visible
+ *   growing. It is the size the create dialog labels "(demo)" for this reason.
+ * - **An index on a non-key column.** `users_age` gives the B+ tree view a real
+ *   tree with a real height, and gives the planner two access paths to choose
+ *   between, which is the whole of the Execution workspace.
+ * - **ANALYZE at the end.** Statistics are gathered lazily anyway, but running
+ *   it here means the first plan a visitor sees was costed against real numbers
+ *   rather than against a first-query guess.
+ */
+export const SAMPLE_DATABASE_ID = "demo";
+export const SAMPLE_PAGE_SIZE = 256;
+
+const CITIES = ["london", "berlin", "lisbon", "oslo", "porto"];
+
+export function sampleDatabaseSql(): string {
+  const users = Array.from({ length: 40 }, (_, index) => {
+    const city = CITIES[index % CITIES.length];
+    // Every seventh age is NULL. Three-valued logic is the thing about SQL that
+    // surprises people most, and a demo with no NULLs in it cannot show any.
+    const age = index % 7 === 0 ? "NULL" : String(21 + ((index * 5) % 45));
+    return `(${index + 1}, 'user${index + 1}@example.com', '${city}', ${age})`;
+  });
+  const orders = Array.from({ length: 60 }, (_, index) => {
+    const user = (index % 40) + 1;
+    return `(${100 + index}, ${user}, ${((index * 37) % 500) + 10})`;
+  });
+
+  return [
+    "-- The database the explorer opens with. Everything here is real: these",
+    "-- statements ran against the engine to build the pages you are looking at.",
+    "CREATE TABLE users (",
+    "  id    INTEGER PRIMARY KEY,",
+    "  email TEXT NOT NULL,",
+    "  city  TEXT,",
+    "  age   INTEGER",
+    ");",
+    "CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, total INTEGER);",
+    `INSERT INTO users VALUES\n  ${users.join(",\n  ")};`,
+    `INSERT INTO orders VALUES\n  ${orders.join(",\n  ")};`,
+    "CREATE INDEX users_age ON users (age);",
+    "ANALYZE;",
+  ].join("\n");
+}
+
+
 export const EXAMPLES: Example[] = [
   {
     label: "CREATE TABLE",
@@ -548,6 +604,12 @@ export function demoStatements(table: TableDetail): DemoStatement[] {
     id: "execution/outer-joins",
     label: "Outer joins",
     sql: OUTER_JOIN_DEMO_SQL,
+    on: "empty",
+  });
+  add({
+    id: "sample/seed",
+    label: "Sample database",
+    sql: sampleDatabaseSql(),
     on: "empty",
   });
   add({
