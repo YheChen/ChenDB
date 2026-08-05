@@ -27,7 +27,7 @@
  * feature the engine does not have.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SplitPane } from "@/components/SplitPane";
 import { cn } from "@/lib/format";
 import {
@@ -50,6 +50,7 @@ import {
   useCatalog,
   useDatabase,
   useDatabases,
+  useSeedSampleDatabase,
   useHealth,
 } from "@/hooks/useEngine";
 import { useEventStream } from "@/hooks/useEventStream";
@@ -111,6 +112,25 @@ export function ExplorerPage() {
     if (databaseId && available.includes(databaseId)) return;
     setDatabaseId(available[0] ?? null);
   }, [databases.data, databaseId]);
+
+  // Nothing to explore, so make something. The explorer used to open on eight
+  // panels all reading "No database open", which is accurate and useless: every
+  // panel needs a database and a first-time visitor has no reason to know that
+  // `+ New` is the way in.
+  //
+  // Once, and only when the workspace is genuinely empty. A visitor who deletes
+  // the sample meant to delete it, and a ref rather than state because two
+  // renders before the mutation settles would otherwise create it twice.
+  const seedAttempted = useRef(false);
+  const seedSample = useSeedSampleDatabase();
+  useEffect(() => {
+    if (!databases.data || seedAttempted.current) return;
+    seedAttempted.current = true;
+    if (databases.data.databases.length > 0) return;
+    seedSample.mutate(undefined, {
+      onSuccess: (id) => setDatabaseId(id),
+    });
+  }, [databases.data, seedSample]);
 
   useEffect(() => write(DATABASE_KEY, databaseId), [databaseId]);
   useEffect(() => write(WORKSPACE_KEY, workspace), [workspace]);

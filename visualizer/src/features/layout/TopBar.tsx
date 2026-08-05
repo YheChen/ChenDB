@@ -36,6 +36,7 @@ export function TopBar({
   const [creating, setCreating] = useState(false);
 
   const connected = health.isSuccess;
+  const starting = health.isPending;
 
   return (
     <header className="surface flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
@@ -105,12 +106,20 @@ export function TopBar({
 
       <div className="flex-1" />
 
+      {/*
+        Three states, not two. The engine takes a moment to answer even once
+        its transport is up, and for that moment `isSuccess` is false while
+        nothing is wrong. Painting that red made the app look broken to its
+        own author for two minutes: the WASM build shows a full UI reading
+        "disconnected" for the tail of a twenty-second boot. "starting" is the
+        truth, and amber is what it looks like.
+      */}
       <span
         className={cn(
           "flex items-center gap-1.5 rounded px-2 py-1 text-[11px]",
-          connected
-            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-            : "bg-red-500/15 text-red-600 dark:text-red-300",
+          connected && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+          starting && "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+          !connected && !starting && "bg-red-500/15 text-red-600 dark:text-red-300",
         )}
         role="status"
       >
@@ -118,10 +127,16 @@ export function TopBar({
           aria-hidden
           className={cn(
             "size-1.5 rounded-full",
-            connected ? "bg-emerald-500" : "bg-red-500",
+            connected && "bg-emerald-500",
+            starting && "bg-amber-500 animate-pulse",
+            !connected && !starting && "bg-red-500",
           )}
         />
-        {connected ? `engine ${health.data.engine_version}` : "disconnected"}
+        {connected
+          ? `engine ${health.data.engine_version}`
+          : starting
+            ? "starting"
+            : "disconnected"}
       </span>
 
       <Button

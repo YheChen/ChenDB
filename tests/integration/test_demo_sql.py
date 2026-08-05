@@ -166,6 +166,7 @@ def test_the_catalogue_covers_every_workspace_with_a_demo(statements: list[dict]
         "mvcc",
         "editor",
         "execution",
+        "sample",
         "sql",
     }
     assert len(statements) >= 20
