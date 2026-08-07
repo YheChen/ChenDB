@@ -1,23 +1,43 @@
 # ChenDB
 
 [![CI](https://github.com/YheChen/ChenDB/actions/workflows/ci.yml/badge.svg)](https://github.com/YheChen/ChenDB/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A relational database engine written from scratch in Python, and a web app that
-shows you what it is doing while it does it.
+**A relational database engine written from scratch in Python, and a web app that
+shows you what it is doing while it does it.**
 
-The engine is real: a file of fixed-size pages, slotted heap pages, binary
-record encoding, checksums, a page allocator with a free list, a SQL front end,
-a volcano executor, a persistent catalog, disk-backed B+ tree indexes, a
-cost-based planner that reorders joins, a buffer pool, transactions with
-rollback, a write-ahead log that recovers the database after a crash, and MVCC so
-a reader never waits for a writer, where an `UPDATE` leaves the old version of the
-row readable rather than overwriting it. The visualizer is not a mock. Every byte
-it renders was read back from the actual file on disk.
+### [Try it in your browser →](https://chen-db.vercel.app)
 
-Its answers are checked against SQLite's: random schemas, random rows and random
-queries run through both engines and compared, 320,000 query pairs in four
-minutes. That found seven bugs the hand-written tests had missed, and two more
-the day its generator learned to build a third table.
+No install, no server, no account. The whole engine is compiled to WebAssembly
+and runs in your tab, on a database that is created and filled the moment you
+arrive. Give it twenty seconds to boot: it is loading a Python runtime.
+
+[![The ChenDB explorer: catalog, disk map and page inspector](docs/images/explorer.png)](https://chen-db.vercel.app)
+
+Every number in that screenshot was read back from a real file. 48 pages of
+256 bytes each, a slotted page whose checksum was verified on read, a B+ tree
+leaf, and a sequential scan that touched 9 pages in 195 microseconds because the
+cost model decided a scan was cheaper than the index.
+
+---
+
+## In sixty seconds
+
+| | |
+|---|---|
+| **The engine is real** | fixed-size pages, slotted heap pages, CRC32 per page, a page allocator with a free list, disk-backed B+ trees, a write-ahead log that recovers after `SIGKILL`, and MVCC where an `UPDATE` leaves the old row readable |
+| **The planner argues** | it re-derives join order from statistics, proves an outer join is an inner one when a filter allows, and `EXPLAIN` names every alternative it rejected and by how much |
+| **The answers are checked against SQLite** | 320,000 generated query pairs per campaign. That found seven bugs the hand-written tests missed, and two more the day the generator learned to build a third table |
+| **Nothing is stubbed** | a feature absent from the engine is absent from the API and hidden in the UI, enforced by a test rather than by discipline |
+
+**Twenty-three milestones, each with a document explaining what it cost.** The
+[roadmap](docs/roadmap.md) lists them; the interesting ones are
+[Milestone 9](docs/milestone-09-wal.md) (a 197x write amplification made 5x),
+[Milestone 17](docs/milestone-17-differential.md) (seven bugs a second engine
+found) and [Milestone 21](docs/milestone-21-three-tables.md) (two wrong answers
+that two tables could never have found).
+
+---
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -47,9 +67,8 @@ the day its generator learned to build a third table.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Twenty-three milestones are complete.** Nothing is stubbed ahead of time: a
-feature absent from the engine is absent from the API and hidden in the UI. See
-[the roadmap](docs/roadmap.md).
+The index workspace, drawn from a real tree. **Twenty-three milestones are
+complete**; see [the roadmap](docs/roadmap.md).
 
 ---
 
