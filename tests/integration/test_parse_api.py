@@ -226,12 +226,12 @@ def test_the_error_lists_what_would_have_been_accepted(client: TestClient):
 
 
 def test_unsupported_sql_is_distinguished_from_a_syntax_error(client: TestClient):
-    # Was `LEFT JOIN` until Milestone 18 implemented it. `DISTINCT` is the
-    # replacement and is genuinely still refused: the point of the test is the
+    # Was `LEFT JOIN` until Milestone 18 and `DISTINCT` until Milestone 24.
+    # `LIKE` is genuinely still refused, and the point of the test is the
     # *distinction* between the two error kinds, so the example has to be one.
-    body = parse(client, "SELECT DISTINCT name FROM users")
+    body = parse(client, "SELECT * FROM users WHERE email LIKE 'a%'")
     assert body["error"]["kind"] == "UnsupportedSqlError"
-    assert "DISTINCT" in body["error"]["message"]
+    assert "LIKE" in body["error"]["message"]
 
     body = parse(client, "SELECT FROM FROM")
     assert body["error"]["kind"] == "ParseError"

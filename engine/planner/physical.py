@@ -60,6 +60,7 @@ from engine.index.key import SMALLEST_VALUE_KEY, decode_key, describe_key
 from engine.optimizer.cost import (
     Cost,
     aggregate_cost,
+    distinct_cost,
     distinct_join_selectivity,
     estimate_selectivity,
     filter_cost,
@@ -79,6 +80,7 @@ from engine.parser.ast import (
     BinaryOperator,
     Expression,
     FunctionCall,
+    InList,
     IsNullTest,
     JoinKind,
     Literal,
@@ -87,6 +89,7 @@ from engine.parser.ast import (
 from engine.parser.tokens import SourceSpan
 from engine.planner.logical import (
     LogicalAggregate,
+    LogicalDistinct,
     LogicalFilter,
     LogicalJoin,
     LogicalLimit,
@@ -106,6 +109,7 @@ __all__ = [
     "DISABLE_COST",
     "Alternative",
     "PhysicalAggregate",
+    "PhysicalDistinct",
     "PhysicalFilter",
     "PhysicalHashJoin",
     "PhysicalIndexScan",
@@ -379,6 +383,17 @@ class PhysicalSort(PhysicalNode):
         return ", ".join(
             f"#{key.output_index}{' DESC' if key.descending else ''}" for key in self.keys
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalDistinct(PhysicalNode):
+    """Hash each output row and emit the ones never seen."""
+
+    child: PhysicalNode
+
+    @property
+    def children(self) -> tuple[PhysicalNode, ...]:
+        return (self.child,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1531,6 +1546,10 @@ def _walk_expression(expression: Expression) -> list[Expression]:
             out.extend(_walk_expression(expression.right))
         case IsNullTest():
             out.extend(_walk_expression(expression.operand))
+        case InList():
+            out.extend(_walk_expression(expression.operand))
+            for item in expression.items:
+                out.extend(_walk_expression(item))
         case FunctionCall() if expression.argument is not None:
             out.extend(_walk_expression(expression.argument))
     return out
@@ -1593,6 +1612,15 @@ def _stack(
                     output_columns=logical.output_columns,
                     child=node,
                 )
+            case LogicalDistinct():
+                node = PhysicalDistinct(
+                    node_id=namer.next("distinct"),
+                    estimated=distinct_cost(
+                        node.estimated.rows,
+                        distinct_rows=_distinct_estimate(node.estimated.rows, stats),
+                    ),
+                    child=node,
+                )
             case LogicalSort():
                 node = PhysicalSort(
                     node_id=namer.next("sort"),
@@ -1613,12 +1641,38 @@ def _stack(
     return node
 
 
+def _distinct_estimate(input_rows: float, stats: TableStatistics) -> float:
+    """How many of ``input_rows`` survive deduplication.
+
+    A guess, and a deliberately weak one. The honest estimate needs the distinct
+    count of the *projection*, which is a combination of columns nothing has
+    statistics for: Milestone 20 collects them per column, and the number of
+    distinct ``(city, age)`` pairs is not derivable from the two separately
+    without assuming independence, which is the assumption that model is already
+    worst at.
+
+    So: a tenth, floored at one, which says "fewer, and not by orders of
+    magnitude". Wrong often, and wrong in a direction that matters little,
+    because ``DISTINCT`` sits above the projection where no access-path decision
+    is left to make. A `LIMIT` above it is the one thing this feeds, and that
+    reads rows either way.
+    """
+    return max(input_rows * 0.1, 1.0)
+
+
 def _spine(plan: LogicalNode) -> list[LogicalNode]:
     """The single-child nodes above the joins, root first."""
     out: list[LogicalNode] = []
     node = plan
     while not isinstance(node, LogicalScan | LogicalJoin):
-        if isinstance(node, LogicalAggregate | LogicalProject | LogicalSort | LogicalLimit):
+        if isinstance(
+            node,
+            LogicalAggregate
+            | LogicalDistinct
+            | LogicalProject
+            | LogicalSort
+            | LogicalLimit,
+        ):
             out.append(node)
         if not node.children:
             break  # pragma: no cover

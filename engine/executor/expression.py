@@ -56,6 +56,7 @@ from engine.parser.ast import (
     BinaryOp,
     BinaryOperator,
     Expression,
+    InList,
     IsNullTest,
     Literal,
     Star,
@@ -139,6 +140,9 @@ def _evaluate(
             value = _evaluate(expression.operand, row, tracer, operator_id)
             return (value is not None) if expression.negated else (value is None)
 
+        case InList():
+            return _evaluate_in(expression, row, tracer, operator_id)
+
         case UnaryOp():
             return _evaluate_unary(expression, row, tracer, operator_id)
 
@@ -151,6 +155,45 @@ def _evaluate(
             )
 
     raise EvaluationError(f"cannot evaluate {expression.node_type}")
+
+
+def _evaluate_in(
+    expression: InList, row: Sequence[Any], tracer: Tracer, operator_id: str
+) -> Any:
+    """``x IN (a, b, c)`` as ``x = a OR x = b OR x = c``, exactly.
+
+    Not "approximately": the equivalence is what the standard defines ``IN`` to
+    mean, and every surprising case falls out of it rather than needing its own
+    rule.
+
+    * An unknown on the *left* makes every comparison unknown, so ``NULL IN
+      (1, 2)`` is NULL and not FALSE.
+    * An unknown in the *list* is only unknown if nothing else matched.
+      ``2 IN (2, NULL)`` is TRUE, because ``TRUE OR unknown`` is TRUE.
+    * And therefore ``x NOT IN (1, NULL)`` is **never TRUE**, which is the
+      behaviour that catches everybody: it means ``x <> 1 AND x <> NULL``, and
+      the second conjunct can never be more than unknown.
+
+    Evaluated left to right with an early exit on a match, so a long list stops
+    at the first hit, and the type check that refuses ``id IN ('a')`` fires on
+    the item that caused it.
+    """
+    value = _evaluate(expression.operand, row, tracer, operator_id)
+    unknown = value is None
+
+    for item in expression.items:
+        candidate = _evaluate(item, row, tracer, operator_id)
+        if candidate is None or unknown:
+            unknown = True
+            continue
+        _require_comparable(value, candidate, BinaryOperator.EQ)
+        if value == candidate:
+            # TRUE survives a NOT as FALSE, so an early exit is safe for both.
+            return expression.negated is False
+
+    if unknown:
+        return None
+    return expression.negated is True
 
 
 def _evaluate_unary(
@@ -436,6 +479,10 @@ def describe_expression(expression: Expression) -> str:
         case IsNullTest():
             suffix = "IS NOT NULL" if expression.negated else "IS NULL"
             return f"{describe_expression(expression.operand)} {suffix}"
+        case InList():
+            items = ", ".join(describe_expression(item) for item in expression.items)
+            keyword = "NOT IN" if expression.negated else "IN"
+            return f"{describe_expression(expression.operand)} {keyword} ({items})"
         case UnaryOp():
             inner = describe_expression(expression.operand)
             if expression.operator is UnaryOperator.NOT:

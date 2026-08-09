@@ -106,6 +106,7 @@ from engine.parser.ast import (
     ExplainStatement,
     Expression,
     FunctionCall,
+    InList,
     InsertStatement,
     IsNullTest,
     JoinClause,
@@ -219,6 +220,18 @@ class Parser:
 
     def _check_keyword(self, *keywords: Keyword) -> bool:
         return self._current.is_keyword(*keywords)
+
+    def _peek_keyword(self, ahead: int, *keywords: Keyword) -> bool:
+        """Look past the current token. Needed by exactly one rule.
+
+        ``NOT`` is a prefix operator everywhere else in this grammar, so the
+        parser can only tell ``NOT IN`` from ``NOT (x = 1)`` by looking at the
+        token after it.
+        """
+        position = self._pos + ahead
+        if position >= len(self._tokens):
+            return False
+        return self._tokens[position].is_keyword(*keywords)
 
     def _advance(self) -> Token:
         token = self._current
@@ -706,8 +719,7 @@ class Parser:
 
     def _select_statement(self) -> SelectStatement:
         start = self._expect_keyword(Keyword.SELECT).span
-        if self._check_keyword(Keyword.DISTINCT):
-            self._unsupported("SELECT DISTINCT is not implemented yet")
+        distinct = self._match_keyword(Keyword.DISTINCT) is not None
 
         projections: list[SelectItem] = []
         while True:
@@ -774,6 +786,7 @@ class Parser:
             start.union(end),
             projections=tuple(projections),
             table=table,
+            distinct=distinct,
             joins=joins,
             where=where,
             group_by=group_by,
@@ -1009,8 +1022,14 @@ class Parser:
                 negated=negated,
             )
 
+        negated = False
+        if self._check_keyword(Keyword.NOT) and self._peek_keyword(1, Keyword.IN):
+            self._advance()
+            negated = True
+        if self._check_keyword(Keyword.IN):
+            return self._in_list(left, negated=negated)
+
         for keyword, message in (
-            (Keyword.IN, "IN is not implemented yet"),
             (Keyword.LIKE, "LIKE is not implemented yet"),
             (Keyword.BETWEEN, "BETWEEN is not implemented yet"),
         ):
@@ -1018,6 +1037,35 @@ class Parser:
                 self._unsupported(message)
 
         return left
+
+    def _in_list(self, left: Expression, *, negated: bool) -> Expression:
+        """``x IN (a, b, c)``, and its negation.
+
+        Only the list form. ``IN (SELECT …)`` is a *semi-join* and belongs with
+        correlated subqueries; parsing it here and evaluating it as a list would
+        mean materialising the whole subquery per row, which is the plan nobody
+        would choose. It is refused by name, and the message says which of the
+        two this parser understands.
+        """
+        self._expect_keyword(Keyword.IN)
+        self._expect(TokenType.LPAREN, "'(' after IN")
+        if self._check_keyword(Keyword.SELECT):
+            self._unsupported("IN (SELECT ...) is not implemented yet; IN (a, b, c) is")
+
+        items: list[Expression] = []
+        while True:
+            items.append(self._expression())
+            if not self._match(TokenType.COMMA):
+                break
+        end = self._expect(TokenType.RPAREN, "')' after the IN list").span
+
+        return self._node(
+            InList,
+            left.span.union(end),
+            operand=left,
+            items=tuple(items),
+            negated=negated,
+        )
 
     def _additive(self) -> Expression:
         left = self._multiplicative()

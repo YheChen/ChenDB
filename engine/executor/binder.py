@@ -45,6 +45,7 @@ from engine.parser.ast import (
     DeleteStatement,
     Expression,
     FunctionCall,
+    InList,
     InsertStatement,
     IsNullTest,
     JoinKind,
@@ -351,6 +352,15 @@ def bind_expression(expression: Expression, scope: Scope | Schema) -> Expression
                 node_id=expression.node_id,
                 span=expression.span,
                 operand=bind_expression(expression.operand, scope),
+                negated=expression.negated,
+            )
+
+        case InList():
+            return InList(
+                node_id=expression.node_id,
+                span=expression.span,
+                operand=bind_expression(expression.operand, scope),
+                items=tuple(bind_expression(item, scope) for item in expression.items),
                 negated=expression.negated,
             )
 

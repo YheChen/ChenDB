@@ -457,13 +457,13 @@ SELECT "select" FROM "order";`,
   {
     label: "Not implemented yet",
     parses: false,
-    // Third occupant of this slot. It was `ORDER BY` until Milestone 13, then
-    // `LEFT JOIN` until Milestone 18, and both times the guard in
-    // tests/integration/test_demo_sql.py failed with "was accepted" on the very
-    // next run. That is the failure mode this catalogue exists for, and it has
-    // now fired twice for the same reason: an example of what the engine cannot
-    // do is a claim with a shelf life.
-    sql: `SELECT DISTINCT city FROM users;`,
+    // Fourth occupant of this slot. `ORDER BY` until Milestone 13, `LEFT JOIN`
+    // until Milestone 18, `DISTINCT` until Milestone 24, and every time the
+    // guard in tests/integration/test_demo_sql.py failed with "was accepted" on
+    // the very next run. That is the failure mode this catalogue exists for,
+    // and three for three is the best argument for keeping it: an example of
+    // what the engine cannot do is a claim with a shelf life.
+    sql: `SELECT email FROM users WHERE email LIKE 'a%';`,
   },
 ];
 

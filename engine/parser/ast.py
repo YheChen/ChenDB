@@ -62,6 +62,7 @@ __all__ = [
     "ExplainStatement",
     "Expression",
     "FunctionCall",
+    "InList",
     "InsertStatement",
     "IsNullTest",
     "JoinClause",
@@ -250,6 +251,26 @@ class BinaryOp(Expression):
     operator: BinaryOperator
     left: Expression
     right: Expression
+
+
+@dataclass(frozen=True, slots=True)
+class InList(Expression):
+    """``x IN (a, b, c)``, and ``x NOT IN (…)``.
+
+    Kept as its own node rather than desugared at parse time into
+    ``x = a OR x = b``. The desugaring is *exactly* correct, NULLs included, and
+    it would still be the wrong thing to store: the AST view is meant to show
+    the query somebody wrote, and an error span pointing at an ``OR`` nobody
+    typed is worse than the node costing an evaluator case.
+
+    The NULL behaviour that surprises people falls out of the equivalence rather
+    than being coded: ``x NOT IN (1, NULL)`` is never TRUE, because it means
+    ``x <> 1 AND x <> NULL`` and the second is always unknown.
+    """
+
+    operand: Expression
+    items: tuple[Expression, ...]
+    negated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -598,6 +619,14 @@ class FunctionCall(Expression):
 class SelectStatement(Statement):
     projections: tuple[SelectItem, ...]
     table: TableRef
+    distinct: bool = False
+    """``SELECT DISTINCT``: emit each *output row* once.
+
+    A property of the whole select rather than of a projection, because that is
+    what it means. ``SELECT DISTINCT a, b`` deduplicates the pair, not each
+    column, and ``COUNT(DISTINCT x)`` is a different feature that lives inside
+    an aggregate.
+    """
     joins: tuple[JoinClause, ...] = ()
     where: Expression | None = None
     group_by: tuple[Expression, ...] = ()

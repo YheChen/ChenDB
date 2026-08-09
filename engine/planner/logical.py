@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "LogicalAggregate",
+    "LogicalDistinct",
     "LogicalFilter",
     "LogicalJoin",
     "LogicalLimit",
@@ -207,6 +208,24 @@ class LogicalSort(LogicalNode):
         return ", ".join(
             f"#{key.output_index}{' DESC' if key.descending else ''}" for key in self.keys
         )
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalDistinct(LogicalNode):
+    """Emit each output row once.
+
+    Above the projection, because ``DISTINCT`` deduplicates what the query
+    *returns* rather than what it read: ``SELECT DISTINCT city`` over a
+    thousand rows in five cities is five rows, whatever the other columns held.
+    Below the sort, because ordering the duplicates first would be work thrown
+    away.
+    """
+
+    child: LogicalNode
+
+    @property
+    def children(self) -> tuple[LogicalNode, ...]:
+        return (self.child,)
 
 
 @dataclass(frozen=True, slots=True)

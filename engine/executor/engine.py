@@ -69,6 +69,7 @@ from engine.executor.binder import (
 from engine.executor.controller import NULL_CONTROLLER, StepController
 from engine.executor.expression import evaluate
 from engine.executor.operators import (
+    Distinct,
     ExecutionContext,
     Filter,
     HashAggregate,
@@ -109,6 +110,7 @@ from engine.parser.ast import (
 from engine.parser.parser import parse
 from engine.planner.logical import (
     LogicalAggregate,
+    LogicalDistinct,
     LogicalFilter,
     LogicalJoin,
     LogicalLimit,
@@ -121,6 +123,7 @@ from engine.planner.logical import (
 from engine.planner.physical import (
     DEFAULT_PLANNER_OPTIONS,
     PhysicalAggregate,
+    PhysicalDistinct,
     PhysicalFilter,
     PhysicalHashJoin,
     PhysicalIndexScan,
@@ -285,6 +288,9 @@ def build_logical_plan(bound: BoundSelect) -> LogicalNode:
         )
 
     plan = LogicalProject("project", bound.projections, bound.output_columns, plan)
+
+    if bound.statement.distinct:
+        plan = LogicalDistinct("distinct", plan)
 
     if bound.order_by:
         plan = LogicalSort("sort", bound.order_by, plan)
@@ -467,6 +473,13 @@ def materialise(
                 group_keys=node.group_keys,
                 aggregates=node.aggregates,
                 having=node.having,
+            )
+
+        case PhysicalDistinct():
+            return Distinct(
+                node.node_id,
+                context,
+                child=materialise(node.child, database, context),
             )
 
         case PhysicalSort():

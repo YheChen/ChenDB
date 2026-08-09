@@ -53,6 +53,7 @@ from engine.parser.ast import (
     BinaryOp,
     BinaryOperator,
     Expression,
+    InList,
     IsNullTest,
     Literal,
     UnaryOp,
@@ -187,6 +188,16 @@ def truth_of(expression: Expression, sources: frozenset[int]) -> Truth:
             # answer is unknown. This one line is what makes `b.x = 5`,
             # `b.x <> 5` and `a.n < b.x` all reject NULLs.
             if _definitely_null(left, sources) or _definitely_null(right, sources):
+                return _NULL
+            return ANY
+
+        case InList(operand=operand, items=items):
+            # `x IN (…)` is `x = a OR x = b`, so it rejects NULLs exactly when
+            # every branch does, which is when the operand is NULL. An item
+            # being NULL is not enough: `2 IN (2, NULL)` is TRUE.
+            if _definitely_null(operand, sources):
+                return _NULL
+            if all(_definitely_null(item, sources) for item in items):
                 return _NULL
             return ANY
 

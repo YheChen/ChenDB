@@ -30,7 +30,7 @@ cost model decided a scan was cheaper than the index.
 | **The answers are checked against SQLite** | 320,000 generated query pairs per campaign. That found seven bugs the hand-written tests missed, and two more the day the generator learned to build a third table |
 | **Nothing is stubbed** | a feature absent from the engine is absent from the API and hidden in the UI, enforced by a test rather than by discipline |
 
-**Twenty-three milestones, each with a document explaining what it cost.** The
+**Twenty-four milestones, each with a document explaining what it cost.** The
 [roadmap](docs/roadmap.md) lists them; the interesting ones are
 [Milestone 9](docs/milestone-09-wal.md) (a 197x write amplification made 5x),
 [Milestone 17](docs/milestone-17-differential.md) (seven bugs a second engine
@@ -41,7 +41,7 @@ that two tables could never have found).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ChenDB  M23    database: demo (105 KiB)     trace: STORAGE    ● engine  │
+│  ChenDB  M24    database: demo (105 KiB)     trace: STORAGE    ● engine  │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [Storage][SQL][Execution][Indexes][Buffer][Txns][WAL][MVCC]              │
 ├──────────────────┬───────────────────────────────────────────────────────┤
@@ -67,7 +67,7 @@ that two tables could never have found).
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The index workspace, drawn from a real tree. **Twenty-three milestones are
+The index workspace, drawn from a real tree. **Twenty-four milestones are
 complete**; see [the roadmap](docs/roadmap.md).
 
 ---
@@ -96,7 +96,7 @@ python -m engine demo.chendb
 ```
 
 ```
-ChenDB 2.3.0 - Milestone 23 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics + reordering across an outer join + uncorrelated subqueries)
+ChenDB 2.4.0 - Milestone 24 (storage + SQL + execution + catalog + indexes + planner + buffer pool + transactions + write-ahead log + MVCC + UPDATE and DELETE + joins and aggregation + enforced primary keys + outer joins + outer-join simplification + skew-aware statistics + reordering across an outer join + uncorrelated subqueries + DISTINCT and IN)
 Type .help for commands, .quit to exit. Anything not starting with '.' is SQL.
 
 opened demo.chendb (4 page(s))
@@ -192,7 +192,7 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Diagnostics** | 5 trace levels · 47 event types · bounded retention · provably result-neutral |
 | **SQL front end** | hand-written tokenizer · recursive-descent parser · AST where every node records its source span |
 | **DML** | `INSERT` · `UPDATE ... SET` · `DELETE ... WHERE` · Halloween-safe · `EXPLAIN` on all three |
-| **Queries** | uncorrelated scalar subqueries · inner and outer joins (`LEFT`/`RIGHT`/`FULL`) with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
+| **Queries** | `SELECT DISTINCT` · `IN` / `NOT IN` · uncorrelated scalar subqueries · inner and outer joins (`LEFT`/`RIGHT`/`FULL`) with aliases and self-joins · hash and nested-loop algorithms · `GROUP BY` / `HAVING` · `COUNT`/`SUM`/`AVG`/`MIN`/`MAX` · `ORDER BY` · `LIMIT`/`OFFSET` |
 | **Execution** | volcano operators (scan / filter / project / join / aggregate / sort / limit) · three-valued logic · step-through debugger with real cancellation |
 | **Catalog** | many tables per database · system tables stored as heap tuples · schemas rebuilt from disk · a `PRIMARY KEY` builds a real unique index |
 | **Indexes** | disk-backed B+ tree · order-preserving key encoding · linked leaves · range scans |
@@ -203,7 +203,7 @@ A handful of rows will fill a page and you can watch the heap chain grow.
 | **Concurrency** | row versions (`xmin`/`xmax`) · version chains · snapshot isolation · read committed and repeatable read · row locks · wait-for graph · deadlock detection · manual vacuum |
 | **API** | versioned HTTP + WebSocket · generated TypeScript types · path containment |
 | **Visualizer** | disk map · page inspector (layout / header / slots / hex) · Monaco SQL editor · token stream · AST tree with two-way source highlighting · live event timeline |
-| **Correctness** | 1,713 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
+| **Correctness** | 1,736 tests · a seeded generative suite that compares every answer against SQLite · a shrinker · a divergence registry that fails when a listed difference stops diverging |
 
 Five claims worth checking rather than believing:
 
@@ -255,7 +255,7 @@ all seven.
 Deliberately not built, and each has a paragraph in the milestone docs saying
 why: serializable isolation, `RETURNING`, heap-only tuples, bushy plans, index
 nested-loop joins, correlated subqueries,
-`USING` and `NATURAL JOIN`, `DISTINCT`, parallel statement execution,
+`USING` and `NATURAL JOIN`, parallel statement execution,
 lock escalation, autovacuum, and overflow pages for rows larger than a page.
 
 ---
@@ -353,7 +353,7 @@ full picture.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest              # 1,713 tests
+.venv/bin/python -m pytest              # 1,736 tests
 npm --prefix visualizer test            # 160 tests
 ```
 
@@ -435,6 +435,7 @@ change the system observed.
 | [Milestone 21](docs/milestone-21-three-tables.md) | a third table in the fuzzer, and the two wrong answers two tables could never find |
 | [Milestone 22](docs/milestone-22-reordering.md) | what an outer join actually requires on its left, and the orders that frees |
 | [Milestone 23](docs/milestone-23-subqueries.md) | the subquery that is a constant, and the four things it refuses to be |
+| [Milestone 24](docs/milestone-24-distinct-and-in.md) | `DISTINCT` and `IN`, and two NULL rules that disagree with each other |
 | [Roadmap](docs/roadmap.md) | every milestone, and what each one added to the file format |
 | [Performance](docs/performance.md) | where the time goes |
 | [Instrumenting a component](docs/how-to-instrument.md) | adding events |

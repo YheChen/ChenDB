@@ -72,7 +72,7 @@
       "shipped": "engine/parser/{tokens,lexer,ast,parser,analyze}.py; 5 parser events; POST /databases/{db}/parse; visualizer SQL workspace (Monaco editor, token stream, AST tree, two-way source-span highlighting, error markers).",
       "remaining_before_pr": []
     },
-    "next": "Milestones 1-23 are merged; master is 2.3.0 and CI is green. RECOMMENDED NEXT: correlated subqueries, backlog[0]. EXISTS, NOT EXISTS and a correlated scalar are one problem, and the right answer is DECORRELATION into a semi-join or an anti-join rather than one execution per outer row. Milestone 19's null-rejection analysis and Milestone 22's min_lefthand are both directly reusable: an anti-join is what `NOT EXISTS` becomes, and a semi-join constrains the order the same way an outer join does. The cheaper alternative first is `IN (list)`, which needs no subquery machinery.",
+    "next": "Milestones 1-24 are merged; master is 2.4.0 and CI is green. RECOMMENDED NEXT: correlated subqueries, backlog[0]. EXISTS, NOT EXISTS, IN (SELECT ...) and a correlated scalar are ONE problem, and the answer is DECORRELATION into a semi-join or an anti-join rather than one execution per outer row. Milestone 19's null-rejection analysis is what turns NOT EXISTS into an anti-join and Milestone 22's min_lefthand already knows how to constrain a join's order, so both are directly reusable.",
     "milestone_3": {
       "state": "COMPLETE and MERGED to master",
       "shipped": "engine/executor/{binder,expression,operators,controller,engine}.py; 4 operator events; POST /query + /query/step + /executions/*; visualizer Execution workspace (plan tree with actual stats, step controls, results with cost)."
@@ -280,6 +280,15 @@
         "A correlated subquery is refused BY NAME. It would otherwise be refused by accident as 'no column named city' for a column that plainly exists, which is an hour of somebody's life. Detected by comparing the subquery's qualifiers against the OUTER aliases; a qualifier naming the subquery's own FROM is not correlated."
       ],
       "verified": "make ci green and all six PR checks green; 1,714 Python tests and 160 frontend; 320,000 differential pairs clean with a scalar subquery in 59 of the 1,024 CI-seed queries (COUNT(*) and MIN/MAX over an INTEGER column, the forms where both engines agree on the result's type as well as its value)."
+    },
+    "milestone_24": {
+      "state": "COMPLETE, on branch distinct-and-in (PR pending at the time of writing)",
+      "shipped": "SELECT DISTINCT and IN / NOT IN. The two things a visitor types first and could not do. Unrelated in the engine, shipped together because each is a place SQL's equality is not the one a programmer expects, AND THE TWO DISAGREE: DISTINCT treats two NULLs as the SAME (one row survives), while NOT IN treats a NULL in its list as poison (never TRUE).",
+      "in_is_a_union_of_equalities": "`x IN (a,b)` IS `x = a OR x = b`, exactly, and every surprise follows from that rather than being coded: NULL IN (1,2) is NULL; 2 IN (2,NULL) is TRUE (TRUE OR unknown); x NOT IN (1,NULL) is NEVER TRUE (x <> 1 AND x <> NULL). Kept as an InList NODE rather than desugared to OR at parse time, because the AST view should show the query somebody wrote and an error span pointing at an OR nobody typed costs more than one evaluator case.",
+      "distinct_streams": "A hash, not a sort that drops neighbours. A sort is BLOCKING, so `SELECT DISTINCT c LIMIT 2` would read the whole table; Distinct emits the first row immediately and a LIMIT above it really stops the scan early. It holds a set of every distinct row instead of a buffer. Sits ABOVE the projection, because DISTINCT deduplicates what the query RETURNS.",
+      "distinct_key_is_not_a_python_tuple": "Python hashes True == 1 and 1 == 1.0 alike, so a plain set of row tuples would fold a BOOLEAN row into an INTEGER one and lose it. distinct_key carries each value's TYPE alongside it. -0.0 and 0.0 are deliberately the SAME key (they are equal in SQL), which is the same fold tests/differential/dialect.py makes and which got there by reporting a false divergence.",
+      "free_integration": "IN inherited Milestone 20's most-common-values list for free: a union of equalities is a sum of their selectivities, so on a column whose list is complete the estimate is EXACT (334/334, 333/333, 10/10 measured). And Milestone 19's null-rejection analysis had to learn InList explicitly, four lines: it returns ANY for an unrecognised node, which is safe and would have quietly stopped rewriting outer joins.",
+      "verified": "make ci green; 1,736 Python tests; 320,000 differential pairs clean with DISTINCT on ~20% of plain selects and an IN list in ~18% of predicates, a quarter of those with a NULL on purpose. FOUR guards fired as designed, all four listing these as unimplemented."
     }
   },
   "architecture_invariants": {
@@ -460,14 +469,16 @@
     "execute_script stops at DEFAULT_MAX_ROWS = 10,000, and that has now bitten twice. Comparing two PLANS by their returned rows on a query bigger than the cap compares two different prefixes and looks exactly like a reordering that changed the answer. Keep such fixtures under the cap or compare COUNT(*).",
     "min_left is computed from the outer join's ON ALONE. An empty intersection with the syntactic left falls back to the syntactic left, because an ON that reads nothing there has proved nothing. Shrinking it further using the WHERE (which PostgreSQL does) would recover more orderings and needs its own argument.",
     "A test that an illegal plan is not chosen is worthless unless the illegal plan would be CHEAPER. Milestone 22's RIGHT-join regression passed with the bug in place on its first try, because the correct order happened to cost less on a three-row fixture. Make the wrong plan look attractive (an empty table on the wrong side does it) or the assertion is measuring nothing.",
-    "A subquery has to be folded in BOTH _execute_select and _execute_explain. EXPLAIN does not go through _execute_select, so folding in one place left `EXPLAIN SELECT ... (SELECT ...)` raising 'cannot bind ScalarSubquery' while the same query ran fine. Any future pre-binding rewrite needs the same treatment."
+    "A subquery has to be folded in BOTH _execute_select and _execute_explain. EXPLAIN does not go through _execute_select, so folding in one place left `EXPLAIN SELECT ... (SELECT ...)` raising 'cannot bind ScalarSubquery' while the same query ran fine. Any future pre-binding rewrite needs the same treatment.",
+    "The visualizer's 'not implemented yet' demo slot has now had FOUR occupants: ORDER BY until Milestone 13, LEFT JOIN until 18, DISTINCT until 24, LIKE now. Every single time, tests/integration/test_demo_sql.py failed with 'was accepted' on the very next run. Shipping a parser feature means checking that slot AND tests/unit/test_parser.py's unsupported list AND tests/integration/test_parse_api.py, which all name a refused feature by example.",
+    "A `set` of row tuples is NOT a SQL distinct set. Python hashes True == 1 and 1 == 1.0 equally, so a BOOLEAN row and an INTEGER row collide and one vanishes. engine/executor/operators.py's distinct_key carries the type. Anything else that dedups rows needs the same treatment."
   ],
   "test_layout": {
-    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool, test_null_rejection, test_estimates, test_subqueries",
+    "tests/unit/": "test_page, test_record, test_pager, test_heap, test_inspect, test_diagnostics, test_lexer, test_parser, test_ws_backpressure, test_architecture_boundaries, test_expression, test_operators, test_catalog, test_index_key, test_bplustree, test_cost_model, test_buffer_pool, test_null_rejection, test_estimates, test_subqueries, test_distinct_and_in",
     "tests/integration/": "test_persistence, test_tracing, test_api, test_websocket, test_parse_api, test_query_api, test_index_api, test_cli, test_planner_api, test_buffer_pool_api",
     "tests/recovery/": "test_crash_and_corruption (SIGKILL + corruption)",
     "tests/concurrency/": "empty until Milestone 10",
-    "counts_at_handover": "1,713 Python tests, 160 frontend tests",
+    "counts_at_handover": "1,736 Python tests, 160 frontend tests",
     "conftest": "tests/conftest.py has db_path, users_schema, sample_rows, pager, sink, tracer, db fixtures; TINY_PAGE_SIZE = 256.",
     "btree_tests": "tests/unit/test_bplustree.py uses TINY_PAGE_SIZE = 256 so a handful of keys forces a split, and every mutating test ends in tree.verify(), which asserts the WHOLE structure (sorted nodes, separators bounding their subtrees, all leaves at one depth, the sibling chain in order). Sampled lookups are not enough evidence: a split that promotes the wrong key still answers most queries correctly.",
     "planner_tests": "tests/unit/test_cost_model.py's crossover tests are the ones that matter: they pin down where the index stops paying, and fail if a change to the constants moves it. The boundaries came from benchmarks/index_vs_scan.py.",
@@ -481,9 +492,9 @@
       "why": "Milestone 23 folds the uncorrelated scalar case to a constant and refuses correlation by name. EXISTS, NOT EXISTS and a correlated scalar are the same underlying problem: decorrelate into a semi-join or an anti-join. Re-execution per outer row is the naive answer and is what the parser currently refuses rather than does quietly."
     },
     {
-      "item": "IN, both forms",
+      "item": "IN (SELECT ...), a semi-join",
       "status": "not started",
-      "why": "`IN (1, 2, 3)` needs no subquery machinery at all and is the smallest useful thing left in the parser's refusal list. `IN (SELECT ...)` is a semi-join and belongs with the item above."
+      "why": "Milestone 24 did the list form and refuses the subquery form BY NAME. The subquery form is a semi-join and belongs with correlated subqueries: evaluating it as a list would mean materialising the subquery per row."
     },
     {
       "item": "Multi-column and expression statistics",
