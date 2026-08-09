@@ -82,10 +82,10 @@ def main() -> int:
         "SELECT name FROM",
         "SELECT 'unterminated",
         "SELECT * FROM order",
-        # Was `ORDER BY` until Milestone 13, then `LEFT JOIN` until Milestone
-        # 18. `make examples` caught both on the next run, which is the whole
-        # reason CI runs every example.
-        "SELECT DISTINCT name FROM users",
+        # `ORDER BY` until Milestone 13, `LEFT JOIN` until 18, `DISTINCT`
+        # until 24. `make examples` caught all three on the next run, which is
+        # the whole reason CI runs every example.
+        "SELECT * FROM users WHERE email LIKE 'a%'",
     ]:
         outcome = analyze_sql(sql)
         assert outcome.error is not None

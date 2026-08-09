@@ -50,6 +50,7 @@ from engine.optimizer.nullability import rejects_nulls
 from engine.parser.ast import (
     BinaryOp,
     Expression,
+    InList,
     IsNullTest,
     JoinKind,
     Literal,
@@ -156,6 +157,25 @@ def fold_constants_in(expression: Expression) -> Expression:
             )
             return _try_fold(rebuilt)
 
+        case InList(operand=operand, items=items):
+            # The list is folded but the node is not, even when every part is
+            # constant. `1 IN (1, 2)` could be collapsed to TRUE; leaving it
+            # keeps what the reader wrote visible in the plan, and a predicate
+            # nobody writes is not worth a rule.
+            new_operand = fold_constants_in(operand)
+            folded = tuple(fold_constants_in(item) for item in items)
+            if new_operand is operand and all(
+                a is b for a, b in zip(folded, items, strict=True)
+            ):
+                return expression
+            return InList(
+                node_id=expression.node_id,
+                span=expression.span,
+                operand=new_operand,
+                items=folded,
+                negated=expression.negated,
+            )
+
         case IsNullTest(operand=operand):
             inner = fold_constants_in(operand)
             if inner is operand:
@@ -198,6 +218,8 @@ def _is_constant(expression: Expression) -> bool:
             return _is_constant(left) and _is_constant(right)
         case IsNullTest(operand=operand):
             return _is_constant(operand)
+        case InList(operand=operand, items=items):
+            return _is_constant(operand) and all(_is_constant(item) for item in items)
     return False
 
 

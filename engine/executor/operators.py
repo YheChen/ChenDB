@@ -62,7 +62,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from engine.concurrency.snapshot import Snapshot, visible
 from engine.diagnostics.events import OperatorEvent
@@ -89,6 +89,7 @@ from engine.serialization.schema import Schema
 from engine.storage.heap import HeapFile, RecordId
 
 __all__ = [
+    "Distinct",
     "ExecutionContext",
     "Filter",
     "HashAggregate",
@@ -104,6 +105,7 @@ __all__ = [
     "SeqScan",
     "Sort",
     "describe_plan",
+    "distinct_key",
 ]
 
 
@@ -1398,6 +1400,91 @@ class Limit(Operator):
             return None
         self._emitted += 1
         return row
+
+
+class Distinct(Operator):
+    """Emit a row only the first time its values are seen.
+
+    Streaming, not blocking, which is the difference between this and a sort and
+    the reason it is worth having as its own operator rather than a sort that
+    drops neighbours. The first row comes out immediately and a ``LIMIT`` above
+    it really does stop the scan early. What it holds instead is a set of every
+    distinct row seen so far, which is the memory a hash aggregate would hold
+    for the same keys.
+
+    **Two values are the same when SQL says they are, not when Python does**, and
+    the two disagree in exactly two places:
+
+    * ``NULL``. Three-valued logic says ``NULL = NULL`` is unknown, so a
+      ``WHERE`` never matches one against another. ``DISTINCT`` is the exception
+      the standard writes out: it uses *not distinct from*, under which two
+      NULLs are the same and one row survives. ``GROUP BY`` does this too, which
+      is why ``SELECT DISTINCT c`` and ``SELECT c … GROUP BY c`` agree.
+    * ``1`` and ``True``, and ``1.0`` and ``1``. Python hashes those pairs
+      equally, so a naive ``set`` of rows would fold a BOOLEAN into an INTEGER
+      and lose a row. The key carries each value's type alongside it.
+    """
+
+    __slots__ = ("_child", "_seen")
+
+    def __init__(
+        self, operator_id: str, context: ExecutionContext, *, child: Operator
+    ) -> None:
+        super().__init__(operator_id, context)
+        self._child = child
+        self._seen: set[tuple[Any, ...]] = set()
+
+    @property
+    def children(self) -> tuple[Operator, ...]:
+        return (self._child,)
+
+    @property
+    def output_columns(self) -> tuple[ResultColumn, ...]:
+        return self._child.output_columns
+
+    @property
+    def detail(self) -> str:
+        return f"{len(self._seen)} distinct so far"
+
+    def _on_open(self) -> None:
+        self._seen = set()
+
+    def _produce(self) -> Row | None:
+        while True:
+            row = self._child.next()
+            if row is None:
+                return None
+            key = distinct_key(row)
+            if key not in self._seen:
+                self._seen.add(key)
+                return row
+
+
+def distinct_key(row: Sequence[Any]) -> tuple[Any, ...]:
+    """A hashable key under which two rows are *not distinct from* each other.
+
+    The type travels with the value because Python's equality is not SQL's:
+    ``True == 1`` and ``1.0 == 1``, so a plain tuple would make a BOOLEAN row
+    and an INTEGER row collide and one of them would vanish. A NULL is its own
+    marker rather than ``None``, so it cannot collide with a stored value
+    either.
+
+    ``-0.0`` and ``0.0`` are deliberately the *same* key. They compare equal in
+    SQL, so emitting both would be a duplicate. This is the same fold
+    ``tests/differential/dialect.py`` makes for the same reason, and it got
+    there by reporting a false divergence first.
+    """
+    return tuple(
+        _NULL_KEY
+        if value is None
+        else (type(value).__name__, value + 0.0 if isinstance(value, float) else value)
+        for value in row
+    )
+
+
+#: Distinct from every value, and equal to itself. A sentinel rather than
+#: ``None`` so a stored ``None`` could never be confused with one.
+_NULL_KEY: Final = ("null", None)
 
 
 def _render_row(row: Sequence[Any] | None) -> str:

@@ -76,6 +76,7 @@ from engine.parser.ast import (
     BinaryOp,
     BinaryOperator,
     Expression,
+    InList,
     IsNullTest,
     Literal,
     UnaryOp,
@@ -93,6 +94,7 @@ __all__ = [
     "PAGE_HIT_COST",
     "PAGE_MISS_COST",
     "Cost",
+    "distinct_cost",
     "distinct_pages_touched",
     "estimate_selectivity",
     "index_scan_cost",
@@ -332,6 +334,21 @@ def hash_join_cost(build_rows: float, probe_rows: float, *, matches: float) -> C
     )
 
 
+def distinct_cost(input_rows: float, *, distinct_rows: float) -> Cost:
+    """Hash each row once and keep the ones never seen before.
+
+    Costed like a hash aggregate's build side and nothing else: no I/O, one
+    hash per input row, and the output is however many distinct rows the caller
+    estimated. Streaming, so unlike a sort it adds no barrier for a ``LIMIT``
+    above it to be blocked by.
+    """
+    return Cost(
+        io=0.0,
+        cpu=input_rows * CPU_HASH_BUILD_COST,
+        rows=max(min(distinct_rows, input_rows), 1.0),
+    )
+
+
 def sort_cost(input_rows: float, *, keys: int = 1) -> Cost:
     """``n log n`` comparisons, in memory.
 
@@ -515,6 +532,23 @@ def _selectivity(predicate: Expression, stats: TableStatistics) -> float:
                 return DEFAULT_EQ_SELECTIVITY
             fraction = info.null_fraction(stats.row_count)
             return max(1.0 - fraction if negated else fraction, _one_row(stats.row_count))
+
+        case InList(operand=BoundColumnRef() as column, items=items, negated=negated):
+            # A union of equalities, so a sum of their selectivities. The MCV
+            # list makes each term a count when it holds the value, which makes
+            # `city IN ('london', 'berlin')` exact on a column small enough to
+            # be covered, and that is most of them.
+            info = _column_stats(column, stats)
+            if info is None or not all(isinstance(item, Literal) for item in items):
+                return DEFAULT_INEQ_SELECTIVITY
+            total = sum(
+                _equality_fraction(info, item.value, stats.row_count)
+                for item in items
+                if item.value is not None
+            )
+            non_null = 1.0 - info.null_fraction(stats.row_count)
+            total = min(total, non_null)
+            return max(non_null - total if negated else total, _one_row(stats.row_count))
 
         case BinaryOp() if predicate.operator.is_comparison:
             return _comparison_selectivity(predicate, stats)

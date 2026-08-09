@@ -518,9 +518,10 @@ def test_star_inside_an_expression_is_explained():
 @pytest.mark.parametrize(
     ("sql", "match"),
     [
-        ("SELECT DISTINCT a FROM t", "DISTINCT"),
-        # `LEFT JOIN` lived here until Milestone 18. Its replacement in the
-        # visualizer's "not implemented yet" demo is `DISTINCT`, above.
+        # `LEFT JOIN` lived here until Milestone 18 and `DISTINCT` until
+        # Milestone 24. `LIKE` is the fourth occupant of the visualizer's "not
+        # implemented yet" demo, and the list this slot has worked through is
+        # the best evidence the guard is doing its job.
         ("SELECT * FROM a CROSS JOIN b", "CROSS JOIN"),
         ("SELECT * FROM t OFFSET 3", "OFFSET without LIMIT"),
         ("SELECT COUNT(COUNT(x)) FROM t", "aggregate of an aggregate"),
@@ -528,7 +529,7 @@ def test_star_inside_an_expression_is_explained():
         ("UPDATE t SET a = 1 LIMIT 2", "LIMIT is not allowed on UPDATE"),
         ("UPDATE t SET a = 1 FROM u", "no joins yet"),
         ("DROP TABLE t", "DROP"),
-        ("SELECT * FROM t WHERE a IN (1)", "IN"),
+        ("SELECT * FROM t WHERE a IN (SELECT b FROM u)", "IN \\(SELECT"),
         ("SELECT * FROM t WHERE a LIKE 'x'", "LIKE"),
         ("CREATE TABLE t (a INTEGER UNIQUE)", "CREATE UNIQUE INDEX"),
         ("CREATE INDEX i ON t (a, b)", "composite key"),

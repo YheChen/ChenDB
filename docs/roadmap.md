@@ -29,6 +29,7 @@ the UI until the engine behind it exists.
 | 21 | (a third table in the differential generator, and the two planner bugs it found) | (a test corpus, not a panel) | **done** |
 | 22 | An outer join constrains the join order instead of freezing it | The constraint named in the plan view, not just the order | **done** |
 | 23 | Uncorrelated subqueries, run once and folded to a constant | A subquery in the editor, and the literal it becomes in the plan | **done** |
+| 24 | `SELECT DISTINCT` and `IN`, and the two NULL rules that disagree | The two things a visitor types first now work | **done** |
 
 Engine version tracks the milestone: `0.N.0` means Milestone N is complete,
 which runs out at ten, because there is no `0.10.0` that sorts after `0.9.0`.
@@ -47,7 +48,7 @@ it could not do before. So it is a feature after all, and it is named rather
 than excused.
 
 Each milestone document ends with the honest edge of what it built; the one for
-the newest is `docs/milestone-23-subqueries.md`.
+the newest is `docs/milestone-24-distinct-and-in.md`.
 
 ## What each milestone adds to the file format
 
@@ -72,6 +73,7 @@ the newest is `docs/milestone-23-subqueries.md`.
 | 21 | — | (two planner fixes and a wider test corpus; nothing on disk moves) |
 | 22 | — | (a join-order search change; the file format is untouched) |
 | 23 | — | (a subquery is folded before planning; nothing reaches the disk) |
+| 24 | — | (a new operator and a new expression node; the file format is untouched) |
 
 `FORMAT_VERSION` is bumped whenever any of this changes.
 
@@ -101,9 +103,9 @@ Real problems this design has, with no milestone assigned:
   accurate and often exact. Conjunctions are still multiplied as if independent,
   which is what PostgreSQL's `CREATE STATISTICS` exists to fix, and
   `WHERE lower(name) = 'ada'` still has nothing to read.
-- **Correlated subqueries, `DISTINCT`, `UNION`, window functions.** Milestone
-  23 does the uncorrelated scalar case by folding it to a constant. A
-  correlated one is a decorrelation problem: `EXISTS`, `NOT EXISTS` and a
+- **Correlated subqueries, `UNION`, window functions.** Milestone 23 does the
+  uncorrelated scalar case by folding it to a constant. A correlated one is a
+  decorrelation problem: `EXISTS`, `NOT EXISTS`, `IN (SELECT …)` and a
   correlated scalar all want a semi-join or an anti-join rather than one
   execution per outer row.
 - **`RETURNING`, and `INSERT ... SELECT`.** Both need a mutation to be an

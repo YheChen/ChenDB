@@ -578,13 +578,18 @@ class _Select:
         self.projections.append(expression_)
         return len(self.projections) - 1
 
+    distinct: bool = False
+
     def render(self, dialect: str) -> str:
         select = ", ".join(
             f"{expression_.sql} AS c{index}"
             for index, expression_ in enumerate(self.projections)
         )
         first = self.sources[0]
-        parts = [f"SELECT {select}", f"FROM {_named(first)}"]
+        parts = [
+            f"SELECT {'DISTINCT ' if self.distinct else ''}{select}",
+            f"FROM {_named(first)}",
+        ]
         parts.extend(self.joins)
         if self.where is not None:
             parts.append(f"WHERE {self.where.sql}")
@@ -793,6 +798,12 @@ def _null_supplied_by(builder: _Select, kind: str, right: int) -> list[str]:
 def _plain(source: random.Random, builder: _Select) -> None:
     for _ in range(source.randint(1, 3)):
         builder.add(expression(source, builder.sources, source.choice(_TYPES)))
+    if source.random() < 0.2:
+        # DISTINCT over whatever was just projected. Worth generating rather
+        # than hand-writing because the interesting case is a projection whose
+        # duplicates are NULL, and the generator makes those constantly.
+        builder.distinct = True
+        builder.features.add("distinct")
     if source.random() < 0.65:
         builder.where = _where(source, builder)
         builder.features.add("where")
@@ -827,6 +838,29 @@ def _where(source: random.Random, builder: _Select) -> Expr:
         return Expr(
             f"{column.sql} {source.choice(('=', '<>', '<', '>='))} "
             f"(SELECT {inner} FROM {table})",
+            BOOLEAN,
+            nullable=True,
+        )
+
+    if source.random() < 0.18 and (columns := _columns_of(builder.sources)):
+        # `x IN (a, b)` and `x NOT IN (a, b)`. The list is drawn from the same
+        # domain the column was, so matches are common, and NULL is drawn on
+        # purpose: `NOT IN` with a NULL in the list is never TRUE, which is the
+        # rule most likely to be got wrong and the one no hand-written case
+        # would think to combine with an outer join.
+        chosen = source.choice(columns)
+        pool = list(_draw_pool(chosen.type)) if chosen.type in (INTEGER, FLOAT) else None
+        values = [
+            literal(source.choice(pool) if pool else _draw(source, chosen.type))
+            for _ in range(source.randint(1, 3))
+        ]
+        if source.random() < 0.25:
+            values.append("NULL")
+            builder.features.add("in_list_with_null")
+        negated = source.random() < 0.4
+        builder.features.add("in_list")
+        return Expr(
+            f"{chosen.sql} {'NOT IN' if negated else 'IN'} ({', '.join(values)})",
             BOOLEAN,
             nullable=True,
         )
