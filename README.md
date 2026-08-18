@@ -6,13 +6,13 @@
 **A relational database engine written from scratch in Python, and a web app that
 shows you what it is doing while it does it.**
 
-### [Try it in your browser →](https://chen-db.vercel.app)
+### [Try it in your browser →](https://chendb.vercel.app)
 
 No install, no server, no account. The whole engine is compiled to WebAssembly
 and runs in your tab, on a database that is created and filled the moment you
 arrive. Give it twenty seconds to boot: it is loading a Python runtime.
 
-[![The ChenDB explorer: catalog, disk map and page inspector](docs/images/explorer.png)](https://chen-db.vercel.app)
+[![The ChenDB explorer: catalog, disk map and page inspector](docs/images/explorer.png)](https://chendb.vercel.app)
 
 Every number in that screenshot was read back from a real file. 48 pages of
 256 bytes each, a slotted page whose checksum was verified on read, a B+ tree
