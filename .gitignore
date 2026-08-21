@@ -24,6 +24,12 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+.claude/
+
+# Local working notes, not part of the published project: handover.json is the
+# session-to-session context file, and it names local paths and tooling rather
+# than anything about the engine. Kept on disk, kept out of the repo.
+handover.json
 
 # TypeScript incremental build state
 *.tsbuildinfo
