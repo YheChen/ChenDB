@@ -12,7 +12,7 @@ file.**
 **B+ Tree Storage · Cost-Based Optimizer · WAL/ARIES Recovery · MVCC ·
 Volcano Executor · No runtime dependencies**
 
-**1,736 engine tests · 160 frontend tests · 1,024 generated queries checked
+**1,955 engine tests · 160 frontend tests · 1,024 generated queries checked
 against SQLite on every push, 160,000 in a full campaign · 24 documented
 milestones**
 
@@ -44,7 +44,7 @@ Nothing below is a wrapper around an existing database, and nothing is a stub.
 | | |
 |---|---|
 | **Engine dependencies** | none. `engine/` imports the Python standard library and nothing else: no ORM, no parser generator, no storage library. A [CI job](.github/workflows/ci.yml) runs it on an interpreter with nothing installed, and [`tests/unit/test_architecture_boundaries.py`](tests/unit/test_architecture_boundaries.py) fails the build if an import crosses the line |
-| **Size** | ~31,000 lines of engine Python, ~18,000 lines of tests, ~13,000 lines of TypeScript for the explorer, ~9,000 lines of design documentation |
+| **Size** | ~31,000 lines of engine Python, ~19,000 lines of tests, ~13,000 lines of TypeScript for the explorer, ~9,000 lines of design documentation |
 | **On-disk format** | ChenDB's own, at [format version 5](docs/storage-format.md): a 16-byte magic, fixed-size pages, a CRC32 per page, a free list threaded through freed pages, system catalog tables stored as ordinary heap tuples |
 | **Not stubbed** | a feature absent from the engine is absent from the HTTP API and hidden in the UI, enforced by [a test](tests/integration/test_demo_sql.py) rather than by discipline |
 
@@ -297,7 +297,7 @@ thing live.
 ## Correctness
 
 ```bash
-.venv/bin/python -m pytest        # 1,736 passed, 56 skipped
+.venv/bin/python -m pytest        # 1,955 passed, 56 skipped
 npm --prefix visualizer test      # 160 passed
 ```
 
@@ -351,14 +351,23 @@ Three things make it more than a fuzzer:
 
 ## Benchmarks
 
-Two benchmarks ship in the repo and print their own tables. Absolute times
+Seven benchmarks ship in the repo and print their own tables. Absolute times
 depend on the machine; the ratios and the µs-per-cost-unit column are the
 interesting parts.
 
 ```bash
-python benchmarks/index_vs_scan.py     # where an index wins, and where it loses
-python benchmarks/trace_overhead.py    # what diagnostics cost
+make bench-all                         # all seven, in order
 ```
+
+| | |
+|---|---|
+| `benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
+| `benchmarks/buffer_pool.py` | hit rate against pool size, sequential flooding, write-back |
+| `benchmarks/btree_inserts.py` | build cost, index maintenance, height and occupancy |
+| `benchmarks/joins.py` | hash join against the nested loop it replaced, and build-side choice |
+| `benchmarks/transactions.py` | commit throughput, the price of one `fsync`, rollback cost |
+| `benchmarks/recovery.py` | the three ARIES passes timed, and what a checkpoint reclaims |
+| `benchmarks/trace_overhead.py` | what diagnostics cost |
 
 `benchmarks/index_vs_scan.py`, 20,000 rows, 4 KiB pages, medians of 5 runs,
 Python 3.14 on Apple silicon:
@@ -392,12 +401,22 @@ against the other picks the wrong plan while looking calibrated.
 `CREATE INDEX` over the same 20,000 rows takes 1,442 ms and builds a height-3
 tree of 188 pages with 185 splits, row by row at O(n log n).
 
-[docs/performance.md](docs/performance.md) carries the rest, measured
-milestone by milestone: the read path broken down to nanoseconds (`pread` 303 ns,
-CRC32 103 ns, a 4 KiB frame copy 228 ns), write-back absorbing 3,169 logical
-writes into 143 syscalls, buffer-pool hit rates of 75% on a working set that
-fits and 0% under sequential flooding, and the 35× cost of an unguarded event
-emit that is why every emit in the engine sits behind a boolean.
+Four results from the other five scripts, all reproducible with the commands
+above:
+
+| | |
+|---|---|
+| **Sequential flooding is real** | a scan of an 86-page table through a 4, 8, 16 or 32-frame pool hits **0%**. Every page it loads is evicted before the next pass wants it, so the cache does no good and discards what it held. The same pools on a 6-page working set hit 84.5% (4 frames) to 97.5% (8 and up) |
+| **Write-back absorbs almost everything** | a 600-row insert issues 2,048 logical page writes and 75 syscalls, 96% absorbed, because 1,845 of them replaced a page that was already dirty in a frame |
+| **A hash join pulls away fast** | 13.8× faster than a nested loop at 100 x 400 rows, 53.7× at 400 x 1,600. The loop is forced by swapping the plan node, since `PlannerOptions` has no switch for it |
+| **Commit is fsync-bound, and only then** | 1,000 single-row transactions spend 50.9 ms of their 139.6 ms on 1,004 `fsync` calls, about 50 µs each. At 100 rows per transaction that difference is 0.9 ms, inside this machine's noise |
+
+Recovery is timed too: a crash losing 5,000 committed rows replays them in
+38.5 ms, split 15% analysis, 77% redo, 8% undo, with no page having been forced
+at commit time. [docs/performance.md](docs/performance.md) has every table,
+milestone by milestone, including the read path broken down to nanoseconds and
+the 35× cost of an unguarded event emit that is why every emit in the engine
+sits behind a boolean.
 
 ---
 
@@ -648,7 +667,7 @@ python examples/milestone17_differential.py  # the seven bugs SQLite found
 | `npm --prefix visualizer test` | frontend component tests |
 | `python scripts/differential.py --seeds 0:5000` | a real campaign, 80,000 query pairs |
 | `python benchmarks/index_vs_scan.py` | where an index wins, and where it loses |
-| `python benchmarks/trace_overhead.py` | what diagnostics cost |
+| `make bench-all` | every benchmark: pool, B+ tree, joins, transactions, recovery, tracing |
 | `make ci` | lint, typecheck, both suites and every example, in CI's order |
 | `make demo-sql` | every SQL statement the explorer's buttons produce |
 | `make help` | all of the above |

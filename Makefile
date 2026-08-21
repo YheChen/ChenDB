@@ -10,7 +10,8 @@ NPM     := npm --prefix visualizer
 
 .DEFAULT_GOAL := help
 .PHONY: help install engine server ui test test-engine test-api test-ui \
-        lint typecheck bench example examples types types-check demo-sql wasm ci clean
+        lint typecheck bench bench-all example examples types types-check \
+        demo-sql wasm ci clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -60,6 +61,14 @@ typecheck:  ## TypeScript typecheck
 
 bench:  ## Measure diagnostics and storage overhead
 	$(BIN)/python benchmarks/trace_overhead.py
+
+bench-all:  ## Run every benchmark, in the order they were written
+	@for f in benchmarks/trace_overhead.py benchmarks/index_vs_scan.py \
+	          benchmarks/buffer_pool.py benchmarks/btree_inserts.py \
+	          benchmarks/joins.py benchmarks/transactions.py \
+	          benchmarks/recovery.py; do \
+		echo; echo "=== $$f"; $(BIN)/python "$$f" || exit 1; \
+	done
 
 example:  ## Narrated walkthrough of the storage engine
 	$(BIN)/python examples/milestone1_storage.py
