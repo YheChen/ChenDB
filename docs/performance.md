@@ -475,3 +475,180 @@ Making this materially faster is not a matter of a better algorithm. It is
 vectorised execution, or a compiled inner loop, or not being in Python, and
 each of those trades the thing this project is for, which is that every line of
 it can be read.
+
+---
+
+## The rest of the engine, measured: five more benchmarks
+
+Milestones 7 to 10 reported numbers in prose that no committed script could
+reproduce. These five run on demand and print their own tables, so a regression
+shows up as a moved number rather than as a paragraph nobody re-checks.
+
+```bash
+make bench-all                          # all seven, in order
+python benchmarks/buffer_pool.py        # hit rate, flooding, write-back
+python benchmarks/btree_inserts.py      # build cost, index maintenance, height
+python benchmarks/joins.py              # hash against nested loop, build side
+python benchmarks/transactions.py       # commit throughput, fsync, rollback
+python benchmarks/recovery.py           # ARIES passes, checkpoint cost
+```
+
+Everything below is from one run on Python 3.14, Apple silicon, APFS on NVMe.
+Absolute times are a property of that machine. The ratios are not.
+
+### The buffer pool: a hit rate is about the workload
+
+600 rows in 86 pages of 256 bytes, so seven rows to a page.
+
+| Workload | 4 frames | 8 | 16 | 32 | 128 |
+|---|---:|---:|---:|---:|---:|
+| working set of ~6 pages | 84.5% | 97.5% | 97.5% | 97.5% | 97.5% |
+| full scan of all 86 pages | 0.0% | 0.0% | 0.0% | 0.0% | 74.6% |
+
+**Zero, four times over.** A scan larger than the pool evicts every page it
+loads before the next pass wants it, so the cache does no good *and* throws away
+what was in it. That is sequential flooding, and it is why PostgreSQL confines a
+large scan to a ring buffer. The working-set row is the opposite case and needs
+almost nothing: eight frames is already enough.
+
+What residency is worth, over 400 point reads of the same 40 rows:
+
+| Pool | µs per read | hit rate | preads |
+|---|---:|---:|---:|
+| holds the working set | 2.09 | 99.4% | 8 |
+| two frames | 2.24 | 84.9% | 188 |
+
+The syscall count collapses by a factor of twenty. The **time barely moves**,
+and that is the honest reading: a `pread` of a page the OS has cached is cheap
+next to an interpreted `decode_record`. It is the same finding the cost model was
+calibrated on (`CPU_TUPLE_COST` is about a seventh of a page, not a hundredth),
+and it means a warm full scan through a large pool is not measurably faster here
+than through a small one.
+
+Write-back is where this pool earns its memory outright:
+
+```
+600-row insert:  2,048 logical writes -> 75 syscalls   (96% absorbed)
+                 1,845 of them replaced a page that was already dirty
+```
+
+### B+ trees: what a build costs and what an index costs to keep
+
+| Rows | Build | µs/row | Height | Splits | Pages | Bytes per entry |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 | 28.7 ms | 28.7 | 2 | 8 | 10 | 41 |
+| 5,000 | 169.4 ms | 33.9 | 2 | 36 | 38 | 31 |
+| 20,000 | 772.7 ms | 38.6 | 2 | 146 | 148 | 30 |
+
+An entry is a key plus a record id, under twenty bytes. Thirty is the price of
+splitting a full leaf in half and leaving both halves half empty, which is what
+row-by-row insertion does and what bulk loading (sort first, pack leaves once)
+would remove.
+
+Insert cost with more indexes to maintain, 1,000 rows added to a 500-row table:
+
+| Indexes maintained | Time |
+|---|---:|
+| primary key only | 139.1 ms |
+| plus one secondary | 165.5 ms |
+| plus two | 230.9 ms |
+
+The first row is not "no index": a `PRIMARY KEY` here builds a real unique B+
+tree, so it is already one structure being kept true on every insert. This is
+the cost that makes an *unused* index worse than no index.
+
+### Joins: how fast the gap opens
+
+| customers x orders | Rows out | Hash join | Nested loop | Ratio |
+|---|---:|---:|---:|---:|
+| 100 x 400 | 400 | 2.4 ms | 32.9 ms | 13.8x |
+| 400 x 1,600 | 1,600 | 9.3 ms | 498.9 ms | 53.7x |
+| 1,600 x 6,400 | 6,400 | 37.3 ms | not run | 10.2M pairs |
+
+`PlannerOptions` has switches for access paths and none for join algorithms, so
+the loop is forced by planning the query and swapping the hash node for a
+nested-loop node over the same inputs: same plan, same answer, one different
+algorithm. The largest case is skipped and *says* it is skipped, because a
+benchmark that quietly drops a row reads like one that ran it.
+
+The build side is chosen correctly at every size (the smaller estimate, always
+`customers`), and a foreign-key join estimates exactly: 400, 1,600 and 6,400
+predicted against 400, 1,600 and 6,400 returned.
+
+### Transactions: the fsync is the whole story, until it is not
+
+1,000 rows, spread over more or fewer transactions.
+
+| Rows per txn | Commits | fsyncs | fsync on | fsync off | Difference |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 1,000 | 1,004 | 139.6 ms | 88.7 ms | 50.9 ms |
+| 10 | 100 | 104 | 81.5 ms | 71.9 ms | 9.7 ms |
+| 100 | 10 | 14 | 69.4 ms | 68.5 ms | 0.9 ms |
+| 1,000 | 1 | 5 | 71.6 ms | 71.0 ms | 0.5 ms |
+
+About 50 µs per `fsync` on this disk, and a thousand of them is a third of the
+row-at-a-time run. Batching does not make the writes cheaper; it makes the
+*durability points* fewer, which is the only part that was expensive. By 100 rows
+per transaction the difference is inside run-to-run noise, which is worth
+printing rather than rounding into a claim.
+
+Rollback, which is the operation this design pays for and PostgreSQL does not:
+
+| Rows inserted | Insert | Rollback | Pages undone |
+|---:|---:|---:|---:|
+| 10 | 0.4 ms | 0.0 ms | 2 |
+| 100 | 4.5 ms | 0.0 ms | 2 |
+| 1,000 | 72.2 ms | 0.2 ms | 22 |
+
+Undo is *physical*, so the cost tracks pages rather than rows: a hundred rows
+land in the same two pages and cost the same to take back as ten.
+
+### Recovery: three passes, and what a checkpoint bounds
+
+A crash here is `Database.abandon()` with a four-frame pool, so eviction forces
+log records to disk the way a large transaction on a real database would.
+`tests/recovery/` is the stronger version: it kills a child process with
+`SIGKILL` so no Python cleanup can run at all.
+
+An **interrupted** transaction, which recovery must take back:
+
+| Rows lost | Records | Redone | Skipped | Undone | Recover | Rows after |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 0 | 0 | 0 | 0 | 0.1 ms | 0 |
+| 1,000 | 2,006 | 43 | 1,963 | 21 | 7.8 ms | 0 |
+| 5,000 | 10,332 | 3 | 10,329 | 94 | 42.8 ms | 0 |
+
+A **committed** one the crash caught before its pages reached the file:
+
+| Rows | Records | Redone | Skipped | Undone | Recover | Rows after |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 201 | 200 | 0 | 0 | 1.5 ms | 100 |
+| 1,000 | 2,068 | 104 | 1,963 | 0 | 7.7 ms | 1,000 |
+| 5,000 | 10,356 | 26 | 10,329 | 0 | 38.5 ms | 5,000 |
+
+Every row survives, without a single page having been forced at commit time.
+That is no-force, and redo is what pays for it. The smallest interrupted case
+recovers *nothing* because nothing was ever evicted, so nothing was durable: a
+correct outcome that a benchmark should show rather than hide.
+
+Where the time goes, on the 5,000-row case:
+
+| Pass | Time | Share |
+|---|---:|---:|
+| analysis | 2.1 ms | 15% |
+| redo | 11.0 ms | 77% |
+| undo | 1.1 ms | 8% |
+
+And the checkpoint that bounds all of it, after 5,000 inserted rows:
+
+```
+log before      41.3 MiB      ← a full before-image and after-image per page
+log after        0.0 KiB
+pages flushed        94
+checkpoint        0.9 ms
+```
+
+41 MiB of log for a few hundred KiB of rows is the write amplification this
+design pays, and a sharp checkpoint is what reclaims it. It is also what lets
+analysis skip a dirty-page table: recovery never needs to start earlier than the
+last checkpoint.
